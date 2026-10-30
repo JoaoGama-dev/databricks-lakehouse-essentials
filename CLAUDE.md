@@ -50,6 +50,10 @@ Azure Databricks do cliente (target `prod`).
   (SCD tipo 2). Cada coluna da chave precisa de regra `nao_nulo` com `drop`.
 - **Gold em SQL**, em `src/pipeline/gold_*.sql`, em modelo estrela (dim, fato, agg).
 - **COMMENT obrigatório** em toda tabela.
+- **Dicionário de dados obrigatório**: toda coluna da silver tem `descricao` no
+  `fontes.yml` (vira `COMMENT` pelo schema do contrato em `silver.py`), e toda view da
+  gold declara as colunas com tipo e `COMMENT`, na ordem do `SELECT`. A silver só recebe
+  colunas declaradas; o que não for declarado fica na bronze.
 - Todo arquivo novo em `src/pipeline/` entra nas `libraries` de `resources/pipeline.yml`.
 - Fontes `banco` e `api` chegam à landing pelos jobs de `src/ingestao/`; só são
   testadas no Azure (o Free Edition restringe acesso externo).

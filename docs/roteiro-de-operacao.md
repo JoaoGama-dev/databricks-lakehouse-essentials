@@ -97,7 +97,28 @@ O consumo de nuvem é pago diretamente à Microsoft, na assinatura da empresa.
 
 Se o custo subir sem motivo aparente (sem aumento de dados), avise o suporte.
 
-## 8. Quando acionar o suporte
+## 8. O que significa cada coluna (dicionário de dados)
+
+Toda tabela usada pelo painel tem a descrição de cada coluna, em português.
+
+1. No Databricks, clique em **Catalog** no menu à esquerda.
+2. Abra o catálogo `essentials`, o schema `portfolio` e a tabela (por exemplo,
+   `gold_fato_entrevista`).
+3. Na aba **Columns**, a coluna **Comment** explica cada campo.
+
+O nome da coluna também ajuda: o começo indica o tipo de informação.
+
+| Começo | Significa | Exemplo |
+|---|---|---|
+| `dt_` | data | `dt_entrevista` |
+| `hr_` | hora | `hr_entrevista` |
+| `nm_` | nome | `nm_candidato` |
+| `st_` | status ou situação | `st_entrevista` |
+| `qt_` | quantidade | `qt_entrevistas` |
+| `fl_` | sim ou não | `fl_compareceu` |
+| `id_` | identificador | `id_cargo` |
+
+## 9. Quando acionar o suporte
 
 | Situação | Severidade |
 |---|---|

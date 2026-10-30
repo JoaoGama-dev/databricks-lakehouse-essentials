@@ -15,12 +15,14 @@ import yaml
 from essentials.config_fontes import (
     PREFIXOS_POR_TIPO,
     carregar_fontes,
+    colunas_silver,
     expectations,
     expressao_limpeza,
     expressao_regra,
     expressoes_silver,
     nome_tabela_origem,
     pasta_landing,
+    schema_silver,
     tabelas_da_fonte,
     validar_config,
 )
@@ -44,6 +46,10 @@ def config_bruta() -> dict:
 
 def fonte(nome: str) -> dict:
     return next(f for f in FONTES if f["nome"] == nome)
+
+
+def arquivos_gold() -> list[Path]:
+    return sorted(PASTA_PIPELINE.glob("gold_*.sql"))
 
 
 def pipeline() -> dict:
@@ -109,7 +115,8 @@ def test_banco_incremental_exige_watermark():
             "banco": {"conexao": "erp", "tabela_origem": "vendas.pedidos", "pasta_landing": "pedidos"},
             "modo_carga": "incremental",
             "chave_primaria": ["id_pedido"],
-            "coluna_atualizacao": "atualizado_em",
+            "coluna_atualizacao": "_ingerido_em",
+            "colunas": {"id_pedido": {"origem": "id", "tipo": "inteiro", "descricao": "Identificador do pedido."}},
         }
     )
     with pytest.raises(ValueError, match="coluna_watermark"):
@@ -251,16 +258,75 @@ def test_colunas_declaradas_recebem_o_nome_padronizado():
     assert expressoes[1].endswith("AS `st_entrevista`")
 
 
-def test_limpeza_padrao_nas_colunas_nao_declaradas():
+def test_silver_so_recebe_colunas_do_contrato():
     tipos = [
-        ("observacao", "string"),
+        ("status", "string"),
+        ("coluna_nao_declarada", "string"),
         ("quantidade", "bigint"),
         ("_arquivo_origem", "string"),
         ("_rescued_data", "string"),
     ]
-    expressoes = expressoes_silver({"colunas": {}}, tipos)
-    assert expressoes[0].startswith("nullif(trim(") and expressoes[0].endswith("AS `observacao`")
-    assert expressoes[1:] == ["`quantidade`", "`_arquivo_origem`"]
+    expressoes = expressoes_silver(fonte("agenda"), tipos)
+    assert len(expressoes) == 2
+    assert expressoes[0].endswith("AS `st_entrevista`")
+    assert expressoes[1] == "`_arquivo_origem`"
+
+
+# Dicionário de dados ----------------------------------------------------------------
+
+
+def test_coluna_sem_descricao_e_rejeitada():
+    config = config_bruta()
+    del config["fontes"][0]["colunas"]["dt_entrevista"]["descricao"]
+    with pytest.raises(ValueError, match="descricao"):
+        validar_config(config)
+
+
+@pytest.mark.parametrize("f", FONTES, ids=lambda f: f["nome"])
+def test_schema_da_silver_descreve_todas_as_colunas_na_ordem(f):
+    schema = schema_silver(f)
+    colunas = re.findall(r"`(\w+)` [A-Z(),0-9]+ COMMENT '", schema)
+    assert colunas == colunas_silver(f)
+    assert colunas[: len(f["colunas"])] == list(f["colunas"])
+    assert schema.count(" COMMENT ") == len(colunas)
+
+
+def test_schema_do_historico_inclui_a_vigencia():
+    schema = schema_silver(fonte("agenda"), "TIMESTAMP")
+    assert schema.endswith("COMMENT 'Fim da vigência desta versão do registro; vazio na versão atual.'")
+    assert "`__START_AT` TIMESTAMP COMMENT" in schema
+
+
+def test_tipos_do_schema_seguem_o_yaml():
+    schema = schema_silver(fonte("cargos"))
+    trechos = (
+        "`id_cargo` BIGINT",
+        "`ds_prefixo_vaga` STRING",
+        "`dh_atualizacao` TIMESTAMP",
+        "`_ingerido_em` TIMESTAMP",
+    )
+    for trecho in trechos:
+        assert trecho in schema
+    assert "_arquivo_origem" not in schema  # fonte tabela não tem arquivo
+
+
+def test_toda_tabela_da_silver_e_criada_com_schema():
+    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    criacoes = re.findall(r"dp\.(?:table|materialized_view|create_streaming_table)\((.*?)\n\s*\)", codigo, re.DOTALL)
+    assert len(criacoes) == 5
+    # A tabela de mudanças do cdc leva colunas extras do AUTO CDC e é a única sem schema fixo.
+    assert sum("schema=" in criacao for criacao in criacoes) == 4
+
+
+@pytest.mark.parametrize("arquivo", arquivos_gold(), ids=lambda a: a.name)
+def test_colunas_da_gold_tem_tipo_e_descricao(arquivo):
+    sql = arquivo.read_text(encoding="utf-8")
+    blocos = re.findall(r"MATERIALIZED VIEW \w+ \((.*?)\n\)\nCOMMENT", sql, re.DOTALL)
+    assert len(blocos) == len(PADRAO_TABELA_SQL.findall(sql)), "toda view da gold declara as colunas"
+    prefixos = "|".join(PREFIXOS_POR_TIPO)
+    for bloco in blocos:
+        for linha in [linha.strip() for linha in bloco.strip().splitlines()]:
+            assert re.fullmatch(rf"({prefixos})_\w+ [A-Z]+ COMMENT '.{{10,}}',?", linha), linha
 
 
 def test_preparacao_sql_existe_quando_pedida():
@@ -356,10 +422,6 @@ def test_prod_tem_run_as():
 
 
 # Gold -----------------------------------------------------------------------------
-
-
-def arquivos_gold() -> list[Path]:
-    return sorted(PASTA_PIPELINE.glob("gold_*.sql"))
 
 
 def test_existe_gold():
