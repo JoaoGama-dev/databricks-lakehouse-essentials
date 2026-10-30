@@ -1,8 +1,23 @@
+# Databricks: estado local da CLI e do bundle
 .databricks/
+
+# Python
 __pycache__/
+.venv/
 .pytest_cache/
 .ruff_cache/
-.venv/
+.coverage
+
+# Segredos locais (tokens, credenciais): nunca no repositório
+.env
+.env.*
+
+# Configurações pessoais de ferramentas e do sistema operacional
+.claude/settings.local.json
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
 
 # Dados de clientes têm informação pessoal (LGPD): nunca vão para o repositório
 # nem para o workspace (o bundle não sincroniza o que está aqui).
