@@ -1,0 +1,57 @@
+# Carga diária às 6h (horário de Brasília). Em dev, o agendamento fica pausado
+# automaticamente pelo modo development.
+# Ordem: os jobs de ingestão trazem bancos e APIs para a landing; depois o pipeline
+# atualiza bronze, silver e gold. Sem fontes desses tipos, as duas tarefas só avisam
+# que não há nada a fazer.
+resources:
+  jobs:
+    essentials_carga_diaria:
+      name: essentials_carga_diaria
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: America/Sao_Paulo
+        pause_status: UNPAUSED
+      email_notifications:
+        on_failure:
+          - ${var.alert_email}
+      environments:
+        - environment_key: ingestao
+          spec:
+            environment_version: "2"
+            dependencies:
+              - pyyaml
+              - jsonschema
+              - requests
+      tasks:
+        - task_key: ingestao_api
+          environment_key: ingestao
+          spark_python_task:
+            python_file: ../src/ingestao/api_para_landing.py
+            parameters:
+              - --config
+              - ${workspace.file_path}/config/fontes.yml
+              - --landing
+              - ${var.landing_path}
+              - --codigo
+              - ${workspace.file_path}/src
+
+        - task_key: ingestao_banco
+          environment_key: ingestao
+          spark_python_task:
+            python_file: ../src/ingestao/banco_para_landing.py
+            parameters:
+              - --config
+              - ${workspace.file_path}/config/fontes.yml
+              - --landing
+              - ${var.landing_path}
+              - --codigo
+              - ${workspace.file_path}/src
+
+        - task_key: atualizar_lakehouse
+          depends_on:
+            - task_key: ingestao_api
+            - task_key: ingestao_banco
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.essentials_pipeline.id}
+            full_refresh: false

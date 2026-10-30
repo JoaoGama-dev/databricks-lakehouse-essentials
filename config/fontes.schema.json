@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Fontes de dados do lakehouse Essentials",
+  "description": "Formato do config/fontes.yml. Os campos estão explicados nos comentários do próprio YAML.",
+  "type": "object",
+  "required": ["fontes"],
+  "additionalProperties": false,
+  "properties": {
+    "fontes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fonte" }
+    }
+  },
+  "$defs": {
+    "nome_sql": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "fonte": {
+      "type": "object",
+      "required": ["nome", "descricao", "tipo", "modo_carga", "chave_primaria", "coluna_atualizacao"],
+      "additionalProperties": false,
+      "properties": {
+        "nome": { "$ref": "#/$defs/nome_sql" },
+        "descricao": { "type": "string", "minLength": 1 },
+        "tipo": { "enum": ["arquivo", "tabela", "banco", "api"] },
+        "modo_carga": { "enum": ["incremental", "snapshot", "cdc"] },
+        "historico": { "type": "boolean", "default": false },
+        "preparacao_sql": { "type": "boolean", "default": false },
+        "chave_primaria": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "coluna_atualizacao": { "type": "string" },
+        "arquivo": { "$ref": "#/$defs/arquivo" },
+        "tabela": { "$ref": "#/$defs/tabela" },
+        "banco": { "$ref": "#/$defs/banco" },
+        "api": { "$ref": "#/$defs/api" },
+        "cdc": { "$ref": "#/$defs/cdc" },
+        "colunas": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/coluna" }
+        },
+        "regras": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/regra" }
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "tipo": { "const": "arquivo" } } }, "then": { "required": ["arquivo"] } },
+        { "if": { "properties": { "tipo": { "const": "tabela" } } }, "then": { "required": ["tabela"] } },
+        { "if": { "properties": { "tipo": { "const": "banco" } } }, "then": { "required": ["banco"] } },
+        { "if": { "properties": { "tipo": { "const": "api" } } }, "then": { "required": ["api"] } },
+        { "if": { "properties": { "modo_carga": { "const": "cdc" } } }, "then": { "required": ["cdc"] } },
+        {
+          "if": { "properties": { "modo_carga": { "const": "incremental" } } },
+          "then": { "properties": { "historico": { "const": false } } }
+        }
+      ]
+    },
+    "arquivo": {
+      "type": "object",
+      "required": ["formato", "caminho"],
+      "additionalProperties": false,
+      "properties": {
+        "formato": { "enum": ["csv", "json", "parquet", "texto"] },
+        "caminho": { "type": "string", "minLength": 1 },
+        "opcoes": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "tabela": {
+      "type": "object",
+      "required": ["nome_completo"],
+      "additionalProperties": false,
+      "properties": {
+        "nome_completo": { "type": "string", "pattern": "^[^.]+\\.[^.]+\\.[^.]+$" }
+      }
+    },
+    "banco": {
+      "type": "object",
+      "required": ["conexao", "tabela_origem", "pasta_landing"],
+      "additionalProperties": false,
+      "properties": {
+        "conexao": { "$ref": "#/$defs/nome_sql" },
+        "tabela_origem": { "type": "string", "pattern": "^[^.]+\\.[^.]+$" },
+        "coluna_watermark": { "type": "string" },
+        "pasta_landing": { "type": "string", "minLength": 1 }
+      }
+    },
+    "api": {
+      "type": "object",
+      "required": ["url", "autenticacao", "pasta_landing"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "pattern": "^https://" },
+        "autenticacao": {
+          "type": "object",
+          "required": ["tipo"],
+          "additionalProperties": false,
+          "properties": {
+            "tipo": { "enum": ["bearer", "api_key", "nenhuma"] },
+            "escopo": { "type": "string" },
+            "chave": { "type": "string" },
+            "cabecalho": { "type": "string" }
+          },
+          "if": { "properties": { "tipo": { "enum": ["bearer", "api_key"] } } },
+          "then": { "required": ["escopo", "chave"] }
+        },
+        "pasta_landing": { "type": "string", "minLength": 1 },
+        "campo_registros": { "type": "string" },
+        "parametros": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "number"] }
+        },
+        "paginacao": {
+          "type": "object",
+          "required": ["parametro"],
+          "additionalProperties": false,
+          "properties": {
+            "parametro": { "type": "string" },
+            "max_paginas": { "type": "integer", "minimum": 1, "default": 100 }
+          }
+        }
+      }
+    },
+    "cdc": {
+      "type": "object",
+      "required": ["coluna_operacao", "valor_exclusao"],
+      "additionalProperties": false,
+      "properties": {
+        "coluna_operacao": { "type": "string" },
+        "valor_exclusao": { "type": "string" }
+      }
+    },
+    "coluna": {
+      "type": "object",
+      "required": ["tipo"],
+      "additionalProperties": false,
+      "properties": {
+        "tipo": { "enum": ["texto", "inteiro", "decimal", "data", "timestamp", "booleano"] },
+        "formatos": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "caixa": { "enum": ["titulo", "maiuscula", "minuscula"] },
+        "remover_ponto_final": { "type": "boolean" },
+        "mapa_valores": { "type": "object", "additionalProperties": { "type": "string" } },
+        "valor_se_vazio": { "type": "string" },
+        "mascarar": { "enum": ["telefone", "hash"] }
+      }
+    },
+    "regra": {
+      "type": "object",
+      "required": ["nome", "tipo", "acao"],
+      "additionalProperties": false,
+      "properties": {
+        "nome": { "$ref": "#/$defs/nome_sql" },
+        "tipo": { "enum": ["nao_nulo", "valores_aceitos", "expressao", "unico"] },
+        "acao": { "enum": ["drop", "alerta"] },
+        "coluna": { "type": "string" },
+        "colunas": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "valores": { "type": "array", "items": { "type": ["string", "number"] }, "minItems": 1 },
+        "expressao": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        { "if": { "properties": { "tipo": { "const": "nao_nulo" } } }, "then": { "required": ["coluna"] } },
+        { "if": { "properties": { "tipo": { "const": "valores_aceitos" } } }, "then": { "required": ["coluna", "valores"] } },
+        { "if": { "properties": { "tipo": { "const": "expressao" } } }, "then": { "required": ["expressao"] } },
+        {
+          "if": { "properties": { "tipo": { "const": "unico" } } },
+          "then": { "required": ["colunas"], "properties": { "acao": { "const": "alerta" } } }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,31 @@
+# Pipeline declarativo (Lakeflow Spark Declarative Pipelines), orientado por metadados:
+# bronze.py e silver.py criam as tabelas de cada fonte a partir do config/fontes.yml.
+# Os caminhos das libraries são relativos a este arquivo. Ao criar um
+# src/pipeline/silver_<nome>.sql ou gold_*.sql, inclua-o na lista abaixo.
+resources:
+  pipelines:
+    essentials_pipeline:
+      name: essentials_lakehouse
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      continuous: false
+      channel: CURRENT
+      configuration:
+        catalogo: ${var.catalog}
+        landing_path: ${var.landing_path}
+        fontes_config: ${workspace.file_path}/config/fontes.yml
+        diretorio_codigo: ${workspace.file_path}/src
+      environment:
+        dependencies:
+          - pyyaml
+          - jsonschema
+      libraries:
+        - file:
+            path: ../src/pipeline/bronze.py
+        - file:
+            path: ../src/pipeline/silver.py
+        - file:
+            path: ../src/pipeline/silver_agenda.sql
+        - file:
+            path: ../src/pipeline/gold_entrevistas.sql

@@ -1,0 +1,44 @@
+name: CI
+
+# Roda em todo pull request para a main: lint, testes e validação do bundle.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Testes (pytest)
+        run: pytest -q
+
+  validar_bundle:
+    needs: testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: databricks/setup-cli@v1.21.0
+
+      # O Free Edition não tem service principal com OIDC, por isso dev usa token.
+      # DATABRICKS_HOST_DEV deve ser igual ao host do target dev no databricks.yml.
+      - name: Validar bundle (dev)
+        run: databricks bundle validate -t dev
+        env:
+          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}

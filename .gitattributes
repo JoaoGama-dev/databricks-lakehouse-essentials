@@ -1,0 +1,6 @@
+# Código e configuração com quebra de linha LF no repositório (CI roda em Linux).
+* text=auto eol=lf
+
+# As agendas de exemplo imitam a exportação do Excel (UTF-8 com BOM e CRLF):
+# o git não deve converter nada nelas.
+data/*.csv -text

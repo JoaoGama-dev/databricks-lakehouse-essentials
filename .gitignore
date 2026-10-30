@@ -1,0 +1,14 @@
+.databricks/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Dados de clientes têm informação pessoal (LGPD): nunca vão para o repositório
+# nem para o workspace (o bundle não sincroniza o que está aqui).
+data/*.csv
+data/*.json
+data/*.parquet
+data/privado/
+# Exceção: agendas 100% fictícias do gerador (data/gerar_dados_exemplo.py).
+!data/agenda_exemplo_v*.csv

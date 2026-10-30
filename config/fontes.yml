@@ -1,0 +1,181 @@
+# Fontes de dados do cliente.
+# Este é o ÚNICO arquivo que muda de um cliente para outro: cada item de "fontes"
+# gera automaticamente bronze_<nome> (src/pipeline/bronze.py) e silver_<nome>
+# (src/pipeline/silver.py). O formato é validado por config/fontes.schema.json.
+#
+# CAMPOS DE CADA FONTE
+#   nome               snake_case; vira o nome das tabelas: bronze_<nome>, silver_<nome>
+#   descricao          texto livre; entra no COMMENT das tabelas
+#   tipo               de onde vem o dado:
+#                        arquivo -> arquivos na landing zone (csv, json, parquet ou texto)
+#                        tabela  -> tabela que já existe no Unity Catalog
+#                        banco   -> banco externo via conexão do Unity Catalog; o job
+#                                   src/ingestao/banco_para_landing.py grava parquet na landing
+#                        api     -> API REST; o job src/ingestao/api_para_landing.py grava
+#                                   JSON na landing
+#   modo_carga         como a fonte entrega os dados:
+#                        incremental -> cada registro chega uma vez; a silver só acrescenta
+#                        snapshot    -> a fonte reenvia tudo a cada vez; a silver guarda o
+#                                       retrato mais recente (AUTO CDC FROM SNAPSHOT)
+#                        cdc         -> a fonte envia inclusões, alterações e exclusões;
+#                                       a silver aplica as mudanças (AUTO CDC)
+#   historico          true cria também silver_<nome>_historico (SCD tipo 2, com
+#                      __START_AT e __END_AT). Só para snapshot e cdc.
+#   chave_primaria     colunas que identificam um registro, já com os nomes da silver
+#   coluna_atualizacao coluna que diz qual versão de um registro é a mais recente
+#                      (data de atualização, número de linha etc.)
+#   preparacao_sql     true quando a fonte precisa de lógica própria antes da limpeza
+#                      padrão. Nesse caso existe src/pipeline/silver_<nome>.sql com a view
+#                      temporária preparada_<nome>, e a silver lê dela em vez da bronze.
+#
+# BLOCO DO TIPO (só o do tipo escolhido)
+#   arquivo:  formato (csv | json | parquet | texto), caminho (pasta dentro da landing),
+#             opcoes (opções de leitura do Auto Loader, como header e sep)
+#   tabela:   nome_completo (catalogo.schema.tabela; {catalogo} vira o catálogo do target)
+#   banco:    conexao (conexão do Unity Catalog; o catálogo estrangeiro tem o mesmo nome),
+#             tabela_origem (schema.tabela no banco), coluna_watermark (coluna crescente
+#             usada para trazer só o que é novo), pasta_landing
+#   api:      url, autenticacao (tipo: bearer | api_key | nenhuma; escopo e chave do
+#             secret scope), pasta_landing, campo_registros (onde fica a lista na resposta),
+#             paginacao (parametro da página e limite de páginas)
+#   cdc:      (só modo cdc) coluna_operacao e valor_exclusao
+#
+# COLUNAS (limpeza padrão da silver)
+#   Toda coluna de texto recebe TRIM e perde espaços repetidos; texto vazio vira nulo.
+#   Colunas não listadas passam só por essa limpeza. Para as listadas:
+#     tipo                 texto | inteiro | decimal | data | timestamp | booleano
+#     formatos             formatos aceitos para data/timestamp, tentados em ordem
+#     caixa                titulo | maiuscula | minuscula
+#     remover_ponto_final  true tira pontos no fim do texto ("Maria Exemplo." vira "Maria Exemplo")
+#     mapa_valores         de-para de valores escritos de vários jeitos (compara em minúsculas)
+#     valor_se_vazio       valor usado quando o campo vem vazio
+#     mascarar             telefone (deixa só os 4 últimos dígitos) | hash (sha256), por LGPD
+#
+# REGRAS (viram expectations na silver)
+#   nome      nome da regra, aparece na aba Data quality
+#   tipo      nao_nulo (coluna) | valores_aceitos (coluna, valores) |
+#             expressao (expressao SQL) | unico (colunas)
+#   acao      drop   -> descarta a linha
+#             alerta -> a linha segue e a violação é contada
+#   A regra "unico" só aceita alerta: ela é checada numa view à parte,
+#   silver_<nome>_unico_<colunas>. Para garantir unicidade, use chave_primaria com
+#   modo snapshot ou cdc.
+
+fontes:
+  # Planilha de agenda de entrevistas do RH. Cada arquivo é a planilha inteira do ano
+  # (snapshot). A data aparece só nas linhas "AGENDA DIA dd/mm/aaaa", por isso o arquivo
+  # é lido inteiro como texto e quebrado em linhas em src/pipeline/silver_agenda.sql.
+  - nome: agenda
+    descricao: Agenda de entrevistas de emprego, exportada da planilha do RH.
+    tipo: arquivo
+    arquivo:
+      formato: texto
+      caminho: agenda
+      opcoes:
+        wholeText: "true"
+    modo_carga: snapshot
+    historico: true
+    preparacao_sql: true
+    chave_primaria: [data_entrevista, nome_candidato]
+    coluna_atualizacao: _linha
+    colunas:
+      data_entrevista:
+        tipo: data
+        formatos: ["dd/MM/yyyy", "yyyy-MM-dd"]
+      horario:
+        tipo: texto
+      nome_candidato:
+        tipo: texto
+        caixa: titulo
+        remover_ponto_final: true
+      vaga:
+        tipo: texto
+        caixa: titulo
+        remover_ponto_final: true
+      telefone:
+        tipo: texto
+        mascarar: telefone
+      status:
+        tipo: texto
+        remover_ponto_final: true
+        valor_se_vazio: Pendente
+        mapa_valores:
+          aprovado: Aprovado
+          aprovada: Aprovado
+          reprovado: Reprovado
+          reprovada: Reprovado
+          "n/ atendeu": Não atendeu
+          "n/atendeu": Não atendeu
+          "não atendeu": Não atendeu
+          cancelou: Cancelado
+          cancelado: Cancelado
+          cancelada: Cancelado
+          reagendado: Reagendado
+          reagendada: Reagendado
+    regras:
+      - nome: nome_preenchido
+        tipo: nao_nulo
+        coluna: nome_candidato
+        acao: drop
+      - nome: data_entrevista_valida
+        tipo: nao_nulo
+        coluna: data_entrevista
+        acao: drop
+      - nome: status_conhecido
+        tipo: valores_aceitos
+        coluna: status
+        valores: [Aprovado, Reprovado, Não atendeu, Cancelado, Reagendado, Pendente]
+        acao: alerta
+      - nome: telefone_valido
+        tipo: nao_nulo
+        coluna: telefone
+        acao: alerta
+      - nome: horario_valido
+        tipo: expressao
+        expressao: "horario RLIKE '^[0-9]{1,2}:[0-9]{2}$'"
+        acao: alerta
+
+  # Cadastro de cargos: liga o começo do nome da vaga a uma área da empresa.
+  # No Free Edition, a tabela é criada por setup/00_setup_free_edition.sql.
+  - nome: cargos
+    descricao: Cadastro de cargos do RH, que liga o nome da vaga a uma área.
+    tipo: tabela
+    tabela:
+      nome_completo: "{catalogo}.origem.cadastro_cargos"
+    modo_carga: snapshot
+    historico: false
+    chave_primaria: [id_cargo]
+    coluna_atualizacao: atualizado_em
+    colunas:
+      id_cargo:
+        tipo: inteiro
+      prefixo_vaga:
+        tipo: texto
+        caixa: minuscula
+      area:
+        tipo: texto
+      atualizado_em:
+        tipo: timestamp
+    regras:
+      - nome: prefixo_preenchido
+        tipo: nao_nulo
+        coluna: prefixo_vaga
+        acao: drop
+      - nome: area_conhecida
+        tipo: valores_aceitos
+        coluna: area
+        valores:
+          - Cozinha
+          - Atendimento
+          - Recepção
+          - Limpeza e conservação
+          - Administrativo
+          - Financeiro
+          - Logística e produção
+          - Vendas
+          - Serviços especializados
+        acao: alerta
+      - nome: prefixo_unico
+        tipo: unico
+        colunas: [prefixo_vaga]
+        acao: alerta

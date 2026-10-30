@@ -1,0 +1,33 @@
+name: Deploy produção
+
+# Por enquanto o deploy é só manual (aba Actions > Run workflow).
+# Quando houver um cliente em produção, ative o deploy automático na main
+# descomentando o bloco "push" abaixo.
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+
+permissions:
+  id-token: write # necessário para o login OIDC, sem token guardado no repositório
+  contents: read
+
+jobs:
+  deploy_prod:
+    runs-on: ubuntu-latest
+    # O environment "prod" no GitHub pede aprovação manual antes de rodar.
+    environment: prod
+    env:
+      DATABRICKS_AUTH_TYPE: github-oidc
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST_PROD }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID_PROD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: databricks/setup-cli@v1.21.0
+
+      - name: Validar bundle (prod)
+        run: databricks bundle validate -t prod
+
+      - name: Implantar bundle (prod)
+        run: databricks bundle deploy -t prod

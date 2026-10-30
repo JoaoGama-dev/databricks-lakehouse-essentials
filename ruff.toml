@@ -1,0 +1,16 @@
+# Configuração do ruff (lint). Rode com: ruff check .
+target-version = "py311"
+line-length = 120
+# src/ e tests/ contêm o código do projeto: "essentials" é tratado como import próprio.
+src = ["src", "tests"]
+
+[lint]
+# Regras escolhidas explicitamente:
+#   E, W  pycodestyle (erros e avisos de estilo)
+#   F     pyflakes (nomes indefinidos, imports sem uso)
+#   I     isort (ordem dos imports)
+#   B     flake8-bugbear (armadilhas comuns, como zip sem strict)
+#   UP    pyupgrade (sintaxe moderna para Python 3.11)
+#   BLE   flake8-blind-except (proíbe except Exception genérico)
+#   RUF   regras do próprio ruff (inclui noqa sem uso, RUF100)
+select = ["E", "W", "F", "I", "B", "UP", "BLE", "RUF"]

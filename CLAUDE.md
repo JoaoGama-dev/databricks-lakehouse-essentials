@@ -1,0 +1,64 @@
+# Regras do projeto essentials_lakehouse
+
+Acelerador do pacote Essentials: lakehouse medalhão orientado por metadados,
+empacotado como Databricks Asset Bundle. Roda no Free Edition (target `dev`) e no
+Azure Databricks do cliente (target `prod`).
+
+## Orientado por metadados
+- **As fontes do cliente ficam em `config/fontes.yml`.** Trocar de cliente é trocar
+  esse arquivo (mais as SQLs específicas e a gold). Ele é validado por
+  `config/fontes.schema.json`; um campo novo exige atualizar o schema, os comentários
+  do YAML e `src/essentials/config_fontes.py`.
+- A lógica que vem da config (nomes de tabelas, expectations, expressões de limpeza)
+  fica em `src/essentials/config_fontes.py`, sem Spark, para ser testada pelo pytest.
+- `src/pipeline/bronze.py` e `src/pipeline/silver.py` são genéricos: não colocar neles
+  nada específico de uma fonte.
+
+## Camadas
+- **Sem dbt.** Tudo em Lakeflow Spark Declarative Pipelines, serverless. Python com
+  `from pyspark import pipelines as dp`; nunca `import dlt`.
+- **Bronze sem transformação**: dado exatamente como chegou, mais `_fonte`,
+  `_arquivo_origem` (quando há arquivo) e `_ingerido_em`.
+- **Qualidade só via expectations na silver**, geradas das `regras` do YAML.
+  Não filtrar dados com `WHERE` para esconder problemas de qualidade.
+- **Lógica específica de uma fonte** fica em `src/pipeline/silver_<nome>.sql`, como a
+  view temporária `preparada_<nome>`, com `preparacao_sql: true` no YAML. Nela vai só o
+  que a limpeza padrão não cobre (ex.: estrutura do arquivo); TRIM, tipos, de-para e
+  regras continuam no YAML.
+- Modos `snapshot` e `cdc` usam AUTO CDC; `historico: true` cria `silver_<nome>_historico`
+  (SCD tipo 2).
+- **Gold em SQL**, em `src/pipeline/gold_*.sql`, com materialized views `gold_*`.
+- **COMMENT obrigatório** em toda tabela, mais `TBLPROPERTIES ('camada' = 'bronze'|'silver'|'gold')`.
+- Todo arquivo novo em `src/pipeline/` entra nas `libraries` de `resources/pipeline.yml`.
+- Fontes `banco` e `api` chegam à landing pelos jobs de `src/ingestao/`; só são
+  testadas no Azure (o Free Edition restringe acesso externo).
+
+## Dados e LGPD
+- Dados de clientes nunca vão para o repositório: `data/*.csv` está no `.gitignore`.
+  Só as agendas fictícias do gerador (`data/agenda_exemplo_v*.csv`) são versionadas.
+- **O Free Edition roda só dados fictícios.** Dados reais rodam apenas no ambiente
+  Azure do cliente. Nunca escreva nomes, telefones ou outros dados reais em README,
+  comentários, testes ou exemplos.
+- Telefones e outros dados pessoais saem mascarados da silver em diante (`mascarar`).
+
+## Ambientes
+- **Nunca alterar produção à mão.** Tudo passa pelo bundle e pelo workflow de deploy.
+- Caminhos e catálogos vêm das variáveis do `databricks.yml`; nada fixo no código.
+
+## Lint
+- Regras do ruff em `ruff.toml` (E, W, F, I, B, UP, BLE, RUF). Não use `# noqa` sem
+  necessidade nem `except Exception`: capture a exceção específica.
+- Versões das ferramentas fixadas em `requirements-dev.txt` e nos workflows.
+
+## Antes de propor uma mudança
+Liste para o usuário os comandos que ele deve rodar (não rode você mesmo):
+
+```
+ruff check .
+pytest -q
+databricks bundle validate -t dev
+```
+
+## Idioma
+Tudo em português do Brasil: comentários, documentação, mensagens e nomes de colunas
+em snake_case.
