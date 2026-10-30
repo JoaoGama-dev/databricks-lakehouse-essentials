@@ -1,6 +1,8 @@
 name: CI
 
 # Roda em todo pull request para a main: lint, testes e validação do bundle.
+# Actions e runner com versão fixa: atualize por PR, com versões publicadas há pelo
+# menos 2 semanas. Os jobs "testes" e "validar_bundle" são obrigatórios na main.
 on:
   pull_request:
     branches: [main]
@@ -10,11 +12,11 @@ permissions:
 
 jobs:
   testes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
 
@@ -29,9 +31,9 @@ jobs:
 
   validar_bundle:
     needs: testes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - uses: databricks/setup-cli@v1.21.0
 

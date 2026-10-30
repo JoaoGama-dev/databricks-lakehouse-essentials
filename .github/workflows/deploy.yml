@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   deploy_prod:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # O environment "prod" no GitHub pede aprovação manual antes de rodar.
     environment: prod
     env:
@@ -22,7 +22,7 @@ jobs:
       DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST_PROD }}
       DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID_PROD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - uses: databricks/setup-cli@v1.21.0
 
