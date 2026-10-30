@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 import re
 from pathlib import Path
 
@@ -387,6 +388,80 @@ def test_colunas_da_gold_tem_prefixo_da_classe(arquivo):
     apelidos = re.findall(r"\bAS ([a-z][a-z0-9_]+)\b", sql)
     assert apelidos
     assert all(re.match(rf"^({prefixos})_", apelido) for apelido in apelidos), apelidos
+
+
+def test_gold_classifica_a_situacao_da_entrevista():
+    sql = (PASTA_PIPELINE / "gold_entrevistas.sql").read_text(encoding="utf-8")
+    for situacao in ("'Concluído'", "'Em andamento'", "'Pendente'", "'Não identificado'"):
+        assert situacao in sql
+    assert "AS st_situacao" in sql
+
+
+# Painel AI/BI -----------------------------------------------------------------------
+
+PAINEL = RAIZ / "src" / "dashboards" / "entrevistas.lvdash.json"
+
+
+def painel() -> dict:
+    return json.loads(PAINEL.read_text(encoding="utf-8"))
+
+
+def widgets_do_painel() -> list[tuple[str, dict]]:
+    return [(pagina["name"], item) for pagina in painel()["pages"] for item in pagina["layout"]]
+
+
+def test_painel_esta_no_bundle_sem_ambiente_fixo():
+    recurso = carregar_yaml(RAIZ / "resources" / "dashboard.yml")["resources"]["dashboards"]["painel_entrevistas"]
+    assert (RAIZ / "resources" / recurso["file_path"]).resolve() == PAINEL.resolve()
+    assert recurso["warehouse_id"] == "${var.warehouse_id}"
+    assert recurso["dataset_catalog"] == "${var.catalog}"
+    assert recurso["dataset_schema"] == "${var.schema}"
+    assert recurso["embed_credentials"] is False
+
+
+def test_painel_tem_as_tres_paginas():
+    assert [p["displayName"] for p in painel()["pages"]] == ["Visão geral", "Áreas e vagas", "Pendências"]
+
+
+def test_datasets_do_painel_so_leem_a_gold_sem_catalogo_fixo():
+    for dataset in painel()["datasets"]:
+        sql = "".join(dataset["queryLines"])
+        tabelas = re.findall(r"\b(?:FROM|JOIN)\s+([\w.]+)", sql, flags=re.IGNORECASE)
+        tabelas = [t for t in tabelas if t != "entrevistas"]  # CTE interna
+        assert tabelas, dataset["name"]
+        assert all(re.fullmatch(r"gold_\w+", t) for t in tabelas), (dataset["name"], tabelas)
+        assert "essentials" not in sql and "portfolio" not in sql
+
+
+def test_widgets_usam_datasets_e_campos_que_existem():
+    datasets = {d["name"] for d in painel()["datasets"]}
+    for pagina, item in widgets_do_painel():
+        widget = item["widget"]
+        if "multilineTextboxSpec" in widget:
+            continue
+        consultas = {c["name"]: c["query"] for c in widget["queries"]}
+        assert all(c["datasetName"] in datasets for c in consultas.values()), (pagina, widget["name"])
+        campos = {f["name"] for c in consultas.values() for f in c["fields"]}
+        codificacoes = widget["spec"]["encodings"]
+        usados = []
+        for valor in codificacoes.values():
+            for item_codificacao in valor if isinstance(valor, list) else [valor]:
+                usados.append(item_codificacao["fieldName"])
+                if "queryName" in item_codificacao:
+                    assert item_codificacao["queryName"] in consultas
+        assert set(usados) <= campos, (pagina, widget["name"], set(usados) - campos)
+
+
+def test_widgets_nao_se_sobrepoem():
+    ocupadas: dict[tuple[str, int, int], str] = {}
+    for pagina, item in widgets_do_painel():
+        pos = item["position"]
+        assert pos["x"] + pos["width"] <= 6, item["widget"]["name"]
+        for x in range(pos["x"], pos["x"] + pos["width"]):
+            for y in range(pos["y"], pos["y"] + pos["height"]):
+                chave = (pagina, x, y)
+                assert chave not in ocupadas, (item["widget"]["name"], ocupadas.get(chave))
+                ocupadas[chave] = item["widget"]["name"]
 
 
 def test_gold_junta_as_duas_silvers():

@@ -189,8 +189,10 @@ O Free Edition restringe acesso externo, então `banco` e `api` não foram testa
 │   └── fontes.schema.json             # JSON Schema do fontes.yml
 ├── resources/
 │   ├── pipeline.yml                   # pipeline serverless
-│   └── job.yml                        # ingestão de banco/api + pipeline, às 6h
+│   ├── job.yml                        # ingestão de banco/api + pipeline, às 6h
+│   └── dashboard.yml                  # painel AI/BI
 ├── src/
+│   ├── dashboards/entrevistas.lvdash.json  # painel AI/BI como código (3 páginas)
 │   ├── essentials/config_fontes.py    # lê e valida a config; gera expectations, SQL de limpeza e nomes
 │   ├── pipeline/
 │   │   ├── bronze.py                  # bronze genérica, uma tabela por fonte
@@ -279,22 +281,31 @@ agendamento das 6h fica pausado.
 
 ## Painel AI/BI
 
-1. No workspace, abra **Dashboards** > **Create dashboard**.
-2. Na aba **Data**, adicione `gold_agg_entrevista_mensal`, `gold_fato_entrevista` e
-   `gold_dim_cargo`.
-3. Peça os gráficos ao **Databricks Assistant**, por exemplo:
-   - "Gráfico de barras empilhadas com qt_entrevistas por dt_mes_entrevista, colorido por st_entrevista"
-   - "Taxa de comparecimento por nm_area: soma de qt_compareceram dividida pela soma de qt_entrevistas"
-   - "Contador de entrevistas com fl_sem_retorno verdadeiro"
-   - "Tabela das vagas da fato com id_cargo -1", para completar o cadastro de cargos
-4. Publique o painel e, se quiser, ative o **Genie** para perguntas livres.
-5. Traga o painel para o bundle:
-   ```
-   databricks bundle generate dashboard --existing-id <id-do-painel> -t dev
-   ```
-   O comando cria `resources/<nome>.dashboard.yml` e `src/<nome>.lvdash.json`. Troque o
-   `warehouse_id` fixo por uma variável (por exemplo, com `lookup` pelo nome do warehouse)
-   para funcionar nos dois targets.
+O painel **Essentials · portfolio · Entrevistas** é versionado como código
+(`src/dashboards/entrevistas.lvdash.json` + `resources/dashboard.yml`) e implantado pelo
+mesmo `bundle deploy` do pipeline. Ele usa o **Databricks AI/BI**: roda no SQL warehouse
+serverless, não cobra licença por usuário e respeita as permissões do Unity Catalog
+(`embed_credentials: false`: quem não tem acesso à gold não vê os dados).
+
+| Página | Conteúdo |
+|---|---|
+| **Visão geral** | contadores de entrevistas, comparecimento e aprovação; barras por mês e situação (concluído, em andamento, pendente); pizza por status; filtros de período e área |
+| **Áreas e vagas** | comparecimento e aprovação por área; entrevistas por vaga e situação; filtros de período e área |
+| **Pendências** | lista de trabalho do RH: entrevistas sem retorno, status não identificado e vagas sem área no cadastro, com filtro por motivo |
+
+A situação (`st_situacao`) é calculada na gold, não no painel: regra de negócio fica no
+modelo de dados. As consultas do painel leem só tabelas `gold_` e não citam catálogo nem
+schema; o bundle aponta para o ambiente certo com `dataset_catalog` e `dataset_schema`.
+O warehouse é localizado pelo nome (`lookup` da variável `warehouse_id`).
+
+**Ajustes visuais feitos na tela** (cores, posições) voltam para o repositório com:
+```
+databricks bundle generate dashboard --resource painel_entrevistas --force -t dev
+```
+
+**Genie (opcional):** no painel, ative um espaço Genie sobre `gold_fato_entrevista` e
+`gold_agg_entrevista_mensal` para perguntas livres, como "quantos aprovados em Cozinha em
+setembro?".
 
 ## Levando ao Azure Databricks do cliente
 
