@@ -27,7 +27,7 @@ uma entrevista passou de Pendente para Aprovado.
 ## 2. Como ver se a carga rodou
 
 1. Entre no Databricks e clique em **Jobs & Pipelines** no menu à esquerda.
-2. Abra o job **essentials_carga_diaria**.
+2. Abra o job **essentials_portfolio_carga_diaria**.
 3. A execução mais recente deve estar com o ícone verde (**Succeeded**). Vermelho
    (**Failed**) significa que a carga falhou.
 
@@ -35,8 +35,9 @@ Se a carga falhar, quem está cadastrado no alerta recebe um **e-mail automátic
 
 ## 3. Como ver os registros descartados (aba Data quality)
 
-1. Em **Jobs & Pipelines**, abra o pipeline **essentials_lakehouse**.
-2. No desenho do fluxo, clique em **limpa_agenda** (ou **limpa_cargos**).
+1. Em **Jobs & Pipelines**, abra o pipeline **essentials_portfolio**.
+2. No desenho do fluxo, clique em **silver_int_agenda_retrato** (ou
+   **silver_int_cargos_retrato**, para o cadastro de cargos).
 3. Abra a aba **Data quality**.
 
 | Regra | O que acontece | Significado |
@@ -46,9 +47,10 @@ Se a carga falhar, quem está cadastrado no alerta recebe um **e-mail automátic
 | `status_conhecido` | entra, com **alerta** | status escrito de um jeito que o sistema não reconhece |
 | `telefone_valido` | entra, com **alerta** | telefone vazio, incompleto ou corrompido pelo Excel (ex.: `4,19E+10`) |
 | `horario_valido` | entra, com **alerta** | horário vazio ou fora do formato `09:30` |
+| `id_cargo_preenchido` | cargo **descartado** | cargo sem identificador |
 | `prefixo_preenchido` | cargo **descartado** | cargo sem o começo do nome da vaga |
 | `area_conhecida` | entra, com **alerta** | área fora da lista combinada |
-| `prefixo_unico` | **alerta** | o mesmo prefixo cadastrado duas vezes (aparece em **silver_cargos_unico_prefixo_vaga**) |
+| `prefixo_unico` | **alerta** | o mesmo prefixo cadastrado duas vezes (aparece em **silver_int_cargos_unico_ds_prefixo_vaga**) |
 
 Alertas não impedem a carga, mas indicam algo a corrigir na planilha ou no cadastro.
 
@@ -74,8 +76,9 @@ vaga passam para a área certa, inclusive as antigas.
 ## 6. Como enviar a planilha manualmente
 
 1. No Databricks, clique em **Catalog** no menu à esquerda.
-2. Navegue até o schema `essentials`, o volume `landing` e a pasta `agenda` (no Azure,
-   use o contêiner `landing`, pasta `agenda`, pelo portal do Azure ou pelo Azure Storage
+2. Navegue até o catálogo `essentials`, o schema `portfolio`, o volume `landing` e a
+   pasta `agenda` (no Azure, use o contêiner `landing`, pasta `portfolio/agenda`, pelo
+   portal do Azure ou pelo Azure Storage
    Explorer).
 3. Clique em **Upload to this volume** e escolha o arquivo.
 4. Use sempre um **nome novo**, por exemplo com a data: `agenda_2025-12-15.csv`. Um

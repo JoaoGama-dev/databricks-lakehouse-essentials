@@ -1,20 +1,26 @@
 """Silver genérica: limpeza padrão e regras de qualidade de cada fonte do config/fontes.yml.
 
 Para cada fonte:
-  1. lê a bronze, ou a view preparada_<nome> quando há src/pipeline/silver_<nome>.sql;
-  2. aplica a limpeza padrão (TRIM, tipos, datas em mais de um formato, de-para, máscara);
+  1. lê a bronze, ou a view silver_int_<nome>_preparada quando há src/pipeline/silver_<nome>.sql;
+  2. aplica a limpeza padrão (TRIM, tipos, datas em mais de um formato, de-para, máscara)
+     e dá às colunas os nomes padronizados do YAML (dt_, nm_, st_...);
   3. aplica as regras do YAML como expectations (drop descarta, alerta só conta);
   4. grava conforme o modo de carga:
-       incremental -> streaming table silver_<nome>, só acrescenta
-       snapshot    -> AUTO CDC FROM SNAPSHOT: silver_<nome> com o estado atual e,
-                      se historico: true, silver_<nome>_historico (SCD tipo 2)
-       cdc         -> AUTO CDC com as mudanças, com os mesmos dois alvos
-  5. regras "unico" viram a materialized view silver_<nome>_unico_<colunas>.
+       incremental -> streaming table silver_<nome>, com as regras, só acrescenta
+       snapshot    -> materialized view silver_int_<nome>_retrato, com as regras, e
+                      AUTO CDC FROM SNAPSHOT para silver_<nome> (estado atual) e, se
+                      historico: true, silver_<nome>_historico (SCD tipo 2)
+       cdc         -> streaming table silver_int_<nome>_mudancas, com as regras, e
+                      AUTO CDC para os mesmos dois alvos
+  5. regras "unico" viram a materialized view silver_int_<nome>_unico_<colunas>.
 
-Nos modos snapshot e cdc as regras ficam na view limpa_<nome>, que alimenta o AUTO CDC.
+As regras ficam numa tabela intermediária, e não numa view, porque o AUTO CDC FROM
+SNAPSHOT lê a origem como um retrato e não aplica nem registra expectations de views.
 """
 
+import operator
 import sys
+from functools import reduce
 
 from pyspark import pipelines as dp
 from pyspark.sql import DataFrame, SparkSession, Window
@@ -66,9 +72,19 @@ def manter_ultimo_arquivo(df: DataFrame) -> DataFrame:
 
 
 def manter_versao_mais_recente(df: DataFrame, fonte: dict) -> DataFrame:
-    """O AUTO CDC FROM SNAPSHOT exige chave única dentro do retrato."""
-    janela = Window.partitionBy(*fonte["chave_primaria"]).orderBy(F.col(fonte["coluna_atualizacao"]).desc_nulls_last())
-    return df.withColumn("_ordem", F.row_number().over(janela)).where("_ordem = 1").drop("_ordem")
+    """O AUTO CDC FROM SNAPSHOT exige chave única dentro do retrato.
+
+    Registros com chave incompleta não são deduplicados: seguem para as regras
+    nao_nulo da chave, que os descartam e os contam na aba Data quality.
+    """
+    chave = fonte["chave_primaria"]
+    janela = Window.partitionBy(*chave).orderBy(F.col(fonte["coluna_atualizacao"]).desc_nulls_last())
+    chave_incompleta = reduce(operator.or_, [F.col(coluna).isNull() for coluna in chave])
+    return (
+        df.withColumn("_ordem", F.row_number().over(janela))
+        .where((F.col("_ordem") == 1) | chave_incompleta)
+        .drop("_ordem")
+    )
 
 
 def sem_colunas_auxiliares(df: DataFrame, fonte: dict) -> DataFrame:
@@ -79,22 +95,24 @@ def sem_colunas_auxiliares(df: DataFrame, fonte: dict) -> DataFrame:
 
 def criar_alvos_auto_cdc(fonte: dict) -> None:
     tabelas = tabelas_da_fonte(fonte)
-    alvos = [(tabelas["silver"], 1, "estado atual de cada registro")]
+    alvos = [(tabelas["silver"], 1, "atual", "estado atual de cada registro")]
     if tabelas["historico"]:
-        alvos.append((tabelas["historico"], 2, "histórico de versões (SCD tipo 2, colunas __START_AT e __END_AT)"))
+        alvos.append(
+            (tabelas["historico"], 2, "historico", "histórico de versões (SCD tipo 2, colunas __START_AT e __END_AT)")
+        )
 
-    for nome, tipo_scd, descricao in alvos:
+    for nome, tipo_scd, tipo_tabela, descricao in alvos:
         dp.create_streaming_table(
             name=nome,
             comment=f"Silver de {fonte['nome']}, {descricao}: {fonte['descricao']}",
-            table_properties=propriedades_tabela("silver", fonte),
+            table_properties=propriedades_tabela("silver", tipo_tabela, fonte),
         )
         # As colunas técnicas mudam a cada carga e não devem gerar nova versão no histórico.
         ignorar_no_historico = colunas_tecnicas(fonte) if tipo_scd == 2 else None
         if fonte["modo_carga"] == "snapshot":
             dp.create_auto_cdc_from_snapshot_flow(
                 target=nome,
-                source=tabelas["limpa"],
+                source=tabelas["validada"],
                 keys=fonte["chave_primaria"],
                 stored_as_scd_type=tipo_scd,
                 track_history_except_column_list=ignorar_no_historico,
@@ -103,7 +121,7 @@ def criar_alvos_auto_cdc(fonte: dict) -> None:
             cdc = fonte["cdc"]
             dp.create_auto_cdc_flow(
                 target=nome,
-                source=tabelas["limpa"],
+                source=tabelas["validada"],
                 keys=fonte["chave_primaria"],
                 sequence_by=F.col(fonte["coluna_atualizacao"]),
                 apply_as_deletes=F.expr(f"`{cdc['coluna_operacao']}` = {literal_sql(cdc['valor_exclusao'])}"),
@@ -117,14 +135,14 @@ def criar_checagem_unicidade(fonte: dict, regra: dict, nome: str) -> None:
     silver = tabelas_da_fonte(fonte)["silver"]
 
     def contagem_por_chave() -> DataFrame:
-        return spark.read.table(silver).groupBy(*regra["colunas"]).agg(F.count("*").alias("quantidade"))
+        return spark.read.table(silver).groupBy(*regra["colunas"]).agg(F.count("*").alias("qt_registros"))
 
     dp.materialized_view(
         name=nome,
         comment=f"Checagem da regra {regra['nome']}: quantos registros de {silver} existem para cada valor de "
-        f"{', '.join(regra['colunas'])}. Cada linha com quantidade maior que 1 conta como alerta.",
-        table_properties=propriedades_tabela("silver", fonte),
-    )(dp.expect_all({regra["nome"]: "quantidade = 1"})(contagem_por_chave))
+        f"{', '.join(regra['colunas'])}. Cada linha com qt_registros maior que 1 conta como alerta.",
+        table_properties=propriedades_tabela("silver", "intermediaria", fonte),
+    )(dp.expect_all({regra["nome"]: "qt_registros = 1"})(contagem_por_chave))
 
 
 def criar_silver(fonte: dict) -> None:
@@ -140,28 +158,38 @@ def criar_silver(fonte: dict) -> None:
         dp.table(
             name=tabelas["silver"],
             comment=f"Silver de {fonte['nome']}, limpa e padronizada: {fonte['descricao']}",
-            table_properties=propriedades_tabela("silver", fonte),
+            table_properties=propriedades_tabela("silver", "atual", fonte),
         )(com_expectations(silver_incremental, fonte))
 
     elif modo == "snapshot":
 
-        def retrato_limpo() -> DataFrame:
+        def retrato_validado() -> DataFrame:
             df = limpar(manter_ultimo_arquivo(spark.read.table(origem)), fonte)
             return sem_colunas_auxiliares(manter_versao_mais_recente(df, fonte), fonte)
 
-        dp.temporary_view(name=tabelas["limpa"])(com_expectations(retrato_limpo, fonte))
+        dp.materialized_view(
+            name=tabelas["validada"],
+            comment=f"Último retrato de {fonte['nome']}, limpo e com as regras de qualidade aplicadas; "
+            f"alimenta o AUTO CDC de {tabelas['silver']}.",
+            table_properties=propriedades_tabela("silver", "intermediaria", fonte),
+        )(com_expectations(retrato_validado, fonte))
         criar_alvos_auto_cdc(fonte)
 
     else:
 
-        def mudancas_limpas() -> DataFrame:
+        def mudancas_validadas() -> DataFrame:
             df = spark.readStream.table(origem)
             if fonte["tipo"] == "tabela":
                 # No change data feed, a imagem anterior de um UPDATE não é uma mudança nova.
                 df = df.where("_change_type != 'update_preimage'")
             return limpar(df, fonte)
 
-        dp.temporary_view(name=tabelas["limpa"])(com_expectations(mudancas_limpas, fonte))
+        dp.table(
+            name=tabelas["validada"],
+            comment=f"Mudanças de {fonte['nome']}, limpas e com as regras de qualidade aplicadas; "
+            f"alimentam o AUTO CDC de {tabelas['silver']}.",
+            table_properties=propriedades_tabela("silver", "intermediaria", fonte),
+        )(com_expectations(mudancas_validadas, fonte))
         criar_alvos_auto_cdc(fonte)
 
     for regra, nome in zip(regras_unico(fonte), tabelas["unicidade"], strict=True):

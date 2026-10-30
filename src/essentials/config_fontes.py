@@ -20,6 +20,28 @@ FUNCOES_CAIXA = {"titulo": "initcap", "maiuscula": "upper", "minuscula": "lower"
 # Colunas que o Auto Loader cria e que não seguem para a silver.
 COLUNAS_SO_DA_BRONZE = {"_rescued_data"}
 
+# Padrão de nomes de colunas da silver e da gold: o prefixo diz a classe da informação
+# e só aceita os tipos compatíveis. Ex.: dt_entrevista (data), st_entrevista (status).
+PREFIXOS_POR_TIPO = {
+    "id": {"inteiro", "texto"},  # identificador / chave
+    "cd": {"texto", "inteiro"},  # código
+    "nm": {"texto"},  # nome
+    "ds": {"texto"},  # descrição / texto livre
+    "sg": {"texto"},  # sigla
+    "st": {"texto"},  # status / situação
+    "nr": {"texto", "inteiro"},  # número (telefone, documento)
+    "qt": {"inteiro", "decimal"},  # quantidade / contagem
+    "vl": {"decimal", "inteiro"},  # valor
+    "pc": {"decimal"},  # percentual
+    "dt": {"data"},  # data
+    "dh": {"timestamp"},  # data e hora
+    "hr": {"texto"},  # hora (hh:mm)
+    "fl": {"booleano"},  # flag
+}
+
+# Tipo de cada tabela, gravado em TBLPROPERTIES ('tipo' = ...).
+TIPOS_DE_TABELA = {"bruta", "intermediaria", "atual", "historico", "dimensao", "fato", "agregada"}
+
 
 def resolver_caminho(caminho: str | Path) -> Path:
     """No workspace, o bundle pode informar o caminho sem o prefixo /Workspace."""
@@ -57,7 +79,34 @@ def validar_config(config: dict) -> None:
         if fonte["tipo"] == "banco" and fonte["modo_carga"] != "snapshot" and not banco.get("coluna_watermark"):
             erros.append(f"{nome}: banco em modo {fonte['modo_carga']} precisa de coluna_watermark")
 
-        declaradas = set(fonte.get("colunas", {}))
+        colunas = fonte.get("colunas", {})
+        for coluna, configuracao in colunas.items():
+            prefixo = coluna.split("_", 1)[0]
+            aceitos = PREFIXOS_POR_TIPO.get(prefixo)
+            if aceitos is None:
+                erros.append(f"{nome}: coluna {coluna} sem prefixo conhecido ({', '.join(PREFIXOS_POR_TIPO)})")
+            elif configuracao["tipo"] not in aceitos:
+                erros.append(
+                    f"{nome}: coluna {coluna} é do tipo {configuracao['tipo']}, "
+                    f"mas o prefixo {prefixo}_ aceita só {', '.join(sorted(aceitos))}"
+                )
+        origens = [configuracao["origem"] for configuracao in colunas.values()]
+        origens_repetidas = sorted({origem for origem in origens if origens.count(origem) > 1})
+        if origens_repetidas:
+            erros.append(f"{nome}: mais de uma coluna com a mesma origem: {', '.join(origens_repetidas)}")
+
+        if fonte["modo_carga"] in ("snapshot", "cdc"):
+            # O AUTO CDC não aceita chave nula: cada coluna da chave precisa ser barrada antes.
+            barradas = {
+                regra["coluna"]
+                for regra in fonte.get("regras", [])
+                if regra["tipo"] == "nao_nulo" and regra["acao"] == "drop"
+            }
+            sem_regra = [coluna for coluna in fonte["chave_primaria"] if coluna not in barradas]
+            if sem_regra:
+                erros.append(f"{nome}: chave sem regra nao_nulo com drop: {', '.join(sem_regra)}")
+
+        declaradas = set(colunas)
         if not declaradas:
             continue
         usadas = set(fonte["chave_primaria"])
@@ -81,15 +130,21 @@ def regras_unico(fonte: dict) -> list[dict]:
 
 
 def tabelas_da_fonte(fonte: dict) -> dict:
-    """Nomes de tudo o que o pipeline cria para uma fonte."""
+    """Nomes de tudo o que o pipeline cria para uma fonte, no padrão camada_tipo_nome.
+
+    validada: tabela intermediária onde as regras de qualidade são aplicadas antes do
+    AUTO CDC (retrato no modo snapshot, mudanças no modo cdc). No modo incremental as
+    regras ficam na própria silver_<nome>.
+    """
     nome = fonte["nome"]
+    validada = {"snapshot": f"silver_int_{nome}_retrato", "cdc": f"silver_int_{nome}_mudancas"}
     return {
         "bronze": f"bronze_{nome}",
+        "preparada": f"silver_int_{nome}_preparada" if fonte.get("preparacao_sql") else None,
+        "validada": validada.get(fonte["modo_carga"]),
         "silver": f"silver_{nome}",
         "historico": f"silver_{nome}_historico" if fonte.get("historico") else None,
-        "preparada": f"preparada_{nome}" if fonte.get("preparacao_sql") else None,
-        "limpa": f"limpa_{nome}",
-        "unicidade": [f"silver_{nome}_unico_{'_'.join(regra['colunas'])}" for regra in regras_unico(fonte)],
+        "unicidade": [f"silver_int_{nome}_unico_{'_'.join(regra['colunas'])}" for regra in regras_unico(fonte)],
     }
 
 
@@ -114,12 +169,15 @@ def formato_landing(fonte: dict) -> str | None:
     return {"arquivo": fonte.get("arquivo", {}).get("formato"), "banco": "parquet", "api": "json"}.get(fonte["tipo"])
 
 
-def nome_tabela_origem(fonte: dict, catalogo: str) -> str:
-    return fonte["tabela"]["nome_completo"].replace("{catalogo}", catalogo)
+def nome_tabela_origem(fonte: dict, catalogo: str, projeto: str) -> str:
+    """Troca os marcadores {catalogo} e {projeto} pelos valores do target."""
+    return fonte["tabela"]["nome_completo"].replace("{catalogo}", catalogo).replace("{projeto}", projeto)
 
 
-def propriedades_tabela(camada: str, fonte: dict) -> dict:
-    return {"camada": camada, "fonte": fonte["nome"]}
+def propriedades_tabela(camada: str, tipo: str, fonte: dict) -> dict:
+    if tipo not in TIPOS_DE_TABELA:
+        raise ValueError(f"tipo de tabela desconhecido: {tipo}")
+    return {"camada": camada, "tipo": tipo, "fonte": fonte["nome"]}
 
 
 # Regras de qualidade --------------------------------------------------------------
@@ -219,16 +277,20 @@ def expressao_limpeza(coluna: str, configuracao: dict | None = None) -> str:
 def expressoes_silver(fonte: dict, tipos_das_colunas: list[tuple[str, str]]) -> list[str]:
     """Lista de expressões para selectExpr, a partir de df.dtypes da origem.
 
-    Colunas declaradas recebem a limpeza do config; as outras de texto recebem só
-    TRIM; colunas técnicas (começam com _) e não textuais passam como estão.
+    Colunas declaradas recebem a limpeza do config e o nome padronizado (a chave do
+    bloco "colunas"), a partir da coluna "origem"; as outras de texto recebem só TRIM;
+    colunas técnicas (começam com _) e não textuais passam como estão.
     """
-    declaradas = fonte.get("colunas", {})
+    por_origem = {
+        configuracao["origem"]: (nome, configuracao) for nome, configuracao in fonte.get("colunas", {}).items()
+    }
     expressoes = []
     for coluna, tipo in tipos_das_colunas:
         if coluna in COLUNAS_SO_DA_BRONZE:
             continue
-        if coluna in declaradas:
-            expressoes.append(f"{expressao_limpeza(coluna, declaradas[coluna])} AS `{coluna}`")
+        if coluna in por_origem:
+            nome, configuracao = por_origem[coluna]
+            expressoes.append(f"{expressao_limpeza(coluna, configuracao)} AS `{nome}`")
         elif coluna.startswith("_") or tipo != "string":
             expressoes.append(f"`{coluna}`")
         else:

@@ -1,8 +1,26 @@
-# Regras do projeto essentials_lakehouse
+# Regras do projeto essentials_portfolio
 
-Acelerador do pacote Essentials: lakehouse medalhão orientado por metadados,
+Projeto do pacote Essentials: lakehouse medalhão orientado por metadados,
 empacotado como Databricks Asset Bundle. Roda no Free Edition (target `dev`) e no
 Azure Databricks do cliente (target `prod`).
+
+## Estrutura do pacote Essentials
+- Catálogo `essentials` (dev) ou o do cliente (prod); **um schema por projeto**
+  (`<projeto>`, com o volume `landing`) e `<projeto>_origem` para origens simuladas.
+- Bundle `essentials_<projeto>`; a variável `projeto` gera schema, landing e os nomes do
+  job e do pipeline. Nunca escreva o nome do projeto fixo no código: use `${var.projeto}`
+  ou o marcador `{projeto}` do `fontes.yml`.
+
+## Padrão de nomes
+- **Tabelas `camada_tipo_nome`**: `bronze_<fonte>`, `silver_int_<fonte>_<passo>`
+  (intermediárias), `silver_<fonte>`, `silver_<fonte>_historico`, `gold_dim_<nome>`,
+  `gold_fato_<nome>`, `gold_agg_<nome>`. Fato e dimensão no singular.
+- Toda tabela com `TBLPROPERTIES ('camada' = ..., 'tipo' = ...)`; tipos válidos em
+  `TIPOS_DE_TABELA` (`src/essentials/config_fontes.py`).
+- **Colunas com prefixo da classe da informação**: `id_ cd_ nm_ ds_ sg_ st_ nr_ qt_ vl_
+  pc_ dt_ dh_ hr_ fl_` (tabela e tipos aceitos em `PREFIXOS_POR_TIPO`). Vale para silver
+  e gold; a bronze e as views de preparação mantêm os nomes da origem. Colunas técnicas
+  começam com `_`.
 
 ## Orientado por metadados
 - **As fontes do cliente ficam em `config/fontes.yml`.** Trocar de cliente é trocar
@@ -21,14 +39,17 @@ Azure Databricks do cliente (target `prod`).
   `_arquivo_origem` (quando há arquivo) e `_ingerido_em`.
 - **Qualidade só via expectations na silver**, geradas das `regras` do YAML.
   Não filtrar dados com `WHERE` para esconder problemas de qualidade.
+- **Expectations nunca em view temporária que alimenta AUTO CDC**: o AUTO CDC FROM
+  SNAPSHOT ignora as regras de views sem avisar. Elas ficam em `silver_int_<fonte>_retrato`
+  (MV, snapshot) ou `silver_int_<fonte>_mudancas` (streaming, cdc).
 - **Lógica específica de uma fonte** fica em `src/pipeline/silver_<nome>.sql`, como a
-  view temporária `preparada_<nome>`, com `preparacao_sql: true` no YAML. Nela vai só o
-  que a limpeza padrão não cobre (ex.: estrutura do arquivo); TRIM, tipos, de-para e
-  regras continuam no YAML.
+  view temporária `silver_int_<nome>_preparada`, com `preparacao_sql: true` no YAML. Nela
+  vai só o que a limpeza padrão não cobre (ex.: estrutura do arquivo); TRIM, tipos,
+  de-para, nomes padronizados e regras continuam no YAML.
 - Modos `snapshot` e `cdc` usam AUTO CDC; `historico: true` cria `silver_<nome>_historico`
-  (SCD tipo 2).
-- **Gold em SQL**, em `src/pipeline/gold_*.sql`, com materialized views `gold_*`.
-- **COMMENT obrigatório** em toda tabela, mais `TBLPROPERTIES ('camada' = 'bronze'|'silver'|'gold')`.
+  (SCD tipo 2). Cada coluna da chave precisa de regra `nao_nulo` com `drop`.
+- **Gold em SQL**, em `src/pipeline/gold_*.sql`, em modelo estrela (dim, fato, agg).
+- **COMMENT obrigatório** em toda tabela.
 - Todo arquivo novo em `src/pipeline/` entra nas `libraries` de `resources/pipeline.yml`.
 - Fontes `banco` e `api` chegam à landing pelos jobs de `src/ingestao/`; só são
   testadas no Azure (o Free Edition restringe acesso externo).

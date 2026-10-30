@@ -31,6 +31,7 @@ from essentials.config_fontes import (  # noqa: E402
 )
 
 CATALOGO = spark.conf.get("catalogo")
+PROJETO = spark.conf.get("projeto")
 LANDING = spark.conf.get("landing_path").rstrip("/")
 FONTES = carregar_fontes(spark.conf.get("fontes_config"))
 FORMATOS_AUTO_LOADER = {"csv": "csv", "json": "json", "parquet": "parquet", "texto": "text"}
@@ -60,18 +61,18 @@ def ler_tabela_em_streaming(fonte: dict) -> DataFrame:
     else:
         # Incremental: ignora atualizações na origem e segue lendo só o que foi incluído.
         leitor = leitor.option("skipChangeCommits", "true")
-    return leitor.table(nome_tabela_origem(fonte, CATALOGO))
+    return leitor.table(nome_tabela_origem(fonte, CATALOGO, PROJETO))
 
 
 def criar_bronze(fonte: dict) -> None:
     nome = tabelas_da_fonte(fonte)["bronze"]
     comentario = f"Bronze de {fonte['nome']}: {fonte['descricao']} Dado exatamente como chegou, sem transformação."
-    propriedades = propriedades_tabela("bronze", fonte)
+    propriedades = propriedades_tabela("bronze", "bruta", fonte)
 
     if fonte["tipo"] == "tabela" and fonte["modo_carga"] == "snapshot":
 
         def copia_da_tabela() -> DataFrame:
-            return com_colunas_tecnicas(spark.read.table(nome_tabela_origem(fonte, CATALOGO)), fonte)
+            return com_colunas_tecnicas(spark.read.table(nome_tabela_origem(fonte, CATALOGO, PROJETO)), fonte)
 
         dp.materialized_view(name=nome, comment=comentario, table_properties=propriedades)(copia_da_tabela)
         return

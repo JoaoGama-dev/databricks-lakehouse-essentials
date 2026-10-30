@@ -1,26 +1,38 @@
-# Bundle do pacote Essentials: lakehouse medalhão (bronze, silver, gold) orientado por
-# metadados. As fontes do cliente ficam em config/fontes.yml.
+# Bundle de um projeto do pacote Essentials: lakehouse medalhão (bronze, silver, gold)
+# orientado por metadados. As fontes do projeto ficam em config/fontes.yml.
 # O mesmo código roda no Free Edition (dev) e no Azure Databricks do cliente (prod);
 # só muda o target.
+#
+# Convenção do pacote Essentials (detalhes no README):
+#   catálogo  essentials (dev) ou o catálogo do cliente (prod)
+#   schema    <projeto>          tabelas bronze, silver e gold e o volume landing
+#   schema    <projeto>_origem   sistemas de origem simulados (só no Free Edition)
+#   bundle    essentials_<projeto>, para cada projeto ter sua pasta no workspace
+# Para um projeto novo, troque o nome do bundle e a variável "projeto".
 bundle:
-  name: essentials_lakehouse
+  name: essentials_portfolio
 
 include:
   - resources/*.yml
 
 variables:
+  projeto:
+    description: Nome do projeto em snake_case; vira o schema e entra no nome do job e do pipeline
+    default: portfolio
   catalog:
-    description: Catálogo do Unity Catalog onde ficam as tabelas
-    default: workspace
-  schema:
-    description: Schema das tabelas bronze, silver e gold
+    description: Catálogo do Unity Catalog do pacote (dev) ou do cliente (prod)
     default: essentials
+  schema:
+    description: Schema das tabelas bronze, silver e gold (um por projeto)
+    default: ${var.projeto}
   landing_path:
-    description: Raiz da landing zone; cada fonte tem sua pasta (config/fontes.yml)
-    default: /Volumes/workspace/essentials/landing
+    description: Raiz da landing zone do projeto; cada fonte tem sua pasta (config/fontes.yml)
+    default: /Volumes/${var.catalog}/${var.projeto}/landing
   alert_email:
+    # Não versione o e-mail real: passe-o no deploy com --var="alert_email=..." ou com a
+    # variável de ambiente BUNDLE_VAR_alert_email.
     description: E-mail que recebe o aviso quando a carga diária falha
-    default: seu-email@exemplo.com
+    default: alertas@exemplo.com
 
 targets:
   # Free Edition: só serverless, landing zone em um Volume do Unity Catalog.
@@ -28,8 +40,7 @@ targets:
     mode: development
     default: true
     workspace:
-      # Troque pela URL do seu workspace Free Edition.
-      host: https://dbc-XXXXXXXX-XXXX.cloud.databricks.com
+      host: https://dbc-5984f863-c1ee.cloud.databricks.com
 
   # Azure Databricks do cliente: landing zone no ADLS Gen2, execução pelo service principal.
   prod:
@@ -40,7 +51,7 @@ targets:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       catalog: prd
-      landing_path: abfss://landing@STORAGEACCOUNT.dfs.core.windows.net
+      landing_path: abfss://landing@STORAGEACCOUNT.dfs.core.windows.net/${var.projeto}
     run_as:
       # Application ID do service principal de produção.
       service_principal_name: 00000000-0000-0000-0000-000000000000

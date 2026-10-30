@@ -5,7 +5,7 @@
 resources:
   pipelines:
     essentials_pipeline:
-      name: essentials_lakehouse
+      name: essentials_${var.projeto}
       catalog: ${var.catalog}
       schema: ${var.schema}
       serverless: true
@@ -13,6 +13,7 @@ resources:
       channel: CURRENT
       configuration:
         catalogo: ${var.catalog}
+        projeto: ${var.projeto}
         landing_path: ${var.landing_path}
         fontes_config: ${workspace.file_path}/config/fontes.yml
         diretorio_codigo: ${workspace.file_path}/src

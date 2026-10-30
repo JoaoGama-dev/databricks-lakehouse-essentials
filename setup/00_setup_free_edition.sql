@@ -1,19 +1,29 @@
--- Preparação do Free Edition: rode uma vez no SQL Editor antes do primeiro deploy.
+-- Preparação do Free Edition: rode uma vez antes do primeiro deploy do projeto.
+--
+-- Convenção do pacote Essentials:
+--   catálogo essentials             um só para todos os projetos do pacote
+--   schema   essentials.<projeto>   bronze, silver, gold e o volume landing do projeto
+--   schema   essentials.<projeto>_origem   sistemas de origem simulados do projeto
+-- Para outro projeto, troque "portfolio" pelo nome do projeto (a variável "projeto"
+-- do databricks.yml) em todo este arquivo.
 
--- Schema das tabelas do lakehouse e Volume que serve de landing zone.
--- Cada fonte do tipo arquivo tem sua pasta: /Volumes/workspace/essentials/landing/<caminho>/
-CREATE SCHEMA IF NOT EXISTS workspace.essentials
-COMMENT 'Lakehouse do pacote Essentials: bronze, silver e gold.';
+CREATE CATALOG IF NOT EXISTS essentials
+COMMENT 'Pacote Essentials da Logos Analytics: um schema por projeto.';
 
-CREATE VOLUME IF NOT EXISTS workspace.essentials.landing
-COMMENT 'Landing zone: arquivos recebidos das fontes, uma pasta por fonte.';
+-- Schema das tabelas do projeto e Volume que serve de landing zone.
+-- Cada fonte do tipo arquivo tem sua pasta: /Volumes/essentials/portfolio/landing/<caminho>/
+CREATE SCHEMA IF NOT EXISTS essentials.portfolio
+COMMENT 'Projeto portfolio do pacote Essentials: bronze, silver e gold da agenda de entrevistas.';
+
+CREATE VOLUME IF NOT EXISTS essentials.portfolio.landing
+COMMENT 'Landing zone do projeto portfolio: arquivos recebidos das fontes, uma pasta por fonte.';
 
 -- Tabela de apoio que simula um sistema de origem do cliente (fonte "cargos", tipo tabela).
 -- Liga o começo do nome da vaga, em minúsculas, a uma área da empresa.
-CREATE SCHEMA IF NOT EXISTS workspace.origem
-COMMENT 'Simula os sistemas de origem do cliente no Free Edition.';
+CREATE SCHEMA IF NOT EXISTS essentials.portfolio_origem
+COMMENT 'Sistemas de origem simulados do projeto portfolio (só no Free Edition).';
 
-CREATE OR REPLACE TABLE workspace.origem.cadastro_cargos (
+CREATE OR REPLACE TABLE essentials.portfolio_origem.cadastro_cargos (
   id_cargo INT COMMENT 'Identificador do cargo',
   prefixo_vaga STRING COMMENT 'Começo do nome da vaga, em minúsculas; o mais longo que combinar vence',
   area STRING COMMENT 'Área da empresa',
@@ -21,7 +31,7 @@ CREATE OR REPLACE TABLE workspace.origem.cadastro_cargos (
 )
 COMMENT 'Cadastro de cargos do RH: prefixo do nome da vaga e área.';
 
-INSERT INTO workspace.origem.cadastro_cargos VALUES
+INSERT INTO essentials.portfolio_origem.cadastro_cargos VALUES
   (1, 'cozinheir', 'Cozinha', current_timestamp()),
   (2, 'auxiliar de cozinha', 'Cozinha', current_timestamp()),
   (3, 'confeiteir', 'Cozinha', current_timestamp()),

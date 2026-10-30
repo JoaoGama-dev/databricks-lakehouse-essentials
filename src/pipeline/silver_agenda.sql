@@ -1,4 +1,6 @@
 -- Preparação específica da fonte "agenda", lida por silver.py antes da limpeza padrão.
+-- As colunas saem com os nomes da planilha (data_entrevista, horario...); os nomes
+-- padronizados (dt_entrevista, hr_entrevista...) vêm do config/fontes.yml.
 --
 -- A planilha não traz a data em cada linha: ela aparece numa linha separadora
 -- ("AGENDA DIA 04/08/2025;;;;;") e vale para as linhas de baixo. Como o Spark não
@@ -8,7 +10,7 @@
 --
 -- Nada é limpo aqui: TRIM, de-para do status, datas e regras de qualidade vêm do
 -- config/fontes.yml e são aplicados em silver.py.
-CREATE TEMPORARY VIEW preparada_agenda
+CREATE TEMPORARY VIEW silver_int_agenda_preparada
 COMMENT 'Agenda de entrevistas em uma linha por entrevista, com a data do separador repetida em cada linha.'
 AS SELECT
   data_entrevista,

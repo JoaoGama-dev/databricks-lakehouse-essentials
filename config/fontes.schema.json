@@ -41,6 +41,7 @@
         "cdc": { "$ref": "#/$defs/cdc" },
         "colunas": {
           "type": "object",
+          "propertyNames": { "pattern": "^(id|cd|nm|ds|sg|st|nr|qt|vl|pc|dt|dh|hr|fl)_[a-z0-9_]+$" },
           "additionalProperties": { "$ref": "#/$defs/coluna" }
         },
         "regras": {
@@ -139,9 +140,10 @@
     },
     "coluna": {
       "type": "object",
-      "required": ["tipo"],
+      "required": ["origem", "tipo"],
       "additionalProperties": false,
       "properties": {
+        "origem": { "type": "string", "minLength": 1 },
         "tipo": { "enum": ["texto", "inteiro", "decimal", "data", "timestamp", "booleano"] },
         "formatos": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
         "caixa": { "enum": ["titulo", "maiuscula", "minuscula"] },

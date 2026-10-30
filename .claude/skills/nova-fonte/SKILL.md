@@ -19,9 +19,11 @@ comandos: só leia, crie e edite arquivos.
      separadora, cabeçalho em várias linhas), vai precisar de `silver_<nome>.sql`.
 
 2. **Propor e esperar a aprovação.** Mostre:
-   - o bloco YAML completo da fonte, com `colunas` (tipo, formatos, caixa, de-para,
-     máscara) e `regras` (nao_nulo, valores_aceitos, expressao, unico), cada regra com
-     `drop` ou `alerta` e o motivo;
+   - o bloco YAML completo da fonte, com `colunas` (nome padronizado com prefixo da
+     classe da informação, `origem`, tipo, formatos, caixa, de-para, máscara) e `regras`
+     (nao_nulo, valores_aceitos, expressao, unico), cada regra com `drop` ou `alerta` e o
+     motivo. Em snapshot e cdc, cada coluna da chave precisa de `nao_nulo` com `drop`;
+   - uma tabela de-para das colunas: nome na origem → nome padronizado → tipo;
    - se vai criar `silver_<nome>.sql` e o que ele fará;
    - se há gold nova ou alterada.
 
@@ -30,12 +32,15 @@ comandos: só leia, crie e edite arquivos.
 3. **Aplicar:**
    - acrescente a fonte em `config/fontes.yml`, seguindo os comentários do arquivo;
    - se precisar, crie `src/pipeline/silver_<nome>.sql` com
-     `CREATE TEMPORARY VIEW preparada_<nome>` lendo `bronze_<nome>`, marque
+     `CREATE TEMPORARY VIEW silver_int_<nome>_preparada` lendo `bronze_<nome>` (com os
+     nomes de coluna da origem; os padronizados vêm do YAML), marque
      `preparacao_sql: true` e inclua o arquivo nas `libraries` de `resources/pipeline.yml`;
-   - gold nova ou alterada em `src/pipeline/gold_*.sql`, com COMMENT e
-     `TBLPROPERTIES ('camada' = 'gold')`;
-   - para tipo tabela no Free Edition, inclua a criação da tabela em
-     `setup/00_setup_free_edition.sql`.
+   - gold nova ou alterada em `src/pipeline/gold_*.sql`, como `gold_dim_*`, `gold_fato_*`
+     ou `gold_agg_*`, com COMMENT, `TBLPROPERTIES ('camada' = 'gold', 'tipo' = ...)` e
+     colunas com prefixo da classe da informação;
+   - para tipo tabela no Free Edition, inclua a criação da tabela no schema
+     `essentials.<projeto>_origem` em `setup/00_setup_free_edition.sql` e use
+     `{catalogo}.{projeto}_origem.<tabela>` no YAML.
 
 4. **Atualizar o resto:** testes específicos em `tests/test_projeto.py` (quando houver
    lógica nova), `README.md` (tabela de fontes) e `docs/roteiro-de-operacao.md` (onde

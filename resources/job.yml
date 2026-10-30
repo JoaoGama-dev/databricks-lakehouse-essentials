@@ -6,7 +6,7 @@
 resources:
   jobs:
     essentials_carga_diaria:
-      name: essentials_carga_diaria
+      name: essentials_${var.projeto}_carga_diaria
       max_concurrent_runs: 1
       schedule:
         quartz_cron_expression: "0 0 6 * * ?"

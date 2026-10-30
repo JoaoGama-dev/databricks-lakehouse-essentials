@@ -1,10 +1,20 @@
-# Fontes de dados do cliente.
+# Fontes de dados do projeto.
 # Este é o ÚNICO arquivo que muda de um cliente para outro: cada item de "fontes"
-# gera automaticamente bronze_<nome> (src/pipeline/bronze.py) e silver_<nome>
-# (src/pipeline/silver.py). O formato é validado por config/fontes.schema.json.
+# gera automaticamente as tabelas bronze e silver (src/pipeline/bronze.py e silver.py).
+# O formato é validado por config/fontes.schema.json.
+#
+# NOMES DAS TABELAS (padrão camada_tipo_nome)
+#   bronze_<nome>                     dado bruto, exatamente como chegou
+#   silver_int_<nome>_preparada       view temporária de silver_<nome>.sql (se houver)
+#   silver_int_<nome>_retrato         snapshot: último retrato limpo, onde ficam as regras
+#   silver_int_<nome>_mudancas        cdc: mudanças limpas, onde ficam as regras
+#   silver_int_<nome>_unico_<cols>    checagem das regras "unico"
+#   silver_<nome>                     estado atual (no incremental, também onde ficam as regras)
+#   silver_<nome>_historico           histórico SCD tipo 2 (se historico: true)
+#   gold_dim_* / gold_fato_* / gold_agg_*   escritas à mão em src/pipeline/gold_*.sql
 #
 # CAMPOS DE CADA FONTE
-#   nome               snake_case; vira o nome das tabelas: bronze_<nome>, silver_<nome>
+#   nome               snake_case; entra no nome das tabelas
 #   descricao          texto livre; entra no COMMENT das tabelas
 #   tipo               de onde vem o dado:
 #                        arquivo -> arquivos na landing zone (csv, json, parquet ou texto)
@@ -21,17 +31,19 @@
 #                                       a silver aplica as mudanças (AUTO CDC)
 #   historico          true cria também silver_<nome>_historico (SCD tipo 2, com
 #                      __START_AT e __END_AT). Só para snapshot e cdc.
-#   chave_primaria     colunas que identificam um registro, já com os nomes da silver
+#   chave_primaria     colunas que identificam um registro, com os nomes padronizados.
+#                      Em snapshot e cdc, cada uma precisa de uma regra nao_nulo com drop.
 #   coluna_atualizacao coluna que diz qual versão de um registro é a mais recente
 #                      (data de atualização, número de linha etc.)
 #   preparacao_sql     true quando a fonte precisa de lógica própria antes da limpeza
 #                      padrão. Nesse caso existe src/pipeline/silver_<nome>.sql com a view
-#                      temporária preparada_<nome>, e a silver lê dela em vez da bronze.
+#                      temporária silver_int_<nome>_preparada, lida no lugar da bronze.
 #
 # BLOCO DO TIPO (só o do tipo escolhido)
 #   arquivo:  formato (csv | json | parquet | texto), caminho (pasta dentro da landing),
 #             opcoes (opções de leitura do Auto Loader, como header e sep)
-#   tabela:   nome_completo (catalogo.schema.tabela; {catalogo} vira o catálogo do target)
+#   tabela:   nome_completo (catalogo.schema.tabela; {catalogo} e {projeto} viram o
+#             catálogo e o projeto do target)
 #   banco:    conexao (conexão do Unity Catalog; o catálogo estrangeiro tem o mesmo nome),
 #             tabela_origem (schema.tabela no banco), coluna_watermark (coluna crescente
 #             usada para trazer só o que é novo), pasta_landing
@@ -40,9 +52,17 @@
 #             paginacao (parametro da página e limite de páginas)
 #   cdc:      (só modo cdc) coluna_operacao e valor_exclusao
 #
-# COLUNAS (limpeza padrão da silver)
+# COLUNAS (limpeza padrão e nome padronizado na silver)
+#   A chave de cada item é o NOME FINAL da coluna, com prefixo da classe da informação;
+#   "origem" é o nome da coluna na bronze (ou na view preparada).
+#     id_ identificador   cd_ código       nm_ nome          ds_ descrição
+#     sg_ sigla           st_ status       nr_ número        qt_ quantidade
+#     vl_ valor           pc_ percentual   dt_ data          dh_ data e hora
+#     hr_ hora (hh:mm)    fl_ flag
+#   O prefixo precisa combinar com o tipo (ex.: dt_ só com data); a validação recusa o contrário.
 #   Toda coluna de texto recebe TRIM e perde espaços repetidos; texto vazio vira nulo.
-#   Colunas não listadas passam só por essa limpeza. Para as listadas:
+#   Colunas não listadas passam só por essa limpeza e mantêm o nome; declare todas.
+#     origem               nome da coluna de entrada
 #     tipo                 texto | inteiro | decimal | data | timestamp | booleano
 #     formatos             formatos aceitos para data/timestamp, tentados em ordem
 #     caixa                titulo | maiuscula | minuscula
@@ -51,14 +71,14 @@
 #     valor_se_vazio       valor usado quando o campo vem vazio
 #     mascarar             telefone (deixa só os 4 últimos dígitos) | hash (sha256), por LGPD
 #
-# REGRAS (viram expectations na silver)
+# REGRAS (viram expectations, com os nomes padronizados das colunas)
 #   nome      nome da regra, aparece na aba Data quality
 #   tipo      nao_nulo (coluna) | valores_aceitos (coluna, valores) |
 #             expressao (expressao SQL) | unico (colunas)
 #   acao      drop   -> descarta a linha
 #             alerta -> a linha segue e a violação é contada
-#   A regra "unico" só aceita alerta: ela é checada numa view à parte,
-#   silver_<nome>_unico_<colunas>. Para garantir unicidade, use chave_primaria com
+#   A regra "unico" só aceita alerta: ela é checada à parte, em
+#   silver_int_<nome>_unico_<colunas>. Para garantir unicidade, use chave_primaria com
 #   modo snapshot ou cdc.
 
 fontes:
@@ -76,26 +96,32 @@ fontes:
     modo_carga: snapshot
     historico: true
     preparacao_sql: true
-    chave_primaria: [data_entrevista, nome_candidato]
+    chave_primaria: [dt_entrevista, nm_candidato]
     coluna_atualizacao: _linha
     colunas:
-      data_entrevista:
+      dt_entrevista:
+        origem: data_entrevista
         tipo: data
         formatos: ["dd/MM/yyyy", "yyyy-MM-dd"]
-      horario:
+      hr_entrevista:
+        origem: horario
         tipo: texto
-      nome_candidato:
-        tipo: texto
-        caixa: titulo
-        remover_ponto_final: true
-      vaga:
+      nm_candidato:
+        origem: nome_candidato
         tipo: texto
         caixa: titulo
         remover_ponto_final: true
-      telefone:
+      nm_vaga:
+        origem: vaga
+        tipo: texto
+        caixa: titulo
+        remover_ponto_final: true
+      nr_telefone:
+        origem: telefone
         tipo: texto
         mascarar: telefone
-      status:
+      st_entrevista:
+        origem: status
         tipo: texto
         remover_ponto_final: true
         valor_se_vazio: Pendente
@@ -115,24 +141,24 @@ fontes:
     regras:
       - nome: nome_preenchido
         tipo: nao_nulo
-        coluna: nome_candidato
+        coluna: nm_candidato
         acao: drop
       - nome: data_entrevista_valida
         tipo: nao_nulo
-        coluna: data_entrevista
+        coluna: dt_entrevista
         acao: drop
       - nome: status_conhecido
         tipo: valores_aceitos
-        coluna: status
+        coluna: st_entrevista
         valores: [Aprovado, Reprovado, Não atendeu, Cancelado, Reagendado, Pendente]
         acao: alerta
       - nome: telefone_valido
         tipo: nao_nulo
-        coluna: telefone
+        coluna: nr_telefone
         acao: alerta
       - nome: horario_valido
         tipo: expressao
-        expressao: "horario RLIKE '^[0-9]{1,2}:[0-9]{2}$'"
+        expressao: "hr_entrevista RLIKE '^[0-9]{1,2}:[0-9]{2}$'"
         acao: alerta
 
   # Cadastro de cargos: liga o começo do nome da vaga a uma área da empresa.
@@ -141,29 +167,37 @@ fontes:
     descricao: Cadastro de cargos do RH, que liga o nome da vaga a uma área.
     tipo: tabela
     tabela:
-      nome_completo: "{catalogo}.origem.cadastro_cargos"
+      nome_completo: "{catalogo}.{projeto}_origem.cadastro_cargos"
     modo_carga: snapshot
     historico: false
     chave_primaria: [id_cargo]
-    coluna_atualizacao: atualizado_em
+    coluna_atualizacao: dh_atualizacao
     colunas:
       id_cargo:
+        origem: id_cargo
         tipo: inteiro
-      prefixo_vaga:
+      ds_prefixo_vaga:
+        origem: prefixo_vaga
         tipo: texto
         caixa: minuscula
-      area:
+      nm_area:
+        origem: area
         tipo: texto
-      atualizado_em:
+      dh_atualizacao:
+        origem: atualizado_em
         tipo: timestamp
     regras:
+      - nome: id_cargo_preenchido
+        tipo: nao_nulo
+        coluna: id_cargo
+        acao: drop
       - nome: prefixo_preenchido
         tipo: nao_nulo
-        coluna: prefixo_vaga
+        coluna: ds_prefixo_vaga
         acao: drop
       - nome: area_conhecida
         tipo: valores_aceitos
-        coluna: area
+        coluna: nm_area
         valores:
           - Cozinha
           - Atendimento
@@ -177,5 +211,5 @@ fontes:
         acao: alerta
       - nome: prefixo_unico
         tipo: unico
-        colunas: [prefixo_vaga]
+        colunas: [ds_prefixo_vaga]
         acao: alerta

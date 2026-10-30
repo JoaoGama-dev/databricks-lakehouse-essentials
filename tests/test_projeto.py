@@ -12,11 +12,13 @@ import pytest
 import yaml
 
 from essentials.config_fontes import (
+    PREFIXOS_POR_TIPO,
     carregar_fontes,
     expectations,
     expressao_limpeza,
     expressao_regra,
     expressoes_silver,
+    nome_tabela_origem,
     pasta_landing,
     tabelas_da_fonte,
     validar_config,
@@ -115,8 +117,31 @@ def test_banco_incremental_exige_watermark():
 
 def test_coluna_da_regra_precisa_estar_declarada():
     config = config_bruta()
-    config["fontes"][0]["regras"][0]["coluna"] = "coluna_que_nao_existe"
-    with pytest.raises(ValueError, match="coluna_que_nao_existe"):
+    config["fontes"][0]["regras"][0]["coluna"] = "nm_que_nao_existe"
+    with pytest.raises(ValueError, match="nm_que_nao_existe"):
+        validar_config(config)
+
+
+def test_coluna_sem_prefixo_conhecido_e_rejeitada():
+    config = config_bruta()
+    colunas = config["fontes"][0]["colunas"]
+    colunas["horario"] = colunas.pop("hr_entrevista")
+    with pytest.raises(ValueError, match="horario"):
+        validar_config(config)
+
+
+def test_prefixo_precisa_combinar_com_o_tipo():
+    config = config_bruta()
+    config["fontes"][0]["colunas"]["dt_entrevista"]["tipo"] = "texto"
+    with pytest.raises(ValueError, match="prefixo dt_"):
+        validar_config(config)
+
+
+def test_chave_do_auto_cdc_precisa_de_regra_nao_nulo_com_drop():
+    config = config_bruta()
+    agenda = config["fontes"][0]
+    agenda["regras"] = [r for r in agenda["regras"] if r["nome"] != "nome_preenchido"]
+    with pytest.raises(ValueError, match="chave sem regra nao_nulo com drop: nm_candidato"):
         validar_config(config)
 
 
@@ -141,7 +166,7 @@ def test_tabela_de_apoio_e_criada_no_setup():
     setup = SETUP.read_text(encoding="utf-8")
     for f in FONTES:
         if f["tipo"] == "tabela":
-            assert f["tabela"]["nome_completo"].replace("{catalogo}", "workspace") in setup
+            assert nome_tabela_origem(f, "essentials", "portfolio") in setup
 
 
 # Silver e regras ------------------------------------------------------------------
@@ -166,7 +191,7 @@ def test_expressoes_das_regras():
 
 
 def test_regra_unico_vira_checagem():
-    assert tabelas_da_fonte(fonte("cargos"))["unicidade"] == ["silver_cargos_unico_prefixo_vaga"]
+    assert tabelas_da_fonte(fonte("cargos"))["unicidade"] == ["silver_int_cargos_unico_ds_prefixo_vaga"]
 
 
 def test_historico_cria_tabela_scd2():
@@ -174,21 +199,55 @@ def test_historico_cria_tabela_scd2():
     assert tabelas_da_fonte(fonte("cargos"))["historico"] is None
 
 
+@pytest.mark.parametrize(
+    ("modo", "validada"),
+    [("snapshot", "silver_int_x_retrato"), ("cdc", "silver_int_x_mudancas"), ("incremental", None)],
+)
+def test_auto_cdc_sempre_tem_tabela_intermediaria_com_as_regras(modo, validada):
+    # As regras não podem ficar numa view: o AUTO CDC FROM SNAPSHOT não as aplica.
+    assert tabelas_da_fonte({"nome": "x", "modo_carga": modo})["validada"] == validada
+
+
+def test_silver_py_aplica_regras_em_tabela_e_nao_em_view():
+    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    assert "dp.temporary_view" not in codigo
+    assert 'source=tabelas["validada"]' in codigo
+
+
+@pytest.mark.parametrize("f", FONTES, ids=lambda f: f["nome"])
+def test_tabelas_seguem_camada_tipo_nome(f):
+    tabelas = tabelas_da_fonte(f)
+    nomes = [tabelas["bronze"], tabelas["silver"], tabelas["preparada"], tabelas["validada"], tabelas["historico"]]
+    nomes += tabelas["unicidade"]
+    padrao = re.compile(rf"^(bronze_{f['nome']}|silver_{f['nome']}(_historico)?|silver_int_{f['nome']}_\w+)$")
+    assert all(padrao.match(nome) for nome in nomes if nome)
+
+
+def colunas_da_fonte(nome_fonte: str) -> dict:
+    return fonte(nome_fonte)["colunas"]
+
+
 def test_data_aceita_os_dois_formatos():
-    expressao = expressao_limpeza("data_entrevista", fonte("agenda")["colunas"]["data_entrevista"])
+    expressao = expressao_limpeza("data_entrevista", colunas_da_fonte("agenda")["dt_entrevista"])
     assert "'dd/MM/yyyy'" in expressao and "'yyyy-MM-dd'" in expressao
     assert "try_to_timestamp" in expressao
 
 
 def test_status_tem_de_para_e_valor_padrao():
-    expressao = expressao_limpeza("status", fonte("agenda")["colunas"]["status"])
+    expressao = expressao_limpeza("status", colunas_da_fonte("agenda")["st_entrevista"])
     assert "WHEN 'n/ atendeu' THEN 'Não atendeu'" in expressao
     assert "coalesce(" in expressao and "'Pendente'" in expressao
 
 
 def test_telefone_e_mascarado():
-    expressao = expressao_limpeza("telefone", fonte("agenda")["colunas"]["telefone"])
+    expressao = expressao_limpeza("telefone", colunas_da_fonte("agenda")["nr_telefone"])
     assert "****-" in expressao
+
+
+def test_colunas_declaradas_recebem_o_nome_padronizado():
+    expressoes = expressoes_silver(fonte("agenda"), [("data_entrevista", "string"), ("status", "string")])
+    assert expressoes[0].endswith("AS `dt_entrevista`")
+    assert expressoes[1].endswith("AS `st_entrevista`")
 
 
 def test_limpeza_padrao_nas_colunas_nao_declaradas():
@@ -207,7 +266,11 @@ def test_preparacao_sql_existe_quando_pedida():
     for f in FONTES:
         if f.get("preparacao_sql"):
             sql = (PASTA_PIPELINE / f"silver_{f['nome']}.sql").read_text(encoding="utf-8")
-            assert f"CREATE TEMPORARY VIEW preparada_{f['nome']}" in sql
+            assert f"CREATE TEMPORARY VIEW silver_int_{f['nome']}_preparada" in sql
+            # A view mantém os nomes da origem; os nomes padronizados vêm do YAML.
+            for configuracao in f["colunas"].values():
+                if not configuracao["origem"].startswith("_"):
+                    assert configuracao["origem"] in sql
             assert f"bronze_{f['nome']}" in sql
 
 
@@ -236,7 +299,34 @@ def test_pipeline_serverless_com_configuracao():
     configuracao = pipeline()
     assert configuracao["serverless"] is True
     assert configuracao["continuous"] is False
-    assert {"catalogo", "landing_path", "fontes_config", "diretorio_codigo"} <= set(configuracao["configuration"])
+    assert {"catalogo", "projeto", "landing_path", "fontes_config", "diretorio_codigo"} <= set(
+        configuracao["configuration"]
+    )
+
+
+def test_estrutura_do_pacote_essentials():
+    """Catálogo do pacote, schema e landing por projeto, bundle com o nome do projeto."""
+    bundle = carregar_yaml(RAIZ / "databricks.yml")
+    variaveis = bundle["variables"]
+    projeto = variaveis["projeto"]["default"]
+    assert bundle["bundle"]["name"] == f"essentials_{projeto}"
+    assert variaveis["catalog"]["default"] == "essentials"
+    assert variaveis["schema"]["default"] == "${var.projeto}"
+    assert variaveis["landing_path"]["default"] == "/Volumes/${var.catalog}/${var.projeto}/landing"
+    assert "${var.projeto}" in pipeline()["name"]
+    setup = SETUP.read_text(encoding="utf-8")
+    for comando in (
+        "CREATE CATALOG IF NOT EXISTS essentials\n",
+        f"CREATE SCHEMA IF NOT EXISTS essentials.{projeto}\n",
+        f"CREATE VOLUME IF NOT EXISTS essentials.{projeto}.landing\n",
+        f"CREATE SCHEMA IF NOT EXISTS essentials.{projeto}_origem\n",
+    ):
+        assert comando in setup
+
+
+def test_nome_da_tabela_de_origem_usa_catalogo_e_projeto():
+    fonte_tabela = {"tabela": {"nome_completo": "{catalogo}.{projeto}_origem.cadastro"}}
+    assert nome_tabela_origem(fonte_tabela, "prd", "clinica") == "prd.clinica_origem.cadastro"
 
 
 def test_job_roda_ingestao_antes_do_pipeline():
@@ -275,13 +365,28 @@ def test_existe_gold():
     assert arquivos_gold()
 
 
+TIPOS_GOLD = {"dim": "dimensao", "fato": "fato", "agg": "agregada"}
+
+
 @pytest.mark.parametrize("arquivo", arquivos_gold(), ids=lambda a: a.name)
-def test_gold_tem_prefixo_comment_e_camada(arquivo):
+def test_gold_segue_camada_tipo_nome_com_comment(arquivo):
     sql = arquivo.read_text(encoding="utf-8")
-    assert all(t.startswith("gold_") for t in PADRAO_TABELA_SQL.findall(sql))
     for bloco in re.split(r"CREATE OR REFRESH", sql, flags=re.IGNORECASE)[1:]:
+        tabela = PADRAO_TABELA_SQL.search("CREATE OR REFRESH" + bloco).group(1)
+        tipo = re.match(r"gold_(dim|fato|agg)_[a-z0-9_]+$", tabela)
+        assert tipo, f"{tabela} não segue gold_<dim|fato|agg>_<nome>"
         assert "COMMENT '" in bloco
-        assert "'camada' = 'gold'" in bloco
+        assert f"TBLPROPERTIES ('camada' = 'gold', 'tipo' = '{TIPOS_GOLD[tipo.group(1)]}')" in bloco
+
+
+@pytest.mark.parametrize("arquivo", arquivos_gold(), ids=lambda a: a.name)
+def test_colunas_da_gold_tem_prefixo_da_classe(arquivo):
+    sql = arquivo.read_text(encoding="utf-8")
+    prefixos = "|".join(PREFIXOS_POR_TIPO)
+    # Apelidos de coluna em minúsculas com mais de uma letra (e, c, f, d são apelidos de tabela).
+    apelidos = re.findall(r"\bAS ([a-z][a-z0-9_]+)\b", sql)
+    assert apelidos
+    assert all(re.match(rf"^({prefixos})_", apelido) for apelido in apelidos), apelidos
 
 
 def test_gold_junta_as_duas_silvers():
