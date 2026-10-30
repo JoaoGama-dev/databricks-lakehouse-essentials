@@ -19,7 +19,9 @@ from pyspark.sql import functions as F
 spark = SparkSession.getActiveSession()
 sys.path.append(spark.conf.get("diretorio_codigo"))
 
-from essentials.config_fontes import (
+# O pacote essentials só fica importável depois do sys.path.append acima, que aponta
+# para a pasta src/ do bundle no workspace; por isso o import não está no topo.
+from essentials.config_fontes import (  # noqa: E402
     carregar_fontes,
     formato_landing,
     nome_tabela_origem,
