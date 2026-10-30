@@ -1,0 +1,1206 @@
+{
+  "datasets": [
+    {
+      "name": "ds_indicadores",
+      "displayName": "Indicadores mensais",
+      "queryLines": [
+        "SELECT dt_mes_entrevista, nm_area, st_situacao, st_entrevista, qt_entrevistas,\n",
+        "  qt_compareceram, qt_aprovados, qt_sem_retorno\n",
+        "FROM gold_agg_entrevista_mensal"
+      ]
+    },
+    {
+      "name": "ds_entrevistas",
+      "displayName": "Entrevistas (detalhe)",
+      "queryLines": [
+        "SELECT\n",
+        "  f.dt_entrevista,\n",
+        "  f.dt_mes_entrevista,\n",
+        "  f.hr_entrevista,\n",
+        "  f.nm_candidato,\n",
+        "  f.nm_vaga,\n",
+        "  d.nm_area,\n",
+        "  f.st_entrevista,\n",
+        "  f.st_situacao,\n",
+        "  f.nr_telefone,\n",
+        "  f.id_cargo,\n",
+        "  f.fl_sem_retorno\n",
+        "FROM gold_fato_entrevista AS f\n",
+        "JOIN gold_dim_cargo AS d\n",
+        "  ON f.id_cargo = d.id_cargo"
+      ]
+    },
+    {
+      "name": "ds_pendencias",
+      "displayName": "Pendências",
+      "queryLines": [
+        "WITH entrevistas AS (\n",
+        "SELECT\n",
+        "  f.dt_entrevista,\n",
+        "  f.dt_mes_entrevista,\n",
+        "  f.hr_entrevista,\n",
+        "  f.nm_candidato,\n",
+        "  f.nm_vaga,\n",
+        "  d.nm_area,\n",
+        "  f.st_entrevista,\n",
+        "  f.st_situacao,\n",
+        "  f.nr_telefone,\n",
+        "  f.id_cargo,\n",
+        "  f.fl_sem_retorno\n",
+        "FROM gold_fato_entrevista AS f\n",
+        "JOIN gold_dim_cargo AS d\n",
+        "  ON f.id_cargo = d.id_cargo\n",
+        ")\n",
+        "SELECT 'Sem retorno' AS ds_motivo, dt_entrevista, hr_entrevista, nm_candidato, nm_vaga,\n",
+        "  nm_area, st_entrevista, nr_telefone\n",
+        "FROM entrevistas WHERE fl_sem_retorno\n",
+        "UNION ALL\n",
+        "SELECT 'Status não identificado', dt_entrevista, hr_entrevista, nm_candidato, nm_vaga,\n",
+        "  nm_area, st_entrevista, nr_telefone\n",
+        "FROM entrevistas WHERE st_situacao = 'Não identificado'\n",
+        "UNION ALL\n",
+        "SELECT 'Vaga sem área cadastrada', dt_entrevista, hr_entrevista, nm_candidato, nm_vaga,\n",
+        "  nm_area, st_entrevista, nr_telefone\n",
+        "FROM entrevistas WHERE id_cargo = -1"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "visao_geral",
+      "displayName": "Visão geral",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo_visao_geral",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Visão geral\n",
+                "Entrevistas concluídas, em andamento e pendentes, mês a mês. Atualizado todo dia às 6h."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro_periodo_visao",
+            "queries": [
+              {
+                "name": "filtro_periodo_visao_ds_indicadores",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "dt_mes_entrevista",
+                      "expression": "`dt_mes_entrevista`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dt_mes_entrevista",
+                    "displayName": "Período",
+                    "queryName": "filtro_periodo_visao_ds_indicadores"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Período"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro_area_visao",
+            "queries": [
+              {
+                "name": "filtro_area_visao_ds_indicadores",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "nm_area",
+                      "expression": "`nm_area`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "nm_area",
+                    "displayName": "Área",
+                    "queryName": "filtro_area_visao_ds_indicadores"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Área"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_entrevistas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "SUM(`qt_entrevistas`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Entrevistas"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Entrevistas"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_comparecimento",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "SUM(`qt_compareceram`) / SUM(`qt_entrevistas`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Comparecimento",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Comparecimento",
+                "showDescription": true,
+                "description": "Aprovados e reprovados sobre o total de entrevistas"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 4,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_aprovacao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "SUM(`qt_aprovados`) / SUM(`qt_compareceram`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Aprovação",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Aprovação",
+                "showDescription": true,
+                "description": "Aprovados sobre quem compareceu"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 4,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_mes_situacao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "dt_mes_entrevista",
+                      "expression": "`dt_mes_entrevista`"
+                    },
+                    {
+                      "name": "qt_entrevistas",
+                      "expression": "SUM(`qt_entrevistas`)"
+                    },
+                    {
+                      "name": "st_situacao",
+                      "expression": "`st_situacao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "dt_mes_entrevista",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Mês"
+                },
+                "y": {
+                  "fieldName": "qt_entrevistas",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Entrevistas"
+                },
+                "color": {
+                  "fieldName": "st_situacao",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Situação"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Entrevistas por mês e situação"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "pizza_status",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "qt_entrevistas",
+                      "expression": "SUM(`qt_entrevistas`)"
+                    },
+                    {
+                      "name": "st_entrevista",
+                      "expression": "`st_entrevista`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "qt_entrevistas",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Entrevistas"
+                },
+                "color": {
+                  "fieldName": "st_entrevista",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Status"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Entrevistas por status"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 7,
+            "width": 2,
+            "height": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "areas_vagas",
+      "displayName": "Áreas e vagas",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo_areas",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Áreas e vagas\n",
+                "Comparecimento e aprovação por área, e o volume de entrevistas de cada vaga."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro_periodo_areas",
+            "queries": [
+              {
+                "name": "filtro_periodo_areas_ds_indicadores",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "dt_mes_entrevista",
+                      "expression": "`dt_mes_entrevista`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro_periodo_areas_ds_entrevistas",
+                "query": {
+                  "datasetName": "ds_entrevistas",
+                  "fields": [
+                    {
+                      "name": "dt_mes_entrevista",
+                      "expression": "`dt_mes_entrevista`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dt_mes_entrevista",
+                    "displayName": "Período",
+                    "queryName": "filtro_periodo_areas_ds_indicadores"
+                  },
+                  {
+                    "fieldName": "dt_mes_entrevista",
+                    "displayName": "Período",
+                    "queryName": "filtro_periodo_areas_ds_entrevistas"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Período"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro_area_areas",
+            "queries": [
+              {
+                "name": "filtro_area_areas_ds_indicadores",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "nm_area",
+                      "expression": "`nm_area`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro_area_areas_ds_entrevistas",
+                "query": {
+                  "datasetName": "ds_entrevistas",
+                  "fields": [
+                    {
+                      "name": "nm_area",
+                      "expression": "`nm_area`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "nm_area",
+                    "displayName": "Área",
+                    "queryName": "filtro_area_areas_ds_indicadores"
+                  },
+                  {
+                    "fieldName": "nm_area",
+                    "displayName": "Área",
+                    "queryName": "filtro_area_areas_ds_entrevistas"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Área"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_comparecimento_area",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "nm_area",
+                      "expression": "`nm_area`"
+                    },
+                    {
+                      "name": "pc_comparecimento",
+                      "expression": "SUM(`qt_compareceram`) / SUM(`qt_entrevistas`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "nm_area",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Área"
+                },
+                "y": {
+                  "fieldName": "pc_comparecimento",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Comparecimento"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Comparecimento por área"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_aprovacao_area",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_indicadores",
+                  "fields": [
+                    {
+                      "name": "nm_area",
+                      "expression": "`nm_area`"
+                    },
+                    {
+                      "name": "pc_aprovacao",
+                      "expression": "SUM(`qt_aprovados`) / SUM(`qt_compareceram`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "nm_area",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Área"
+                },
+                "y": {
+                  "fieldName": "pc_aprovacao",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Aprovação"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Aprovação por área (entre quem compareceu)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 4,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_vagas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_entrevistas",
+                  "fields": [
+                    {
+                      "name": "nm_vaga",
+                      "expression": "`nm_vaga`"
+                    },
+                    {
+                      "name": "qt_entrevistas",
+                      "expression": "COUNT(`dt_entrevista`)"
+                    },
+                    {
+                      "name": "st_situacao",
+                      "expression": "`st_situacao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "qt_entrevistas",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Entrevistas"
+                },
+                "y": {
+                  "fieldName": "nm_vaga",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Vaga"
+                },
+                "color": {
+                  "fieldName": "st_situacao",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Situação"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Entrevistas por vaga e situação"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 6,
+            "height": 9
+          }
+        }
+      ]
+    },
+    {
+      "name": "pendencias",
+      "displayName": "Pendências",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo_pendencias",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Pendências\n",
+                "Lista de trabalho do RH: entrevistas sem retorno, status que o sistema não reconheceu e vagas que ainda não têm área no cadastro de cargos."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro_motivo",
+            "queries": [
+              {
+                "name": "filtro_motivo_ds_pendencias",
+                "query": {
+                  "datasetName": "ds_pendencias",
+                  "fields": [
+                    {
+                      "name": "ds_motivo",
+                      "expression": "`ds_motivo`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "ds_motivo",
+                    "displayName": "Motivo",
+                    "queryName": "filtro_motivo_ds_pendencias"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Motivo"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_pendencias",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_pendencias",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "COUNT(`ds_motivo`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Pendências"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pendências"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_motivo",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_pendencias",
+                  "fields": [
+                    {
+                      "name": "ds_motivo",
+                      "expression": "`ds_motivo`"
+                    },
+                    {
+                      "name": "qt_pendencias",
+                      "expression": "COUNT(`ds_motivo`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "qt_pendencias",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Pendências"
+                },
+                "y": {
+                  "fieldName": "ds_motivo",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Motivo"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pendências por motivo"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_pendencias",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_pendencias",
+                  "fields": [
+                    {
+                      "name": "ds_motivo",
+                      "expression": "`ds_motivo`"
+                    },
+                    {
+                      "name": "dt_entrevista",
+                      "expression": "`dt_entrevista`"
+                    },
+                    {
+                      "name": "hr_entrevista",
+                      "expression": "`hr_entrevista`"
+                    },
+                    {
+                      "name": "nm_candidato",
+                      "expression": "`nm_candidato`"
+                    },
+                    {
+                      "name": "nm_vaga",
+                      "expression": "`nm_vaga`"
+                    },
+                    {
+                      "name": "nm_area",
+                      "expression": "`nm_area`"
+                    },
+                    {
+                      "name": "st_entrevista",
+                      "expression": "`st_entrevista`"
+                    },
+                    {
+                      "name": "nr_telefone",
+                      "expression": "`nr_telefone`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "ds_motivo",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Motivo",
+                    "displayName": "Motivo",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "dt_entrevista",
+                    "type": "date",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Data",
+                    "displayName": "Data",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "dateTimeFormat": "DD/MM/YYYY"
+                  },
+                  {
+                    "fieldName": "hr_entrevista",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Horário",
+                    "displayName": "Horário",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_candidato",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Candidato",
+                    "displayName": "Candidato",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_vaga",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Vaga",
+                    "displayName": "Vaga",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_area",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "Área",
+                    "displayName": "Área",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "st_entrevista",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "Status",
+                    "displayName": "Status",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nr_telefone",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100007,
+                    "title": "Telefone",
+                    "displayName": "Telefone",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "Entrevistas pendentes"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 6,
+            "height": 10
+          }
+        }
+      ]
+    }
+  ]
+}

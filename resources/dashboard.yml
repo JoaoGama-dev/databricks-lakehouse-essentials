@@ -1,0 +1,16 @@
+# Painel AI/BI do projeto: 3 páginas (visão geral, áreas e vagas, pendências) sobre a gold.
+# As consultas do painel não citam catálogo nem schema: dataset_catalog e dataset_schema
+# apontam para o ambiente do target, então o mesmo painel serve em dev e em prod.
+# Para trazer ajustes feitos na tela de volta ao repositório:
+#   databricks bundle generate dashboard --resource painel_entrevistas --force -t dev
+resources:
+  dashboards:
+    painel_entrevistas:
+      display_name: Essentials · ${var.projeto} · Entrevistas
+      file_path: ../src/dashboards/entrevistas.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.schema}
+      # Quem abre o painel consulta com as próprias permissões do Unity Catalog:
+      # sem acesso à gold, não vê os dados.
+      embed_credentials: false

@@ -28,6 +28,10 @@ variables:
   landing_path:
     description: Raiz da landing zone do projeto; cada fonte tem sua pasta (config/fontes.yml)
     default: /Volumes/${var.catalog}/${var.projeto}/landing
+  warehouse_id:
+    description: SQL warehouse que executa as consultas do painel AI/BI (localizado pelo nome)
+    lookup:
+      warehouse: Serverless Starter Warehouse
   alert_email:
     # Não versione o e-mail real: passe-o no deploy com --var="alert_email=..." ou com a
     # variável de ambiente BUNDLE_VAR_alert_email.

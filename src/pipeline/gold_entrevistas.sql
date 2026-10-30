@@ -33,6 +33,14 @@ AS SELECT
   e.nm_vaga,
   coalesce(c.id_cargo, -1) AS id_cargo,
   e.st_entrevista,
+  -- Situação para acompanhamento: o que foi concluído, o que está em andamento e o que
+  -- está pendente. Status fora da lista de-para fica como Não identificado.
+  CASE
+    WHEN e.st_entrevista IN ('Aprovado', 'Reprovado', 'Não atendeu', 'Cancelado') THEN 'Concluído'
+    WHEN e.st_entrevista = 'Reagendado' THEN 'Em andamento'
+    WHEN e.st_entrevista = 'Pendente' THEN 'Pendente'
+    ELSE 'Não identificado'
+  END AS st_situacao,
   e.nr_telefone,
   e.st_entrevista IN ('Aprovado', 'Reprovado') AS fl_compareceu,
   e.st_entrevista = 'Aprovado' AS fl_aprovado,
@@ -46,13 +54,14 @@ QUALIFY row_number() OVER (
   ORDER BY length(c.ds_prefixo_vaga) DESC NULLS LAST
 ) = 1;
 
--- Agregada mensal por área e status, base dos gráficos do painel.
+-- Agregada mensal por área, situação e status, base dos gráficos do painel.
 CREATE OR REFRESH MATERIALIZED VIEW gold_agg_entrevista_mensal
-COMMENT 'Entrevistas por mês, área e status, com comparecimentos, aprovações e entrevistas sem retorno.'
+COMMENT 'Entrevistas por mês, área, situação e status, com comparecimentos, aprovações e entrevistas sem retorno.'
 TBLPROPERTIES ('camada' = 'gold', 'tipo' = 'agregada')
 AS SELECT
   f.dt_mes_entrevista,
   d.nm_area,
+  f.st_situacao,
   f.st_entrevista,
   count(*) AS qt_entrevistas,
   count_if(f.fl_compareceu) AS qt_compareceram,
@@ -61,4 +70,4 @@ AS SELECT
 FROM gold_fato_entrevista AS f
 JOIN gold_dim_cargo AS d
   ON f.id_cargo = d.id_cargo
-GROUP BY f.dt_mes_entrevista, d.nm_area, f.st_entrevista;
+GROUP BY f.dt_mes_entrevista, d.nm_area, f.st_situacao, f.st_entrevista;
