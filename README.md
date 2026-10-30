@@ -1,5 +1,7 @@
 # Essentials · projeto portfolio
 
+[![CI](https://github.com/JoaoGama-dev/databricks-lakehouse-essentials/actions/workflows/ci.yml/badge.svg)](https://github.com/JoaoGama-dev/databricks-lakehouse-essentials/actions/workflows/ci.yml)
+
 Projeto de portfólio de engenharia de dados: o pacote **Essentials** da Logos Analytics,
 um **lakehouse medalhão orientado por metadados** no Databricks, empacotado como
 **Databricks Asset Bundle**.
