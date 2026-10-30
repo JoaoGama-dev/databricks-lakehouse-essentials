@@ -36,11 +36,11 @@ variables:
 
 targets:
   # Free Edition: só serverless, landing zone em um Volume do Unity Catalog.
+  # O host não fica no repositório: vem do perfil da CLI (databricks auth login) na sua
+  # máquina e da variável DATABRICKS_HOST no CI.
   dev:
     mode: development
     default: true
-    workspace:
-      host: https://dbc-5984f863-c1ee.cloud.databricks.com
 
   # Azure Databricks do cliente: landing zone no ADLS Gen2, execução pelo service principal.
   prod:

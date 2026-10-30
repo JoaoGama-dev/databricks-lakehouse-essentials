@@ -36,7 +36,7 @@ jobs:
       - uses: databricks/setup-cli@v1.21.0
 
       # O Free Edition não tem service principal com OIDC, por isso dev usa token.
-      # DATABRICKS_HOST_DEV deve ser igual ao host do target dev no databricks.yml.
+      # O host do workspace de dev vem só da variável do repositório (não está no databricks.yml).
       - name: Validar bundle (dev)
         run: databricks bundle validate -t dev
         env:

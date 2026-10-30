@@ -224,10 +224,10 @@ nomes e telefones inventados. Dados reais de clientes nunca entram aqui: veja
    - Windows: `winget install Databricks.DatabricksCLI`
    - macOS: `brew tap databricks/tap && brew install databricks`
 3. **Faça login**: `databricks auth login --host https://<seu-workspace>.cloud.databricks.com`
-4. **Ajuste o `databricks.yml`**: troque o `host` do target `dev` pela URL do seu
-   workspace. O e-mail de alerta não fica no repositório: defina-o na sua máquina com
-   `BUNDLE_VAR_alert_email` (no PowerShell, `$env:BUNDLE_VAR_alert_email = "voce@exemplo.com"`)
-   ou passe `--var="alert_email=voce@exemplo.com"` no `deploy`.
+4. **Configuração local, fora do repositório**: o host do workspace vem do perfil criado
+   no login (passo 3), e o e-mail de alerta, da variável `BUNDLE_VAR_alert_email` (no
+   PowerShell, `$env:BUNDLE_VAR_alert_email = "voce@exemplo.com"`) ou de
+   `--var="alert_email=voce@exemplo.com"` no `deploy`. Nenhum dos dois é versionado.
 5. **Rode o setup**: no **SQL Editor**, execute `setup/00_setup_free_edition.sql`. Ele
    cria o catálogo `essentials`, os schemas `essentials.portfolio` e
    `essentials.portfolio_origem`, o Volume `landing` e a tabela `cadastro_cargos`.
@@ -323,7 +323,8 @@ agendamento das 6h fica pausado.
 | `ci.yml` | pull request para a `main` | `ruff check .`, `pytest -q` (inclui a validação do `fontes.yml` e dos padrões de nomes) e `databricks bundle validate -t dev` |
 | `deploy.yml` | manual (`workflow_dispatch`) | `bundle validate` e `bundle deploy -t prod` no environment `prod`, com login OIDC |
 
-- `DATABRICKS_HOST_DEV` precisa ter o mesmo valor do `host` do target `dev`.
+- `DATABRICKS_HOST_DEV` (variável do repositório) é a URL do workspace de dev; o
+  `databricks.yml` não traz o host.
 - O Free Edition não oferece service principal com OIDC, por isso o CI de dev usa token.
 - Quando houver produção, ative o deploy automático descomentando o `push` em `deploy.yml`.
 - Nada é alterado à mão em produção: tudo passa pelo bundle.
@@ -353,3 +354,12 @@ agendamento das 6h fica pausado.
 O **Databricks Free Edition** é só para aprendizado e uso pessoal e **não pode ser usado
 comercialmente**. Projetos de clientes rodam no Azure Databricks do próprio cliente, com
 a nuvem paga diretamente à Microsoft.
+
+## Licença
+
+© 2026 João Gama · Logos Analytics. **Todos os direitos reservados.**
+
+Este repositório é público para fins de portfólio: você pode ler e avaliar o código, mas
+não pode copiá-lo, modificá-lo, distribuí-lo nem usá-lo comercialmente sem autorização
+por escrito. Os projetos de clientes ficam em repositórios privados, no GitHub de cada
+cliente.
