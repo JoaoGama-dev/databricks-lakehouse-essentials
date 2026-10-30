@@ -61,8 +61,11 @@
 #     hr_ hora (hh:mm)    fl_ flag
 #   O prefixo precisa combinar com o tipo (ex.: dt_ só com data); a validação recusa o contrário.
 #   Toda coluna de texto recebe TRIM e perde espaços repetidos; texto vazio vira nulo.
-#   Colunas não listadas passam só por essa limpeza e mantêm o nome; declare todas.
+#   A silver tem contrato explícito: só entram as colunas listadas aqui (mais as técnicas
+#   _fonte, _arquivo_origem e _ingerido_em). O que não for listado fica só na bronze.
 #     origem               nome da coluna de entrada
+#     descricao            o que a coluna significa para o negócio; vira o COMMENT da coluna
+#                          no Unity Catalog (dicionário de dados). Obrigatória.
 #     tipo                 texto | inteiro | decimal | data | timestamp | booleano
 #     formatos             formatos aceitos para data/timestamp, tentados em ordem
 #     caixa                titulo | maiuscula | minuscula
@@ -101,27 +104,33 @@ fontes:
     colunas:
       dt_entrevista:
         origem: data_entrevista
+        descricao: Data da entrevista, tirada da linha AGENDA DIA da planilha.
         tipo: data
         formatos: ["dd/MM/yyyy", "yyyy-MM-dd"]
       hr_entrevista:
         origem: horario
+        descricao: Horário da entrevista no formato HH:mm; vazio quando a planilha não informa.
         tipo: texto
       nm_candidato:
         origem: nome_candidato
+        descricao: Nome do candidato, sem espaços sobrando e com as iniciais maiúsculas.
         tipo: texto
         caixa: titulo
         remover_ponto_final: true
       nm_vaga:
         origem: vaga
+        descricao: Nome da vaga como escrito na planilha, com as iniciais maiúsculas.
         tipo: texto
         caixa: titulo
         remover_ponto_final: true
       nr_telefone:
         origem: telefone
+        descricao: Telefone do candidato mascarado por LGPD (DDD e 4 últimos dígitos); vazio quando inválido.
         tipo: texto
         mascarar: telefone
       st_entrevista:
         origem: status
+        descricao: Resultado da entrevista padronizado (Aprovado, Reprovado, Não atendeu, Cancelado, Reagendado, Pendente).
         tipo: texto
         remover_ponto_final: true
         valor_se_vazio: Pendente
@@ -175,16 +184,20 @@ fontes:
     colunas:
       id_cargo:
         origem: id_cargo
+        descricao: Identificador do cargo no cadastro do RH.
         tipo: inteiro
       ds_prefixo_vaga:
         origem: prefixo_vaga
+        descricao: Começo do nome da vaga, em minúsculas; o prefixo mais longo que combinar define o cargo.
         tipo: texto
         caixa: minuscula
       nm_area:
         origem: area
+        descricao: Área da empresa à qual o cargo pertence.
         tipo: texto
       dh_atualizacao:
         origem: atualizado_em
+        descricao: Data e hora da última alteração do cargo no cadastro de origem.
         tipo: timestamp
     regras:
       - nome: id_cargo_preenchido

@@ -279,6 +279,33 @@ nomes e telefones inventados. Dados reais de clientes nunca entram aqui: veja
 No modo development, o job e o pipeline ganham o prefixo `[dev <usuário>]` e o
 agendamento das 6h fica pausado.
 
+## Dicionário de dados
+
+Toda coluna da silver e da gold tem descrição no Unity Catalog. O cliente consulta pelo
+**Catalog Explorer** (aba **Columns** de cada tabela) ou por SQL, e o Genie e o Assistant
+usam as mesmas descrições para entender os dados.
+
+| Onde a descrição nasce | Como chega ao Unity Catalog |
+|---|---|
+| Colunas da silver | campo `descricao` de cada coluna no `config/fontes.yml` (obrigatório) → `silver.py` cria as tabelas com o schema do contrato e `COMMENT` por coluna |
+| Colunas técnicas (`_fonte`, `_arquivo_origem`, `_ingerido_em`) e do histórico (`__START_AT`, `__END_AT`) | descrições padrão em `src/essentials/config_fontes.py` |
+| Colunas da gold | lista de colunas com tipo e `COMMENT` em cada `CREATE OR REFRESH MATERIALIZED VIEW` |
+
+A silver tem **contrato explícito**: só entram as colunas declaradas no YAML (e as
+técnicas). Colunas da origem que não foram declaradas ficam só na bronze, então nenhuma
+coluna chega à silver sem descrição. Os testes garantem isso: o YAML recusa coluna sem
+`descricao`, e a gold recusa coluna sem tipo e `COMMENT`.
+
+Para exportar o dicionário (por exemplo, para uma planilha de entrega ao cliente):
+
+```sql
+SELECT table_name AS tabela, column_name AS coluna, full_data_type AS tipo, comment AS descricao
+FROM essentials.information_schema.columns
+WHERE table_schema = 'portfolio'
+  AND (table_name LIKE 'silver%' OR table_name LIKE 'gold%')
+ORDER BY table_name, ordinal_position;
+```
+
 ## Painel AI/BI
 
 O painel **Essentials · portfolio · Entrevistas** é versionado como código

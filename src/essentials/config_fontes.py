@@ -42,6 +42,28 @@ PREFIXOS_POR_TIPO = {
 # Tipo de cada tabela, gravado em TBLPROPERTIES ('tipo' = ...).
 TIPOS_DE_TABELA = {"bruta", "intermediaria", "atual", "historico", "dimensao", "fato", "agregada"}
 
+# Dicionário de dados: tipo SQL de cada tipo do fontes.yml e descrição das colunas que o
+# pipeline cria. Viram o schema (com COMMENT por coluna) das tabelas da silver.
+TIPOS_SQL = {
+    "texto": "STRING",
+    "inteiro": "BIGINT",
+    "decimal": "DECIMAL(18,4)",
+    "data": "DATE",
+    "timestamp": "TIMESTAMP",
+    "booleano": "BOOLEAN",
+}
+COLUNAS_TECNICAS = {
+    "_fonte": ("STRING", "Nome da fonte no config/fontes.yml que originou o registro."),
+    "_arquivo_origem": ("STRING", "Caminho do arquivo na landing zone de onde o registro veio."),
+    "_ingerido_em": ("TIMESTAMP", "Momento em que o registro foi carregado na bronze."),
+}
+# Colunas do change data feed do Delta (fonte tabela em modo cdc); não entram na silver.
+COLUNAS_CDF = {"_change_type": "STRING", "_commit_version": "BIGINT", "_commit_timestamp": "TIMESTAMP"}
+COLUNAS_SCD2 = {
+    "__START_AT": "Início da vigência desta versão do registro.",
+    "__END_AT": "Fim da vigência desta versão do registro; vazio na versão atual.",
+}
+
 
 def resolver_caminho(caminho: str | Path) -> Path:
     """No workspace, o bundle pode informar o caminho sem o prefixo /Workspace."""
@@ -149,11 +171,53 @@ def tabelas_da_fonte(fonte: dict) -> dict:
 
 
 def colunas_tecnicas(fonte: dict) -> list[str]:
-    """Colunas técnicas que seguem da bronze até a silver."""
-    colunas = ["_fonte", "_ingerido_em"]
-    if fonte["tipo"] != "tabela":
-        colunas.append("_arquivo_origem")
-    return colunas
+    """Colunas técnicas que seguem da bronze até a silver (fonte tabela não tem arquivo)."""
+    return [coluna for coluna in COLUNAS_TECNICAS if coluna != "_arquivo_origem" or fonte["tipo"] != "tabela"]
+
+
+def colunas_silver(fonte: dict) -> list[str]:
+    """Contrato da silver, na ordem: colunas declaradas no YAML e depois as técnicas."""
+    return [*fonte["colunas"], *colunas_tecnicas(fonte)]
+
+
+def tipo_sql(fonte: dict, coluna: str) -> str:
+    if coluna in fonte["colunas"]:
+        return TIPOS_SQL[fonte["colunas"][coluna]["tipo"]]
+    if coluna in COLUNAS_TECNICAS:
+        return COLUNAS_TECNICAS[coluna][0]
+    if coluna in COLUNAS_CDF:
+        return COLUNAS_CDF[coluna]
+    raise ValueError(f"{fonte['nome']}: coluna {coluna} não está no contrato da silver")
+
+
+def colunas_extras_cdc(fonte: dict) -> list[str]:
+    """Colunas que o AUTO CDC usa (operação, sequência, change data feed), mas não grava."""
+    extras = [fonte["cdc"]["coluna_operacao"]]
+    if fonte["tipo"] == "tabela":
+        extras += ["_commit_version", "_commit_timestamp"]
+    if fonte["coluna_atualizacao"] not in colunas_silver(fonte):
+        extras.append(fonte["coluna_atualizacao"])
+    return list(dict.fromkeys(coluna for coluna in extras if coluna not in colunas_silver(fonte)))
+
+
+def descricao_coluna(fonte: dict, coluna: str) -> str:
+    if coluna in fonte["colunas"]:
+        return fonte["colunas"][coluna]["descricao"]
+    return COLUNAS_TECNICAS[coluna][1]
+
+
+def schema_silver(fonte: dict, inicio_scd2: str | None = None) -> str:
+    """Schema DDL da silver com COMMENT em cada coluna: o dicionário de dados no Unity Catalog.
+
+    inicio_scd2: tipo SQL de __START_AT/__END_AT, para tabelas de histórico (SCD tipo 2).
+    """
+    partes = [
+        f"`{coluna}` {tipo_sql(fonte, coluna)} COMMENT {literal_sql(descricao_coluna(fonte, coluna))}"
+        for coluna in colunas_silver(fonte)
+    ]
+    if inicio_scd2:
+        partes += [f"`{coluna}` {inicio_scd2} COMMENT {literal_sql(texto)}" for coluna, texto in COLUNAS_SCD2.items()]
+    return ", ".join(partes)
 
 
 def pasta_landing(fonte: dict) -> str | None:
@@ -277,22 +341,18 @@ def expressao_limpeza(coluna: str, configuracao: dict | None = None) -> str:
 def expressoes_silver(fonte: dict, tipos_das_colunas: list[tuple[str, str]]) -> list[str]:
     """Lista de expressões para selectExpr, a partir de df.dtypes da origem.
 
-    Colunas declaradas recebem a limpeza do config e o nome padronizado (a chave do
-    bloco "colunas"), a partir da coluna "origem"; as outras de texto recebem só TRIM;
-    colunas técnicas (começam com _) e não textuais passam como estão.
+    A silver tem contrato explícito: só entram as colunas declaradas no bloco "colunas"
+    (com limpeza, tipo, nome padronizado e descrição) e as técnicas (começam com _).
+    Colunas da origem que não foram declaradas ficam só na bronze.
     """
-    por_origem = {
-        configuracao["origem"]: (nome, configuracao) for nome, configuracao in fonte.get("colunas", {}).items()
-    }
+    por_origem = {configuracao["origem"]: (nome, configuracao) for nome, configuracao in fonte["colunas"].items()}
     expressoes = []
-    for coluna, tipo in tipos_das_colunas:
+    for coluna, _tipo in tipos_das_colunas:
         if coluna in COLUNAS_SO_DA_BRONZE:
             continue
         if coluna in por_origem:
             nome, configuracao = por_origem[coluna]
             expressoes.append(f"{expressao_limpeza(coluna, configuracao)} AS `{nome}`")
-        elif coluna.startswith("_") or tipo != "string":
+        elif coluna.startswith("_"):
             expressoes.append(f"`{coluna}`")
-        else:
-            expressoes.append(f"{texto_limpo(f'`{coluna}`')} AS `{coluna}`")
     return expressoes

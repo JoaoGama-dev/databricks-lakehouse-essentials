@@ -20,7 +20,8 @@ comandos: só leia, crie e edite arquivos.
 
 2. **Propor e esperar a aprovação.** Mostre:
    - o bloco YAML completo da fonte, com `colunas` (nome padronizado com prefixo da
-     classe da informação, `origem`, tipo, formatos, caixa, de-para, máscara) e `regras`
+     classe da informação, `origem`, `descricao` para o dicionário de dados, tipo,
+     formatos, caixa, de-para, máscara; só o que for declarado entra na silver) e `regras`
      (nao_nulo, valores_aceitos, expressao, unico), cada regra com `drop` ou `alerta` e o
      motivo. Em snapshot e cdc, cada coluna da chave precisa de `nao_nulo` com `drop`;
    - uma tabela de-para das colunas: nome na origem → nome padronizado → tipo;
