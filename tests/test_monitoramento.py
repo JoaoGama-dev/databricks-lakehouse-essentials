@@ -14,11 +14,17 @@ import yaml
 
 from essentials.config_fontes import PREFIXOS_POR_TIPO, carregar_fontes
 from essentials.monitoramento_sql import (
+    COLUNAS_FALHAS,
     EVENT_LOG,
+    TABELA_FALHAS,
     regras_monitoradas,
     sql_atualizacao,
     sql_custo_diario,
+    sql_custo_mensal,
+    sql_estrutura,
+    sql_execucoes,
     sql_qualidade_diaria,
+    sql_volume,
 )
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -42,11 +48,20 @@ def tarefas() -> dict[str, dict]:
     return {tarefa["task_key"]: tarefa for tarefa in job()["tasks"]}
 
 
+COLUNAS_BRONZE_EXEMPLO = {
+    "bronze_cargos": ["id_cargo", "prefixo_vaga", "area", "atualizado_em", "_fonte", "_ingerido_em", "cd_novo"],
+}
+
+
 def views() -> dict[str, str]:
     return {
         "mon_qualidade_diaria": sql_qualidade_diaria("essentials", "portfolio", FONTES),
         "mon_atualizacao": sql_atualizacao("essentials", "portfolio", FONTES, 26),
         "mon_custo_diario": sql_custo_diario("essentials", "portfolio", "123", "abc-def"),
+        "mon_volume": sql_volume("essentials", "portfolio", FONTES, 50),
+        "mon_estrutura": sql_estrutura("essentials", "portfolio", FONTES, COLUNAS_BRONZE_EXEMPLO),
+        "mon_execucoes": sql_execucoes("essentials", "portfolio", "123"),
+        "mon_custo_mensal": sql_custo_mensal("essentials", "portfolio", 150),
     }
 
 
@@ -160,7 +175,7 @@ def test_job_avisa_quando_demora_e_quando_falha():
         {"metric": "RUN_DURATION_SECONDS", "op": "GREATER_THAN", "value": "${var.limite_duracao_carga_segundos}"}
     ]
     avisos = job()["email_notifications"]
-    assert avisos["on_failure"] == ["${var.alert_email}"]
+    assert avisos["on_failure"] == ["${var.alert_email}", "${var.email_suporte}"]
     assert avisos["on_duration_warning_threshold_exceeded"] == ["${var.alert_email}"]
 
 
@@ -216,12 +231,15 @@ def test_painel_de_saude_so_le_views_mon_sem_ambiente_fixo():
     for dataset in painel_saude()["datasets"]:
         sql = "".join(dataset["queryLines"])
         tabelas = re.findall(r"\b(?:FROM|JOIN)\s+([\w.]+)", sql, flags=re.IGNORECASE)
-        assert tabelas and all(tabela in views() for tabela in tabelas), (dataset["name"], tabelas)
+        lidas = set(views()) | {TABELA_FALHAS}
+        assert tabelas and all(tabela in lidas for tabela in tabelas), (dataset["name"], tabelas)
         assert "essentials" not in sql and "portfolio" not in sql
 
 
 def test_widgets_do_painel_de_saude_usam_colunas_das_views():
-    colunas = {coluna for sql in views().values() for coluna in colunas_da_view(sql)} | {"qt_atrasada"}
+    colunas = {coluna for sql in views().values() for coluna in colunas_da_view(sql)}
+    # Campos calculados nos datasets do painel e as colunas da tabela mon_falhas.
+    colunas |= {"qt_atrasada", "pc_sucesso_30d", *COLUNAS_FALHAS}
     datasets = {d["name"] for d in painel_saude()["datasets"]}
     for pagina in painel_saude()["pages"]:
         for item in pagina["layout"]:

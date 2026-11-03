@@ -1,8 +1,81 @@
-# Alerta SQL de atraso da carga: todo dia às 9h (3 horas depois da carga das 6h), avisa
-# por e-mail se a última atualização do pipeline passou do limite de horas
-# (variável limite_atraso_horas, aplicada na view mon_atualizacao). Em dev fica pausado.
+# Alertas SQL da carga diária, todos sobre as views mon_* do schema do projeto. Em dev e no
+# ci ficam pausados; em prod também avisam o suporte da Logos (databricks.yml).
+#   falha_carga      7h: falhas das últimas 24 horas, com o motivo (docs/adr/0015)
+#   qualidade_carga  7h: queda de volume e mudança de estrutura na origem (docs/adr/0014)
+#   atraso_carga     9h: última atualização do pipeline acima de limite_atraso_horas
+#   custo_teto       8h: custo do Databricks no mês a partir de 80% do teto do diagnóstico
 resources:
   alerts:
+    falha_carga:
+      display_name: Essentials · ${var.projeto} · Falha na carga
+      warehouse_id: ${var.warehouse_id}
+      query_text: |-
+        SELECT dh_falha, nm_tarefa, ds_motivo, ds_link
+        FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_falhas
+        WHERE dh_falha >= current_timestamp() - INTERVAL 24 HOURS
+        ORDER BY dh_falha DESC
+      custom_summary: "Essentials · ${var.projeto}: a carga diária falhou"
+      custom_description: |-
+        A carga diária falhou nas últimas 24 horas. Motivo e link da execução:
+        {{QUERY_RESULT_TABLE}}
+        O que fazer: docs/roteiro-de-operacao.md, seção "O que fazer se a carga falhar".
+      evaluation:
+        source:
+          name: dh_falha
+          aggregation: COUNT
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        # Sem linhas: nenhuma falha nas últimas 24 horas.
+        empty_result_state: OK
+        notification:
+          notify_on_ok: false
+          subscriptions:
+            - user_email: ${var.usuario_alerta}
+      schedule:
+        quartz_cron_schedule: "0 0 7 * * ?"
+        timezone_id: America/Sao_Paulo
+        pause_status: UNPAUSED
+
+    qualidade_carga:
+      display_name: Essentials · ${var.projeto} · Volume ou estrutura da origem
+      warehouse_id: ${var.warehouse_id}
+      query_text: |-
+        SELECT 'volume' AS ds_aviso, nm_tabela,
+          concat(qt_linhas, ' linhas (antes ', coalesce(qt_linhas_anterior, 0), ')') AS ds_detalhe
+        FROM (
+          SELECT *, row_number() OVER (PARTITION BY nm_tabela ORDER BY dh_carga DESC) AS nr_ordem
+          FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_volume
+        )
+        WHERE nr_ordem = 1 AND fl_alerta
+        UNION ALL
+        SELECT ds_tipo, nm_tabela, coalesce(nm_coluna, concat(qt_linhas, ' linhas com dado resgatado'))
+        FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_estrutura
+      custom_summary: "Essentials · ${var.projeto}: volume ou estrutura da origem mudou"
+      custom_description: |-
+        A última carga trouxe uma mudança que precisa de atenção:
+        {{QUERY_RESULT_TABLE}}
+        volume: o retrato veio vazio ou caiu muito; coluna_nova: a origem ganhou uma coluna;
+        dado_resgatado: linhas com valores fora do formato esperado.
+      evaluation:
+        source:
+          name: ds_aviso
+          aggregation: COUNT
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+        notification:
+          notify_on_ok: false
+          subscriptions:
+            - user_email: ${var.usuario_alerta}
+      schedule:
+        quartz_cron_schedule: "0 0 7 * * ?"
+        timezone_id: America/Sao_Paulo
+        pause_status: UNPAUSED
+
     atraso_carga:
       display_name: Essentials · ${var.projeto} · Carga atrasada
       warehouse_id: ${var.warehouse_id}
@@ -24,5 +97,36 @@ resources:
             - user_email: ${var.usuario_alerta}
       schedule:
         quartz_cron_schedule: "0 0 9 * * ?"
+        timezone_id: America/Sao_Paulo
+        pause_status: UNPAUSED
+
+    custo_teto:
+      display_name: Essentials · ${var.projeto} · Custo perto do teto
+      warehouse_id: ${var.warehouse_id}
+      query_text: |-
+        SELECT dt_mes, vl_custo_lista, vl_teto, pc_do_teto, sg_moeda
+        FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_custo_mensal
+        WHERE dt_mes = date_trunc('MONTH', current_date())
+      custom_summary: "Essentials · ${var.projeto}: custo do Databricks perto do teto do mês"
+      custom_description: |-
+        O custo do Databricks neste mês (preço de lista) passou de 80% do teto combinado:
+        {{QUERY_RESULT_TABLE}}
+        Veja o painel Saúde da plataforma e o Budget da nuvem.
+      evaluation:
+        source:
+          name: pc_do_teto
+        comparison_operator: GREATER_THAN_OR_EQUAL
+        threshold:
+          value:
+            double_value: 80
+        empty_result_state: OK
+        notification:
+          notify_on_ok: false
+          # Avisa de novo a cada dia enquanto estiver acima.
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: ${var.usuario_alerta}
+      schedule:
+        quartz_cron_schedule: "0 0 8 * * ?"
         timezone_id: America/Sao_Paulo
         pause_status: UNPAUSED

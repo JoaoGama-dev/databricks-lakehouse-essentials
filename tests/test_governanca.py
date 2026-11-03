@@ -80,7 +80,9 @@ def test_landing_de_producao_e_volume_externo():
     prod = carregar_yaml(RAIZ / "databricks.yml")["targets"]["prod"]
     landing = prod["resources"]["volumes"]["landing"]
     assert landing["volume_type"] == "EXTERNAL"
-    assert landing["storage_location"].startswith("abfss://")
+    # Nada de nuvem fixo no recurso: o endereço vem da variável (Azure é o padrão).
+    assert landing["storage_location"] == "${var.landing_url}"
+    assert prod["variables"]["landing_url"].startswith("abfss://")
 
 
 def test_gold_e_publicada_no_schema_gold():

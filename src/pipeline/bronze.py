@@ -50,6 +50,10 @@ def ler_landing(fonte: dict) -> DataFrame:
     if formato in ("csv", "json"):
         # Tudo como texto: tipar é papel da silver.
         leitor = leitor.option("cloudFiles.inferColumnTypes", "false")
+    if formato in ("csv", "json", "parquet"):
+        # Coluna nova na origem não derruba a carga: vai para _rescued_data, e a view
+        # mon_estrutura avisa no mesmo dia (docs/adr/0014).
+        leitor = leitor.option("cloudFiles.schemaEvolutionMode", "rescue")
     opcoes = fonte.get("arquivo", {}).get("opcoes", {})
     return leitor.options(**opcoes).load(f"{LANDING}/{pasta_landing(fonte)}")
 

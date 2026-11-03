@@ -21,6 +21,7 @@ resources:
       email_notifications:
         on_failure:
           - ${var.alert_email}
+          - ${var.email_suporte}
         on_duration_warning_threshold_exceeded:
           - ${var.alert_email}
       environments:
@@ -134,3 +135,30 @@ resources:
               - ${resources.pipelines.essentials_pipeline.id}
               - --limite-atraso-horas
               - ${var.limite_atraso_horas}
+              - --limite-queda-volume-pct
+              - ${var.limite_queda_volume_pct}
+              - --teto-custo-mensal
+              - ${var.teto_custo_mensal_usd}
+
+        # Só roda quando alguma tarefa falha: grava o motivo (sem dados do registro) em
+        # mon_falhas para o alerta falha_carga, e termina com erro (docs/adr/0015).
+        - task_key: registrar_falha
+          depends_on:
+            - task_key: ingestao_api
+            - task_key: ingestao_banco
+            - task_key: governanca_antes
+            - task_key: atualizar_lakehouse
+            - task_key: governanca_depois
+          run_if: AT_LEAST_ONE_FAILED
+          environment_key: ingestao
+          spark_python_task:
+            python_file: ../src/governanca/registrar_falha.py
+            parameters:
+              - --codigo
+              - ${workspace.file_path}/src
+              - --catalogo
+              - ${resources.schemas.projeto.catalog_name}
+              - --schema
+              - ${resources.schemas.projeto.name}
+              - --run-id
+              - "{{job.run_id}}"
