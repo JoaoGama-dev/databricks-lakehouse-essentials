@@ -91,3 +91,32 @@ def test_gitleaks_do_ci_e_conferido_pelo_sha256_e_varre_o_historico():
     assert re.fullmatch(r"[0-9a-f]{64}", instalar["env"]["GITLEAKS_SHA256"])
     assert "sha256sum --check --strict" in instalar["run"]
     assert any("gitleaks git --redact" in passo.get("run", "") for passo in job["steps"])
+
+
+# 2.5 pre-commit -------------------------------------------------------------------
+
+
+def test_pre_commit_fixado_por_sha_e_com_os_hooks_do_plano():
+    texto = (RAIZ / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    configuracao = yaml.safe_load(texto)
+    for repo in configuracao["repos"]:
+        assert re.fullmatch(r"[0-9a-f]{40}", repo["rev"]), repo["repo"]
+    assert len(re.findall(r"rev: [0-9a-f]{40} # frozen: v\d+\.\d+\.\d+", texto)) == len(configuracao["repos"])
+    hooks = {hook["id"] for repo in configuracao["repos"] for hook in repo["hooks"]}
+    assert hooks == {
+        "ruff-check",
+        "check-yaml",
+        "check-json",
+        "end-of-file-fixer",
+        "trailing-whitespace",
+        "detect-private-key",
+        "gitleaks",
+    }
+
+
+def test_gitleaks_tem_a_mesma_versao_no_ci_e_no_pre_commit():
+    pre_commit = (RAIZ / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    versao_pre_commit = re.search(r"gitleaks/gitleaks\n\s+rev: \w+ # frozen: v([\d.]+)", pre_commit).group(1)
+    job = carregar_yaml(RAIZ / ".github" / "workflows" / "ci.yml")["jobs"]["segredos"]
+    versao_ci = next(p["env"]["GITLEAKS_VERSAO"] for p in job["steps"] if "GITLEAKS_VERSAO" in p.get("env", {}))
+    assert str(versao_ci) == versao_pre_commit

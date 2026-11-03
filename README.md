@@ -378,7 +378,7 @@ em `tests/test_hooks.py`.
 
 | Workflow | Gatilho | O que faz |
 |---|---|---|
-| `ci.yml` | pull request para a `main` | `ruff check .`, `pytest -q` (inclui a validação do `fontes.yml` e dos padrões de nomes) e `databricks bundle validate -t dev` |
+| `ci.yml` | pull request para a `main` | `ruff check .`, `pytest -q` (inclui a validação do `fontes.yml` e dos padrões de nomes), `databricks bundle validate -t dev` e varredura de segredos no histórico (gitleaks) |
 | `deploy.yml` | manual (`workflow_dispatch`) | `bundle validate` e `bundle deploy -t prod` no environment `prod`, com login OIDC |
 
 - `DATABRICKS_HOST_DEV` (variável do repositório) é a URL do workspace de dev; o
@@ -386,6 +386,27 @@ em `tests/test_hooks.py`.
 - O Free Edition não oferece service principal com OIDC, por isso o CI de dev usa token.
 - Quando houver produção, ative o deploy automático descomentando o `push` em `deploy.yml`.
 - Nada é alterado à mão em produção: tudo passa pelo bundle.
+
+### Cadeia de suprimentos
+
+- **Actions fixadas pelo SHA do commit**, com a versão em comentário: uma tag pode ser
+  movida para outro código, um SHA não.
+- **Dependências com versão fixa** num único arquivo, `requirements-runtime.txt`, que o
+  pipeline e o job instalam com `-r`; o `requirements-dev.txt` o inclui.
+- **Dependabot** (`.github/dependabot.yml`) propõe toda semana as atualizações de actions
+  e pacotes, só de versões publicadas há pelo menos 14 dias.
+- **Permissões mínimas**: cada job do GitHub Actions declara só o que usa.
+
+### pre-commit
+
+As mesmas verificações do CI rodam na sua máquina antes de cada commit: ruff, YAML e
+JSON válidos, fim de arquivo, espaços sobrando, chave privada e segredos (gitleaks).
+
+```
+pip install -r requirements-dev.txt
+pre-commit install            # uma vez: ativa o hook de commit deste repositório
+pre-commit run --all-files    # opcional: verifica tudo de uma vez
+```
 
 ## Dados reais e LGPD
 
