@@ -31,7 +31,25 @@ caminho de dados, escreva a mensagem num arquivo e use `git commit -F`.
 
 ## Mascaramento
 
-- Toda coluna que o perfil marcar como sensível recebe `mascarar` no `fontes.yml`
-  (`telefone` deixa DDD e 4 últimos dígitos; `hash` usa sha256).
-- A silver e a gold só têm o dado mascarado. A bronze guarda o dado bruto e deve ter
-  acesso restrito à equipe técnica (Fase 3 do plano: grants como código).
+Três camadas, decididas no ADR 0002 (`docs/adr/0002-dados-pessoais-no-unity-catalog.md`):
+
+1. **`sensivel: true`** no `fontes.yml` em toda coluna com dado pessoal. Toda coluna com
+   `mascarar` precisa dela (a validação recusa o contrário).
+2. **Mascaramento fixo na silver**: `mascarar` no `fontes.yml` (`telefone` deixa DDD e 4
+   últimos dígitos; `hash` usa sha256). O dado completo nem chega à silver.
+3. **Máscara de coluna na gold**: toda coluna sensível da gold declara
+   `MASK ${catalogo}.${schema_projeto}.mascarar_dado_pessoal`. Só o grupo
+   `grupo_dados_pessoais` vê o valor; os demais veem `****`. A função é criada pela tarefa
+   `governanca_antes` do job (máscaras só podem ser declaradas na definição da tabela do
+   pipeline; `ALTER ... SET MASK` é recusado).
+
+Além disso, a tarefa `governanca_depois` aplica a tag `pii` = `true` nas colunas
+sensíveis da silver e da gold, para localizar todo dado pessoal pelo
+`information_schema.column_tags`.
+
+## Quem acessa o quê
+
+O modelo de acesso está no ADR 0001 e em `resources/governanca.yml`: a bronze, a silver e
+a landing ficam no schema do projeto, só da engenharia; o negócio lê apenas o schema
+`<projeto>_gold`. Os grupos são variáveis do bundle (`grupo_engenharia`,
+`grupo_leitura_gold`, `grupo_dados_pessoais`).

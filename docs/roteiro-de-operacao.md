@@ -76,10 +76,10 @@ vaga passam para a área certa, inclusive as antigas.
 ## 6. Como enviar a planilha manualmente
 
 1. No Databricks, clique em **Catalog** no menu à esquerda.
-2. Navegue até o catálogo `essentials`, o schema `portfolio`, o volume `landing` e a
-   pasta `agenda` (no Azure, use o contêiner `landing`, pasta `portfolio/agenda`, pelo
-   portal do Azure ou pelo Azure Storage
-   Explorer).
+2. Navegue até o catálogo do projeto (`prd` no Azure), o schema do projeto (por exemplo,
+   `portfolio`), o volume `landing` e a pasta `agenda` (no Azure, o volume fica no
+   contêiner `landing`, pasta `portfolio/agenda`; também dá para enviar pelo portal do
+   Azure ou pelo Azure Storage Explorer). Só a equipe de engenharia pode enviar arquivos.
 3. Clique em **Upload to this volume** e escolha o arquivo.
 4. Use sempre um **nome novo**, por exemplo com a data: `agenda_2025-12-15.csv`. Um
    arquivo com nome repetido não é lido de novo.
@@ -102,9 +102,13 @@ Se o custo subir sem motivo aparente (sem aumento de dados), avise o suporte.
 Toda tabela usada pelo painel tem a descrição de cada coluna, em português.
 
 1. No Databricks, clique em **Catalog** no menu à esquerda.
-2. Abra o catálogo `essentials`, o schema `portfolio` e a tabela (por exemplo,
-   `gold_fato_entrevista`).
+2. Abra o catálogo do projeto (`prd` no Azure), o schema da gold (por exemplo,
+   `portfolio_gold`) e a tabela (por exemplo, `gold_fato_entrevista`).
 3. Na aba **Columns**, a coluna **Comment** explica cada campo.
+
+O nome e o telefone do candidato são dados pessoais: aparecem como `****` para quem não
+faz parte do grupo de dados pessoais. Para ter acesso, peça ao responsável pelos acessos
+da empresa.
 
 O nome da coluna também ajuda: o começo indica o tipo de informação.
 
