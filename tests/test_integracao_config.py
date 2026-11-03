@@ -46,18 +46,15 @@ def test_target_ci_usa_o_projeto_com_sufixo_ci():
 
 
 def test_target_ci_pode_ser_destruido_e_nao_roda_sozinho():
+    # Sem prevent_destroy na base nem no ci: a CLI antes da v1.22 ignora um override para
+    # false, e o destroy do workflow seria recusado (docs/adr/0005).
+    governanca = yaml.safe_load((RAIZ / "resources" / "governanca.yml").read_text(encoding="utf-8"))["resources"]
     recursos = bundle()["targets"]["ci"]["resources"]
-    for tipo, nome in (("schemas", "projeto"), ("schemas", "gold"), ("volumes", "landing")):
-        assert recursos[tipo][nome]["lifecycle"]["prevent_destroy"] is False, (tipo, nome)
+    for tipo in ("schemas", "volumes"):
+        assert tipo not in recursos, tipo
+        assert all("lifecycle" not in recurso for recurso in governanca[tipo].values()), tipo
     assert recursos["jobs"]["essentials_carga_diaria"]["schedule"]["pause_status"] == "PAUSED"
     assert recursos["alerts"]["atraso_carga"]["schedule"]["pause_status"] == "PAUSED"
-
-
-def test_dev_e_prod_continuam_protegidos():
-    governanca = yaml.safe_load((RAIZ / "resources" / "governanca.yml").read_text(encoding="utf-8"))["resources"]
-    assert all(s["lifecycle"]["prevent_destroy"] is True for s in governanca["schemas"].values())
-    for alvo in ("dev", "prod"):
-        assert "schemas" not in bundle()["targets"][alvo].get("resources", {}), alvo
 
 
 def test_dev_nao_tem_agendamento_ativo():

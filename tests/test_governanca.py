@@ -37,10 +37,14 @@ def test_schemas_e_volume_do_projeto_estao_no_bundle():
     assert recursos()["schemas"]["gold"]["name"] == "${var.projeto}_gold"
 
 
-def test_nada_do_projeto_pode_ser_apagado_por_destroy():
-    for tipo in ("schemas", "volumes"):
-        for nome, recurso in recursos()[tipo].items():
-            assert recurso["lifecycle"]["prevent_destroy"] is True, f"{tipo}.{nome}"
+def test_nada_do_projeto_pode_ser_apagado_por_destroy_em_dev_e_prod():
+    # A proteção fica nos targets (o ci precisa ser destruído): docs/adr/0005.
+    targets = carregar_yaml(RAIZ / "databricks.yml")["targets"]
+    for alvo in ("dev", "prod"):
+        for tipo in ("schemas", "volumes"):
+            for nome in recursos()[tipo]:
+                recurso = targets[alvo]["resources"][tipo][nome]
+                assert recurso["lifecycle"]["prevent_destroy"] is True, f"{alvo}: {tipo}.{nome}"
 
 
 def test_leitura_so_chega_a_gold():

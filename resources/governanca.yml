@@ -3,15 +3,15 @@
 #   <projeto>       bronze e silver, com dado bruto e intermediário: só engenharia
 #   <projeto>_gold  gold, pronta para o negócio: engenharia e leitura
 #   landing         arquivos recebidos das fontes: só engenharia
-# prevent_destroy: um "bundle destroy" nunca apaga os dados do projeto.
+# A proteção contra destroy (lifecycle.prevent_destroy) fica nos targets dev e prod do
+# databricks.yml, não aqui: o target ci precisa poder ser destruído, e a CLI antes da
+# v1.22 ignora um override para false (docs/adr/0005). Um teste exige a proteção.
 resources:
   schemas:
     projeto:
       catalog_name: ${var.catalog}
       name: ${var.projeto}
       comment: Projeto do pacote Essentials, camadas bronze e silver. Acesso só da engenharia.
-      lifecycle:
-        prevent_destroy: true
       grants:
         - principal: ${var.grupo_engenharia}
           privileges:
@@ -21,8 +21,6 @@ resources:
       catalog_name: ${var.catalog}
       name: ${var.projeto}_gold
       comment: Projeto do pacote Essentials, camada gold (dimensões, fatos e agregadas) para o negócio.
-      lifecycle:
-        prevent_destroy: true
       grants:
         - principal: ${var.grupo_engenharia}
           privileges:
@@ -39,8 +37,6 @@ resources:
       name: landing
       volume_type: MANAGED
       comment: Landing zone do projeto, uma pasta por fonte (config/fontes.yml).
-      lifecycle:
-        prevent_destroy: true
       grants:
         - principal: ${var.grupo_engenharia}
           privileges:
