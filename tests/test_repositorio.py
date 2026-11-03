@@ -71,3 +71,23 @@ def test_pipeline_e_job_instalam_o_requirements_runtime():
     assert pipeline["environment"]["dependencies"] == [RUNTIME]
     job = carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]["essentials_carga_diaria"]
     assert [ambiente["spec"]["dependencies"] for ambiente in job["environments"]] == [[RUNTIME]]
+
+
+# 2.4 Varredura de segredos --------------------------------------------------------
+
+
+def test_ci_tem_os_tres_jobs():
+    assert set(carregar_yaml(RAIZ / ".github" / "workflows" / "ci.yml")["jobs"]) == {
+        "testes",
+        "validar_bundle",
+        "segredos",
+    }
+
+
+def test_gitleaks_do_ci_e_conferido_pelo_sha256_e_varre_o_historico():
+    job = carregar_yaml(RAIZ / ".github" / "workflows" / "ci.yml")["jobs"]["segredos"]
+    assert job["steps"][0]["with"]["fetch-depth"] == 0
+    instalar = next(passo for passo in job["steps"] if "GITLEAKS_SHA256" in passo.get("env", {}))
+    assert re.fullmatch(r"[0-9a-f]{64}", instalar["env"]["GITLEAKS_SHA256"])
+    assert "sha256sum --check --strict" in instalar["run"]
+    assert any("gitleaks git --redact" in passo.get("run", "") for passo in job["steps"])
