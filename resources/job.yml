@@ -1,8 +1,8 @@
-# Carga diária às 6h (horário de Brasília). Em dev, o agendamento fica pausado
-# automaticamente pelo modo development.
+# Carga diária às 6h (horário de Brasília).
 # Ordem: os jobs de ingestão trazem bancos e APIs para a landing; depois o pipeline
-# atualiza bronze, silver e gold. Sem fontes desses tipos, as duas tarefas só avisam
-# que não há nada a fazer.
+# atualiza bronze, silver e gold. As ingestões só rodam quando o fontes.yml tem fonte
+# daquele tipo (variáveis ingerir_banco e ingerir_api, docs/adr/0004): a condição não usa
+# computação, e a tarefa pulada não custa nada.
 resources:
   jobs:
     essentials_carga_diaria:
@@ -12,8 +12,16 @@ resources:
         quartz_cron_expression: "0 0 6 * * ?"
         timezone_id: America/Sao_Paulo
         pause_status: UNPAUSED
+      # Aviso quando a carga demora bem mais que o normal (em dev, de 2 a 6 minutos).
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: ${var.limite_duracao_carga_segundos}
       email_notifications:
         on_failure:
+          - ${var.alert_email}
+        on_duration_warning_threshold_exceeded:
           - ${var.alert_email}
       environments:
         - environment_key: ingestao
@@ -23,7 +31,16 @@ resources:
             dependencies:
               - -r ${workspace.file_path}/requirements-runtime.txt
       tasks:
+        - task_key: tem_fonte_api
+          condition_task:
+            op: EQUAL_TO
+            left: ${var.ingerir_api}
+            right: "true"
+
         - task_key: ingestao_api
+          depends_on:
+            - task_key: tem_fonte_api
+              outcome: "true"
           environment_key: ingestao
           spark_python_task:
             python_file: ../src/ingestao/api_para_landing.py
@@ -35,7 +52,16 @@ resources:
               - --codigo
               - ${workspace.file_path}/src
 
+        - task_key: tem_fonte_banco
+          condition_task:
+            op: EQUAL_TO
+            left: ${var.ingerir_banco}
+            right: "true"
+
         - task_key: ingestao_banco
+          depends_on:
+            - task_key: tem_fonte_banco
+              outcome: "true"
           environment_key: ingestao
           spark_python_task:
             python_file: ../src/ingestao/banco_para_landing.py
@@ -68,16 +94,19 @@ resources:
               - --grupo-dados-pessoais
               - ${var.grupo_dados_pessoais}
 
+        # NONE_FAILED: roda mesmo com as ingestões puladas, mas não se alguma falhar.
         - task_key: atualizar_lakehouse
           depends_on:
             - task_key: ingestao_api
             - task_key: ingestao_banco
             - task_key: governanca_antes
+          run_if: NONE_FAILED
           pipeline_task:
             pipeline_id: ${resources.pipelines.essentials_pipeline.id}
             full_refresh: false
 
-        # Aplica a tag pii nas colunas sensíveis da silver e da gold (config/fontes.yml).
+        # Aplica a tag pii nas colunas sensíveis da silver e da gold (config/fontes.yml) e
+        # cria as views mon_* de monitoramento sobre o event log (docs/adr/0003).
         - task_key: governanca_depois
           depends_on:
             - task_key: atualizar_lakehouse
@@ -99,3 +128,9 @@ resources:
               - ${resources.schemas.gold.name}
               - --grupo-dados-pessoais
               - ${var.grupo_dados_pessoais}
+              - --job-id
+              - "{{job.id}}"
+              - --pipeline-id
+              - ${resources.pipelines.essentials_pipeline.id}
+              - --limite-atraso-horas
+              - ${var.limite_atraso_horas}

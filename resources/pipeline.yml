@@ -12,6 +12,12 @@ resources:
       serverless: true
       continuous: false
       channel: CURRENT
+      # Event log publicado no schema do projeto (só a engenharia lê): fonte das views
+      # mon_* de monitoramento (docs/adr/0003).
+      event_log:
+        catalog: ${resources.schemas.projeto.catalog_name}
+        schema: ${resources.schemas.projeto.name}
+        name: mon_log_eventos
       configuration:
         catalogo: ${var.catalog}
         projeto: ${var.projeto}

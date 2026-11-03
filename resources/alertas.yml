@@ -1,0 +1,28 @@
+# Alerta SQL de atraso da carga: todo dia às 9h (3 horas depois da carga das 6h), avisa
+# por e-mail se a última atualização do pipeline passou do limite de horas
+# (variável limite_atraso_horas, aplicada na view mon_atualizacao). Em dev fica pausado.
+resources:
+  alerts:
+    atraso_carga:
+      display_name: Essentials · ${var.projeto} · Carga atrasada
+      warehouse_id: ${var.warehouse_id}
+      query_text: |-
+        SELECT count_if(fl_atrasada) AS qt_tabelas_atrasadas
+        FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_atualizacao
+      evaluation:
+        source:
+          name: qt_tabelas_atrasadas
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        # Sem resultado (view vazia) também é problema: a carga nunca concluiu.
+        empty_result_state: TRIGGERED
+        notification:
+          notify_on_ok: true
+          subscriptions:
+            - user_email: ${var.usuario_alerta}
+      schedule:
+        quartz_cron_schedule: "0 0 9 * * ?"
+        timezone_id: America/Sao_Paulo
+        pause_status: UNPAUSED

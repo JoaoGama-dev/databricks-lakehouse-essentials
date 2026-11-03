@@ -14,3 +14,13 @@ resources:
       # Quem abre o painel consulta com as próprias permissões do Unity Catalog:
       # sem acesso à gold, não vê os dados.
       embed_credentials: false
+
+    # Saúde da plataforma: atraso, qualidade e custo, a partir das views mon_* do schema do
+    # projeto. Painel separado porque o schema do projeto é só da engenharia (docs/adr/0001).
+    painel_saude:
+      display_name: Essentials · ${var.projeto} · Saúde da plataforma
+      file_path: ../src/dashboards/saude.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${resources.schemas.projeto.catalog_name}
+      dataset_schema: ${resources.schemas.projeto.name}
+      embed_credentials: false
