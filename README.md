@@ -31,19 +31,34 @@ equipe encontre as coisas no mesmo lugar.
 **No Unity Catalog (Free Edition, target `dev`):**
 
 ```
-essentials                         ← catálogo do pacote (um só para todos os projetos)
-├── portfolio                      ← schema do projeto: bronze, silver e gold
-│   └── landing (volume)           ← /Volumes/essentials/portfolio/landing/<fonte>/
-└── portfolio_origem               ← sistemas de origem simulados do projeto
+essentials                              ← catálogo do pacote (um só para todos os projetos)
+├── dev_<usuário>_portfolio             ← bronze e silver: só a engenharia
+│   └── landing (volume)                ← /Volumes/essentials/dev_<usuário>_portfolio/landing/<fonte>/
+├── dev_<usuário>_portfolio_gold        ← gold: leitura para o negócio (e o painel)
+└── portfolio_origem                    ← sistemas de origem simulados (setup)
 ```
 
-No ambiente do cliente (target `prod`), o catálogo é o do cliente (`prd`) e o schema
-continua sendo o nome do projeto.
+Os schemas do projeto, o volume e as permissões são criados pelo bundle
+(`resources/governanca.yml`). Em dev, o modo development prefixa os schemas com
+`dev_<usuário>_`, isolando cada desenvolvedor. No ambiente do cliente (target `prod`), o
+catálogo é o do cliente (`prd`), os schemas são `<projeto>` e `<projeto>_gold`, e a
+landing é um volume externo sobre o ADLS.
 
-**No bundle:** o nome é `essentials_<projeto>` e a variável `projeto` gera o schema, a
-landing e os nomes do job (`essentials_<projeto>_carga_diaria`) e do pipeline
-(`essentials_<projeto>`). Cada projeto fica numa pasta própria no workspace
-(`.bundle/essentials_<projeto>/<target>`).
+**No bundle:** o nome é `essentials_<projeto>` e a variável `projeto` gera os schemas e os
+nomes do job (`essentials_<projeto>_carga_diaria`) e do pipeline (`essentials_<projeto>`).
+Cada projeto fica numa pasta própria no workspace (`.bundle/essentials_<projeto>/<target>`).
+
+### Quem acessa o quê
+
+| Grupo (variável do bundle) | Bronze e silver | Gold e painel | Landing | Dado pessoal na gold |
+|---|---|---|---|---|
+| `grupo_engenharia` | tudo | tudo | lê e grava | conforme o grupo abaixo |
+| `grupo_leitura_gold` | nada | lê | nada | vê `****` |
+| `grupo_dados_pessoais` | — | — | — | vê o valor |
+
+Decisões e alternativas em `docs/adr/0001-modelo-de-acesso-no-unity-catalog.md` e
+`docs/adr/0002-dados-pessoais-no-unity-catalog.md`. As colunas com dado pessoal levam a
+tag `pii` no Unity Catalog.
 
 **Começar um projeto novo do pacote:**
 
@@ -233,24 +248,24 @@ nomes e telefones inventados. Dados reais de clientes nunca entram aqui: veja
    PowerShell, `$env:BUNDLE_VAR_alert_email = "voce@exemplo.com"`) ou de
    `--var="alert_email=voce@exemplo.com"` no `deploy`. Nenhum dos dois é versionado.
 5. **Rode o setup**: no **SQL Editor**, execute `setup/00_setup_free_edition.sql`. Ele
-   cria o catálogo `essentials`, os schemas `essentials.portfolio` e
-   `essentials.portfolio_origem`, o Volume `landing` e a tabela `cadastro_cargos`.
-6. **Gere as agendas fictícias e envie a versão 1** para a pasta da fonte no Volume. A
-   pasta precisa existir antes do envio:
-   ```
-   python data/gerar_dados_exemplo.py
-   databricks fs mkdir dbfs:/Volumes/essentials/portfolio/landing/agenda
-   databricks fs cp data/agenda_exemplo_v1.csv dbfs:/Volumes/essentials/portfolio/landing/agenda/
-   ```
-   O pipeline falha se a pasta estiver vazia, então envie o arquivo antes da primeira
-   execução.
-7. **Valide, implante e rode**:
+   cria só o que não pertence ao bundle: o catálogo `essentials`, o `USE CATALOG` do grupo
+   de leitura e a origem simulada `essentials.portfolio_origem.cadastro_cargos`.
+6. **Valide e implante**: o deploy cria os schemas do projeto, o volume `landing` e as
+   permissões. Nos comandos abaixo, `<schema>` é o schema de dev,
+   `dev_<seu usuário>_portfolio` (o `deploy` mostra o nome).
    ```
    databricks bundle validate -t dev
    databricks bundle deploy -t dev
+   ```
+7. **Gere as agendas fictícias e envie a versão 1** para a pasta da fonte no volume. A
+   pasta precisa existir antes do envio, e o pipeline falha se ela estiver vazia:
+   ```
+   python data/gerar_dados_exemplo.py
+   databricks fs mkdir dbfs:/Volumes/essentials/<schema>/landing/agenda
+   databricks fs cp data/agenda_exemplo_v1.csv dbfs:/Volumes/essentials/<schema>/landing/agenda/
    databricks bundle run essentials_carga_diaria -t dev
    ```
-8. **Confira**: no SQL Editor, consulte `essentials.portfolio.gold_agg_entrevista_mensal`.
+8. **Confira**: no SQL Editor, consulte `essentials.<schema>_gold.gold_agg_entrevista_mensal`.
    No pipeline, a aba **Data quality** do nó `silver_int_agenda_retrato` mostra as linhas
    descartadas (as 2 entrevistas sem nome do gerador) e os alertas (telefones inválidos,
    status "Talvez", entrevista sem horário).
@@ -258,7 +273,7 @@ nomes e telefones inventados. Dados reais de clientes nunca entram aqui: veja
    inteira, com o status preenchido nas entrevistas que estavam vazias e mais um dia de
    agenda:
    ```
-   databricks fs cp data/agenda_exemplo_v2.csv dbfs:/Volumes/essentials/portfolio/landing/agenda/
+   databricks fs cp data/agenda_exemplo_v2.csv dbfs:/Volumes/essentials/<schema>/landing/agenda/
    databricks bundle run essentials_carga_diaria -t dev
    ```
    A bronze lê só o arquivo novo, a `silver_agenda` passa de `Pendente` para o status
@@ -267,10 +282,10 @@ nomes e telefones inventados. Dados reais de clientes nunca entram aqui: veja
    ```sql
    -- Entrevistas que mudaram: a versão antiga fechada (__END_AT preenchido) e a nova aberta.
    SELECT dt_entrevista, nm_candidato, st_entrevista, __START_AT, __END_AT
-   FROM essentials.portfolio.silver_agenda_historico
+   FROM essentials.<schema>.silver_agenda_historico
    WHERE (dt_entrevista, nm_candidato) IN (
      SELECT dt_entrevista, nm_candidato
-     FROM essentials.portfolio.silver_agenda_historico
+     FROM essentials.<schema>.silver_agenda_historico
      GROUP BY ALL HAVING count(*) > 1
    )
    ORDER BY nm_candidato, __START_AT;
@@ -301,7 +316,7 @@ Para exportar o dicionário (por exemplo, para uma planilha de entrega ao client
 ```sql
 SELECT table_name AS tabela, column_name AS coluna, full_data_type AS tipo, comment AS descricao
 FROM essentials.information_schema.columns
-WHERE table_schema = 'portfolio'
+WHERE table_schema IN ('<schema>', '<schema>_gold')
   AND (table_name LIKE 'silver%' OR table_name LIKE 'gold%')
 ORDER BY table_name, ordinal_position;
 ```
@@ -339,8 +354,11 @@ setembro?".
 1. **No Azure do cliente**: workspace Azure Databricks Premium com Unity Catalog, conta
    ADLS Gen2 com o contêiner `landing` e um Access Connector.
 2. **No Unity Catalog**: storage credential, **external location** para
-   `abfss://landing@<conta>.dfs.core.windows.net/`, catálogo `prd` e o schema
-   `prd.<projeto>`.
+   `abfss://landing@<conta>.dfs.core.windows.net/` (o volume `landing` de prod é externo
+   sobre ela), catálogo `prd` com `USE CATALOG` para os grupos do projeto, e os grupos
+   da conta `essentials_engenharia`, `essentials_leitura_gold` e
+   `essentials_dados_pessoais` (ou troque os nomes nas variáveis de `prod`). Os schemas,
+   o volume e as permissões são criados pelo deploy.
 3. **Fontes `tabela`**: troque `{catalogo}.{projeto}_origem...` no `config/fontes.yml`
    pelo nome real da tabela do cliente.
 4. **Fontes `banco`**: crie a conexão (`CREATE CONNECTION`) e um catálogo estrangeiro

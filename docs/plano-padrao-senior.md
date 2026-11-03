@@ -295,6 +295,24 @@ tag; nenhuma dependência sem versão.
 
 **Aceite:** `setup` reduzido; permissões declaradas no bundle; ADR do modelo de acesso.
 
+**Status: concluída (branch `fase-3`).** Decisões tomadas na execução (ADRs 0001 e 0002):
+
+- A gold foi para um schema próprio, `<projeto>_gold`: o grupo de leitura recebe
+  `USE SCHEMA` e `SELECT` só nele, sem grants por tabela nem views. A bronze, a silver e
+  a landing ficam no schema do projeto, só da engenharia.
+- Schemas e volume com `prevent_destroy`. Em dev o bundle prefixa os schemas com
+  `dev_<usuário>_`; os dados foram reconstruídos no schema novo com as mesmas contagens.
+- A landing é volume nos dois ambientes; em prod, volume externo sobre a external
+  location do cliente.
+- `ALTER ... SET MASK` é recusado em tabelas do pipeline: as máscaras são declaradas na
+  própria gold (`MASK` na lista de colunas), com a função criada pela tarefa
+  `governanca_antes` do job. O mascaramento fixo da silver continua.
+- As tags `pii` são aplicadas pela tarefa `governanca_depois`, pulando as tabelas
+  internas `__materialization_*`.
+- No Free Edition só há um usuário: os três grupos são o próprio usuário (leitura é
+  `account users`) e não dá para ver a máscara do lado de quem não tem acesso; ficou
+  conferido que a máscara está registrada. Validar no cliente com um usuário sem acesso.
+
 ---
 
 ## Fase 4 — Observabilidade e custos

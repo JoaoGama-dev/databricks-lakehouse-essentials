@@ -146,6 +146,7 @@
       "properties": {
         "origem": { "type": "string", "minLength": 1 },
         "descricao": { "type": "string", "minLength": 10 },
+        "sensivel": { "type": "boolean", "default": false },
         "tipo": { "enum": ["texto", "inteiro", "decimal", "data", "timestamp", "booleano"] },
         "formatos": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
         "caixa": { "enum": ["titulo", "maiuscula", "minuscula"] },

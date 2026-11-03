@@ -116,6 +116,13 @@ def validar_config(config: dict) -> None:
         origens_repetidas = sorted({origem for origem in origens if origens.count(origem) > 1})
         if origens_repetidas:
             erros.append(f"{nome}: mais de uma coluna com a mesma origem: {', '.join(origens_repetidas)}")
+        mascaradas_sem_flag = sorted(
+            coluna
+            for coluna, configuracao in colunas.items()
+            if configuracao.get("mascarar") and not configuracao.get("sensivel")
+        )
+        if mascaradas_sem_flag:
+            erros.append(f"{nome}: coluna com mascarar precisa de sensivel: true: {', '.join(mascaradas_sem_flag)}")
 
         if fonte["modo_carga"] in ("snapshot", "cdc"):
             # O AUTO CDC não aceita chave nula: cada coluna da chave precisa ser barrada antes.
@@ -178,6 +185,11 @@ def colunas_tecnicas(fonte: dict) -> list[str]:
 def colunas_silver(fonte: dict) -> list[str]:
     """Contrato da silver, na ordem: colunas declaradas no YAML e depois as técnicas."""
     return [*fonte["colunas"], *colunas_tecnicas(fonte)]
+
+
+def colunas_sensiveis(fonte: dict) -> list[str]:
+    """Colunas com dado pessoal (sensivel: true): recebem a tag pii e, na gold, a máscara."""
+    return [coluna for coluna, configuracao in fonte["colunas"].items() if configuracao.get("sensivel")]
 
 
 def tipo_sql(fonte: dict, coluna: str) -> str:

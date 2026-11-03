@@ -3,11 +3,14 @@
 # O mesmo código roda no Free Edition (dev) e no Azure Databricks do cliente (prod);
 # só muda o target.
 #
-# Convenção do pacote Essentials (detalhes no README):
+# Convenção do pacote Essentials (detalhes em docs/padroes/nomes.md):
 #   catálogo  essentials (dev) ou o catálogo do cliente (prod)
-#   schema    <projeto>          tabelas bronze, silver e gold e o volume landing
-#   schema    <projeto>_origem   sistemas de origem simulados (só no Free Edition)
+#   schema    <projeto>          bronze e silver e o volume landing (só engenharia)
+#   schema    <projeto>_gold     gold (leitura para o negócio)
+#   schema    <projeto>_origem   sistemas de origem simulados (só no Free Edition, setup)
 #   bundle    essentials_<projeto>, para cada projeto ter sua pasta no workspace
+# Os schemas e o volume são criados pelo bundle (resources/governanca.yml). Em dev, o
+# modo development os prefixa com dev_<usuário>_, isolando cada desenvolvedor.
 # Para um projeto novo, troque o nome do bundle e a variável "projeto".
 bundle:
   name: essentials_portfolio
@@ -17,17 +20,20 @@ include:
 
 variables:
   projeto:
-    description: Nome do projeto em snake_case; vira o schema e entra no nome do job e do pipeline
+    description: Nome do projeto em snake_case; vira os schemas e entra no nome do job e do pipeline
     default: portfolio
   catalog:
     description: Catálogo do Unity Catalog do pacote (dev) ou do cliente (prod)
     default: essentials
-  schema:
-    description: Schema das tabelas bronze, silver e gold (um por projeto)
-    default: ${var.projeto}
-  landing_path:
-    description: Raiz da landing zone do projeto; cada fonte tem sua pasta (config/fontes.yml)
-    default: /Volumes/${var.catalog}/${var.projeto}/landing
+  grupo_engenharia:
+    description: Quem administra os schemas e a landing do projeto (no cliente, um grupo)
+    default: ${workspace.current_user.userName}
+  grupo_leitura_gold:
+    description: Quem lê a gold e o painel (no cliente, o grupo dos usuários de negócio)
+    default: account users
+  grupo_dados_pessoais:
+    description: Quem vê dados pessoais sem máscara (no cliente, um grupo restrito)
+    default: ${workspace.current_user.userName}
   warehouse_id:
     description: SQL warehouse que executa as consultas do painel AI/BI (localizado pelo nome)
     lookup:
@@ -39,14 +45,15 @@ variables:
     default: alertas@exemplo.com
 
 targets:
-  # Free Edition: só serverless, landing zone em um Volume do Unity Catalog.
+  # Free Edition: só serverless, landing zone num volume gerenciado do Unity Catalog.
   # O host não fica no repositório: vem do perfil da CLI (databricks auth login) na sua
   # máquina e da variável DATABRICKS_HOST no CI.
   dev:
     mode: development
     default: true
 
-  # Azure Databricks do cliente: landing zone no ADLS Gen2, execução pelo service principal.
+  # Azure Databricks do cliente: landing num volume externo sobre o ADLS Gen2, execução
+  # pelo service principal e grupos do cliente.
   prod:
     mode: production
     workspace:
@@ -55,7 +62,15 @@ targets:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       catalog: prd
-      landing_path: abfss://landing@STORAGEACCOUNT.dfs.core.windows.net/${var.projeto}
+      grupo_engenharia: essentials_engenharia
+      grupo_leitura_gold: essentials_leitura_gold
+      grupo_dados_pessoais: essentials_dados_pessoais
+    resources:
+      volumes:
+        landing:
+          volume_type: EXTERNAL
+          # Precisa de uma external location do Unity Catalog sobre este caminho.
+          storage_location: abfss://landing@STORAGEACCOUNT.dfs.core.windows.net/${var.projeto}
     run_as:
       # Application ID do service principal de produção.
       service_principal_name: 00000000-0000-0000-0000-000000000000

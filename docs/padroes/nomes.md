@@ -6,8 +6,12 @@ validação do `config/fontes.yml` recusam o que fugir dele.
 ## Estrutura no Unity Catalog
 
 - Catálogo `essentials` (dev) ou o catálogo do cliente (prod).
-- Um schema por projeto: `<projeto>`, com o volume `landing`; e `<projeto>_origem` para
-  sistemas de origem simulados no Free Edition.
+- Dois schemas por projeto, criados pelo bundle (`resources/governanca.yml`):
+  `<projeto>` (volume `landing`, bronze e silver, só da engenharia) e `<projeto>_gold`
+  (gold, lido pelo negócio). Em dev o bundle prefixa os dois com `dev_<usuário>_`, para
+  cada pessoa ter o seu.
+- `<projeto>_origem` para sistemas de origem simulados no Free Edition (criado pelo
+  `setup/`).
 - Bundle `essentials_<projeto>`; job `essentials_<projeto>_carga_diaria`; pipeline
   `essentials_<projeto>`. Nada com o nome do projeto escrito fixo no código: use
   `${var.projeto}` no bundle ou o marcador `{projeto}` no `fontes.yml`.

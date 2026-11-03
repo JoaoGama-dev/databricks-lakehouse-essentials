@@ -6,15 +6,18 @@ resources:
   pipelines:
     essentials_pipeline:
       name: essentials_${var.projeto}
-      catalog: ${var.catalog}
-      schema: ${var.schema}
+      # Schema padrão: bronze e silver. A gold é publicada no schema gold (schema_gold).
+      catalog: ${resources.schemas.projeto.catalog_name}
+      schema: ${resources.schemas.projeto.name}
       serverless: true
       continuous: false
       channel: CURRENT
       configuration:
         catalogo: ${var.catalog}
         projeto: ${var.projeto}
-        landing_path: ${var.landing_path}
+        schema_projeto: ${resources.schemas.projeto.name}
+        schema_gold: ${resources.schemas.gold.name}
+        landing_path: /Volumes/${resources.volumes.landing.catalog_name}/${resources.volumes.landing.schema_name}/${resources.volumes.landing.name}
         fontes_config: ${workspace.file_path}/config/fontes.yml
         diretorio_codigo: ${workspace.file_path}/src
       environment:
