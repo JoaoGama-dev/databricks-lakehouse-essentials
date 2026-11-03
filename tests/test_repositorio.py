@@ -154,3 +154,17 @@ def test_templates_de_issue_tem_frontmatter():
         texto = modelo.read_text(encoding="utf-8")
         meta = yaml.safe_load(texto.split("---\n")[1])
         assert meta["name"] and meta["about"] and meta["labels"], modelo.name
+
+
+# 2.7 Permissões mínimas -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda p: p.name)
+def test_workflow_nao_concede_nada_por_padrao_e_cada_job_declara_o_que_usa(workflow):
+    configuracao = carregar_yaml(workflow)
+    assert configuracao["permissions"] == {}
+    for nome, job in configuracao["jobs"].items():
+        assert "permissions" in job, f"{workflow.name}: job {nome} sem permissions"
+        escritas = {escopo for escopo, nivel in job["permissions"].items() if nivel == "write"}
+        permitido = {"id-token"} if nome == "deploy_prod" else set()
+        assert escritas <= permitido, f"{workflow.name}: job {nome} pode escrever em {escritas - permitido}"

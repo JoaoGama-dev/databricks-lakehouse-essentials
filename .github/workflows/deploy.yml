@@ -8,13 +8,15 @@ on:
   # push:
   #   branches: [main]
 
-permissions:
-  id-token: write # necessário para o login OIDC, sem token guardado no repositório
-  contents: read
+# Nenhuma permissão por padrão; o job declara só o que usa.
+permissions: {}
 
 jobs:
   deploy_prod:
     runs-on: ubuntu-24.04
+    permissions:
+      id-token: write # necessário para o login OIDC, sem token guardado no repositório
+      contents: read
     # O environment "prod" no GitHub pede aprovação manual antes de rodar.
     environment: prod
     env:
