@@ -31,8 +31,15 @@ def main() -> None:
     ruff = localizar_ruff(projeto)
     if not ruff:
         return
+    # A saída do ruff traz trechos do código (com acentos): leia sempre em UTF-8.
     resultado = subprocess.run(
-        [ruff, "check", "--no-cache", arquivo], cwd=projeto, capture_output=True, text=True, timeout=60
+        [ruff, "check", "--no-cache", arquivo],
+        cwd=projeto,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
     )
     if resultado.returncode != 0:
         avisar(f"ruff encontrou problemas em {arquivo}:\n{resultado.stdout}{resultado.stderr}")
