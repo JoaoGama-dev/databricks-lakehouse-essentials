@@ -1,0 +1,33 @@
+# Atualizações automáticas de dependências (Dependabot).
+# - Toda semana, abre PRs para as actions dos workflows e para os requirements-*.txt.
+# - cooldown: só propõe versões publicadas há pelo menos 14 dias, a mesma regra que o
+#   projeto segue à mão (uma versão recém-publicada pode ser retirada ou ter falha).
+# - Atualizações minor e patch vêm agrupadas num PR só; major vem em PR próprio.
+# Cada PR passa pelo CI como qualquer outro e só entra com o merge do responsável.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    groups:
+      actions-menores:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "Dependências (actions)"
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    groups:
+      python-menores:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "Dependências (python)"

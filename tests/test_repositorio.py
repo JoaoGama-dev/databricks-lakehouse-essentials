@@ -30,3 +30,17 @@ def test_actions_fixadas_por_sha_com_versao_no_comentario(workflow):
     for acao, resto in usos:
         assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", acao), f"{acao} não está fixada por SHA"
         assert re.fullmatch(r"\s*# v\d+\.\d+\.\d+", resto), f"{acao} sem a versão em comentário"
+
+
+# 2.2 Dependabot -------------------------------------------------------------------
+
+
+def test_dependabot_cobre_actions_e_python_com_cooldown():
+    configuracao = carregar_yaml(RAIZ / ".github" / "dependabot.yml")
+    assert configuracao["version"] == 2
+    atualizacoes = {u["package-ecosystem"]: u for u in configuracao["updates"]}
+    assert set(atualizacoes) == {"github-actions", "pip"}
+    for atualizacao in atualizacoes.values():
+        assert atualizacao["schedule"]["interval"] == "weekly"
+        assert atualizacao["cooldown"]["default-days"] >= 14
+        assert any(g["update-types"] == ["minor", "patch"] for g in atualizacao["groups"].values())
