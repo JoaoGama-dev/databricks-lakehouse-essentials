@@ -43,6 +43,13 @@ Azure Databricks do cliente (target `prod`). Tudo em português do Brasil.
 9. **Não invente sintaxe**: confirme bundle com `databricks bundle schema` e Claude Code
    na documentação oficial; se não der, diga isso.
 
+## Fluxo de uma mudança grande (subagentes em `.claude/agents/`)
+
+`arquiteto-dados` (propõe) → **aprovação do João** → `engenheiro-dados` (implementa) →
+`qa-dados` (valida; devolve ao engenheiro se falhar) → `revisor-seguranca` (revisa o diff)
+→ `devops-dados` (implanta e roda em dev) → `documentador` → pull request → CI →
+**aprovação do João** → merge. Produção só pelo workflow de deploy, nunca por agente.
+
 ## Antes de dizer que terminou
 
 Rode e mostre a saída (liberados em `.claude/settings.json`):
