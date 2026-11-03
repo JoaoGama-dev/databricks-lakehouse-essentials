@@ -16,6 +16,20 @@ import sys
 
 # Tarefas que falharam por conta própria; UPSTREAM_FAILED é só consequência de outra falha.
 ESTADOS_DE_FALHA = {"FAILED", "TIMEDOUT", "CANCELED"}
+# Esta própria tarefa termina com erro de propósito: nunca é registrada como falha.
+TAREFA_PROPRIA = "registrar_falha"
+
+
+def tarefas_com_falha(tarefas) -> list:
+    """Tarefas da execução que falharam, sem a própria registrar_falha."""
+    return [
+        tarefa
+        for tarefa in tarefas or []
+        if tarefa.task_key != TAREFA_PROPRIA
+        and tarefa.state
+        and tarefa.state.result_state
+        and tarefa.state.result_state.value in ESTADOS_DE_FALHA
+    ]
 
 
 def argumentos() -> argparse.Namespace:
@@ -47,8 +61,7 @@ def main() -> None:
     from databricks.sdk import WorkspaceClient
     from pyspark.sql import SparkSession
 
-    from essentials.config_fontes import literal_sql
-    from essentials.monitoramento_sql import TABELA_FALHAS, motivo_seguro
+    from essentials.monitoramento_sql import TABELA_FALHAS, motivo_seguro, sql_registrar_falhas
 
     spark = SparkSession.builder.getOrCreate()
     w = WorkspaceClient()
@@ -56,10 +69,7 @@ def main() -> None:
     link = f"{w.config.host.rstrip('/')}/jobs/{execucao.job_id}/runs/{execucao.run_id}"
 
     falhas = []
-    for tarefa in execucao.tasks or []:
-        estado = tarefa.state.result_state.value if tarefa.state and tarefa.state.result_state else None
-        if estado not in ESTADOS_DE_FALHA:
-            continue
+    for tarefa in tarefas_com_falha(execucao.tasks):
         mensagem = tarefa.state.state_message
         if tarefa.pipeline_task:
             mensagem = erro_do_pipeline(spark, args.catalogo, args.schema) or mensagem
@@ -70,12 +80,7 @@ def main() -> None:
     if not falhas:
         falhas.append(("desconhecida", motivo_seguro(None)))
 
-    valores = ",\n".join(
-        f"(current_timestamp(), {literal_sql(str(execucao.run_id))}, {literal_sql(tarefa)}, "
-        f"{literal_sql(motivo)}, {literal_sql(link)})"
-        for tarefa, motivo in falhas
-    )
-    spark.sql(f"INSERT INTO `{args.catalogo}`.`{args.schema}`.`{TABELA_FALHAS}` VALUES\n{valores}")
+    spark.sql(sql_registrar_falhas(args.catalogo, args.schema, str(execucao.run_id), falhas, link))
     resumo = "; ".join(f"{tarefa}: {motivo}" for tarefa, motivo in falhas)
     print(f"Falha registrada em {TABELA_FALHAS}: {resumo}")
     sys.exit(f"Carga com falha (registrada em {TABELA_FALHAS}): {resumo}")

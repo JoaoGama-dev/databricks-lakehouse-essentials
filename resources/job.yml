@@ -150,6 +150,8 @@ resources:
             - task_key: atualizar_lakehouse
             - task_key: governanca_depois
           run_if: AT_LEAST_ONE_FAILED
+          # Termina com erro de propósito: tentar de novo só repetiria o registro.
+          max_retries: 0
           environment_key: ingestao
           spark_python_task:
             python_file: ../src/governanca/registrar_falha.py

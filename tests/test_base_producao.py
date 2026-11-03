@@ -4,7 +4,9 @@ taxa de sucesso, teto de custo e os alertas que avisam o cliente e o suporte.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -17,6 +19,7 @@ from essentials.monitoramento_sql import (
     sql_custo_mensal,
     sql_estrutura,
     sql_execucoes,
+    sql_registrar_falhas,
     sql_tabela_falhas,
     sql_volume,
     tabela_do_volume,
@@ -167,7 +170,45 @@ def test_registrar_falha_grava_o_motivo_limpo_e_termina_com_erro():
     codigo = (RAIZ / "src" / "governanca" / "registrar_falha.py").read_text(encoding="utf-8")
     assert "motivo_seguro(" in codigo
     assert "sys.exit(" in codigo
-    assert "INSERT INTO" in codigo
+    assert "sql_registrar_falhas(" in codigo
+
+
+def carregar_registrar_falha():
+    caminho = RAIZ / "src" / "governanca" / "registrar_falha.py"
+    especificacao = importlib.util.spec_from_file_location("registrar_falha", caminho)
+    modulo = importlib.util.module_from_spec(especificacao)
+    especificacao.loader.exec_module(modulo)
+    return modulo
+
+
+def tarefa_fake(chave: str, estado: str | None):
+    resultado = SimpleNamespace(value=estado) if estado else None
+    return SimpleNamespace(task_key=chave, state=SimpleNamespace(result_state=resultado))
+
+
+def test_registrar_falha_ignora_a_si_mesma_e_o_que_so_falhou_por_dependencia():
+    # Na nova tentativa, a registrar_falha anterior aparece como FAILED: não é uma falha da carga.
+    modulo = carregar_registrar_falha()
+    tarefas = [
+        tarefa_fake("atualizar_lakehouse", "FAILED"),
+        tarefa_fake("governanca_depois", "UPSTREAM_FAILED"),
+        tarefa_fake("registrar_falha", "FAILED"),
+        tarefa_fake("governanca_antes", "SUCCESS"),
+        tarefa_fake("ingestao_api", None),
+    ]
+    assert [t.task_key for t in modulo.tarefas_com_falha(tarefas)] == ["atualizar_lakehouse"]
+
+
+def test_registro_de_falha_nao_duplica_na_mesma_execucao():
+    sql = sql_registrar_falhas("essentials", "portfolio", "42", [("atualizar_lakehouse", "motivo")], "https://x")
+    assert sql.startswith("MERGE INTO `essentials`.`portfolio`.`mon_falhas` AS f")
+    assert "ON f.id_execucao = n.id_execucao AND f.nm_tarefa = n.nm_tarefa" in sql
+    assert "WHEN NOT MATCHED THEN INSERT" in sql and "WHEN MATCHED" not in sql
+    assert "('42', 'atualizar_lakehouse', 'motivo', 'https://x')" in sql
+
+
+def test_registrar_falha_nao_e_tentada_de_novo():
+    assert tarefas()["registrar_falha"]["max_retries"] == 0
 
 
 def test_aviso_de_falha_do_job_vai_tambem_para_o_suporte():

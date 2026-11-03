@@ -417,6 +417,27 @@ def sql_tabela_falhas(catalogo: str, schema: str) -> str:
     )
 
 
+def sql_registrar_falhas(
+    catalogo: str, schema: str, id_execucao: str, falhas: list[tuple[str, str]], link: str
+) -> str:
+    """Grava as falhas de uma execução sem duplicar: uma linha por (execução, tarefa).
+
+    Se a tarefa registrar_falha for tentada de novo na mesma execução, o MERGE não grava
+    outra vez o que já está lá.
+    """
+    valores = ",\n    ".join(
+        f"({literal_sql(id_execucao)}, {literal_sql(tarefa)}, {literal_sql(motivo)}, {literal_sql(link)})"
+        for tarefa, motivo in falhas
+    )
+    return f"""MERGE INTO {nome_completo(catalogo, schema, TABELA_FALHAS)} AS f
+USING (SELECT * FROM VALUES
+    {valores}
+  AS novas(id_execucao, nm_tarefa, ds_motivo, ds_link)) AS n
+ON f.id_execucao = n.id_execucao AND f.nm_tarefa = n.nm_tarefa
+WHEN NOT MATCHED THEN INSERT (dh_falha, id_execucao, nm_tarefa, ds_motivo, ds_link)
+  VALUES (current_timestamp(), n.id_execucao, n.nm_tarefa, n.ds_motivo, n.ds_link)"""
+
+
 TAMANHO_MAXIMO_MOTIVO = 300
 
 
