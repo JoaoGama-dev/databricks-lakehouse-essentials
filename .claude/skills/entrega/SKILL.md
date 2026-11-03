@@ -10,8 +10,8 @@ Gera os documentos de entrega em `docs/entrega/`, em linguagem para quem não é
 1. **Roteiro de operação:** revise `docs/roteiro-de-operacao.md` com os nomes reais do
    projeto (catálogo, schema, job, pipeline, painel, pastas da landing) e as regras de
    qualidade da aba Data quality.
-2. **Dicionário de dados:** exporte com a consulta da seção "Dicionário de dados" do
-   README e salve como `docs/entrega/dicionario-de-dados.md` (tabela, coluna, tipo,
+2. **Dicionário de dados:** exporte com a consulta da seção "Dicionário de dados" de
+   `docs/arquitetura.md` e salve como `docs/entrega/dicionario-de-dados.md` (tabela, coluna, tipo,
    descrição), só para silver e gold.
 3. **Checklist de acessos** (`docs/entrega/checklist-de-acessos.md`):
    - [ ] grupos e permissões no Unity Catalog (leitura só na gold para o negócio);

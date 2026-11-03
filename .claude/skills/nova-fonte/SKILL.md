@@ -46,7 +46,8 @@ quase sempre, só acrescentar um item nele. Siga os passos na ordem. Regras de L
      `{catalogo}.{projeto}_origem.<tabela>` no YAML.
 
 4. **Atualizar o resto:** testes específicos em `tests/test_projeto.py` (quando houver
-   lógica nova), `README.md` (tabela de fontes) e `docs/roteiro-de-operacao.md` (onde
+   lógica nova), `docs/arquitetura.md` (fontes, tabelas geradas e regras),
+   `CHANGELOG.md` (seção `[Unreleased]`) e `docs/roteiro-de-operacao.md` (onde
    colocar o arquivo e as novas regras da aba Data quality, em linguagem não técnica).
 
 5. **Validar e mostrar o resultado:** rode `ruff check .`, `pytest -q` e

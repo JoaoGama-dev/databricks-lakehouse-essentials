@@ -19,6 +19,9 @@ Azure Databricks do cliente (target `prod`). Tudo em português do Brasil.
 | Perfil de dados sem expor conteúdo | `scripts/perfilar_dados.py` |
 | Permissões e hooks do Claude Code | `.claude/settings.json`, `.claude/hooks/` |
 | Subagentes e skills | `.claude/agents/`, `.claude/skills/` |
+| Arquitetura, guias (Free Edition, Azure) e desenvolvimento | `docs/arquitetura.md`, `docs/guia-free-edition.md`, `docs/levando-ao-azure.md`, `docs/desenvolvimento.md` |
+| Decisões de arquitetura (ADRs) | `docs/adr/` (índice em `docs/adr/README.md`; skill `adr`) |
+| Histórico de versões | `CHANGELOG.md` (anote em `[Unreleased]`) |
 | Plano de evolução | `docs/plano-padrao-senior.md` |
 
 ## Padrões (leia antes de mudar o assunto correspondente)
