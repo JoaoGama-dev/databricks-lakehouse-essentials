@@ -1,480 +1,150 @@
 # Essentials · projeto portfolio
 
 [![CI](https://github.com/JoaoGama-dev/databricks-lakehouse-essentials/actions/workflows/ci.yml/badge.svg)](https://github.com/JoaoGama-dev/databricks-lakehouse-essentials/actions/workflows/ci.yml)
+[![Integração](https://github.com/JoaoGama-dev/databricks-lakehouse-essentials/actions/workflows/integracao.yml/badge.svg)](https://github.com/JoaoGama-dev/databricks-lakehouse-essentials/actions/workflows/integracao.yml)
 
 Projeto de portfólio de engenharia de dados: o pacote **Essentials** da Logos Analytics,
 um **lakehouse medalhão orientado por metadados** no Databricks, empacotado como
 **Databricks Asset Bundle**.
 
-As fontes de cada projeto são descritas em [`config/fontes.yml`](config/fontes.yml). A
-bronze e a silver são geradas a partir dele, então reaproveitar o projeto em outro
-cliente é, na maior parte, trocar esse arquivo.
+## Em 1 minuto
 
-- Roda primeiro no **Databricks Free Edition** (target `dev`) e depois no **Azure
-  Databricks** de um cliente (target `prod`), mudando só o target.
-- **Sem dbt**: tudo em Lakeflow Spark Declarative Pipelines (antigo DLT), serverless.
-  Bronze e silver em Python (`from pyspark import pipelines as dp`), lógica específica e
-  gold em SQL.
-- **ELT**: a bronze guarda o dado exatamente como chegou.
-- **Nomes padronizados**: tabelas em `camada_tipo_nome` e colunas com prefixo da classe
-  da informação (`dt_`, `nm_`, `st_`, `qt_`...), validados pelos testes.
+**O problema:** pequenas e médias empresas têm dados espalhados em planilhas e sistemas,
+e cada projeto de dados costuma ser escrito do zero. **A solução:** um acelerador em que
+as fontes de cada cliente são descritas num arquivo, [`config/fontes.yml`](config/fontes.yml),
+e a bronze e a silver são geradas a partir dele. Reaproveitar o projeto em outro cliente
+é, na maior parte, trocar esse arquivo.
+
+```mermaid
+flowchart LR
+    subgraph fontes["Fontes do cliente"]
+        arquivos["planilhas e arquivos"]
+        sistemas["tabelas, bancos e APIs"]
+    end
+    cfg["config/fontes.yml"]
+    subgraph lakehouse["Lakehouse no Unity Catalog"]
+        landing["landing"] --> bronze["bronze<br/>dado como chegou"]
+        bronze --> silver["silver<br/>limpeza, qualidade, histórico"]
+        silver --> gold["gold<br/>modelo estrela"]
+    end
+    paineis["Painéis AI/BI e Genie"]
+    arquivos --> landing
+    sistemas --> landing
+    cfg -. "gera" .-> bronze
+    cfg -. "gera" .-> silver
+    gold --> paineis
+```
+
+```mermaid
+flowchart LR
+    subgraph github["GitHub"]
+        ci["ci.yml<br/>todo pull request"]
+        integ["integracao.yml<br/>toda noite"]
+        deploy["deploy.yml<br/>manual, com aprovação"]
+    end
+    subgraph free["Databricks Free Edition: só dados fictícios"]
+        dev["target dev"]
+        tci["target ci<br/>criado e destruído a cada teste"]
+    end
+    subgraph azure["Azure Databricks do cliente"]
+        prod["target prod"]
+    end
+    ci -- "lint, testes, validate, segredos" --> dev
+    integ -- "deploy, cargas v1 e v2, asserções, destroy" --> tci
+    deploy -- "OIDC, sem segredo guardado" --> prod
+```
+
+- **Sem dbt:** Lakeflow Spark Declarative Pipelines, serverless; bronze e silver em
+  Python (`from pyspark import pipelines as dp`), gold em SQL.
+- **Qualidade visível:** regras do YAML viram expectations, com histórico diário,
+  alerta de atraso e painel de saúde.
+- **Governança como código:** schemas, volume, permissões, máscara de dado pessoal e tags
+  `pii` no bundle; o negócio lê só a gold.
+- **Testado de ponta a ponta:** testes de unidade em todo PR e, toda noite, uma carga
+  real com dados fictícios num ambiente isolado.
+- **IA com guardrails:** Claude Code com permissões, hooks, 6 subagentes e 8 skills; o
+  modelo nunca vê dados reais.
 
 O exemplo usa duas fontes: a **agenda de entrevistas** de um RH (planilha CSV) e um
-**cadastro de cargos** (tabela no Unity Catalog). A gold, em modelo estrela, junta as duas
-para mostrar comparecimento e aprovação por área.
+**cadastro de cargos** (tabela no Unity Catalog). A gold junta as duas para mostrar
+comparecimento e aprovação por área.
 
-## Estrutura do pacote Essentials
+## Como rodar (Free Edition)
 
-Todos os projetos do pacote seguem a mesma organização, para que qualquer pessoa da
-equipe encontre as coisas no mesmo lugar.
-
-**No Unity Catalog (Free Edition, target `dev`):**
-
-```
-essentials                              ← catálogo do pacote (um só para todos os projetos)
-├── dev_<usuário>_portfolio             ← bronze e silver: só a engenharia
-│   └── landing (volume)                ← /Volumes/essentials/dev_<usuário>_portfolio/landing/<fonte>/
-├── dev_<usuário>_portfolio_gold        ← gold: leitura para o negócio (e o painel)
-└── portfolio_origem                    ← sistemas de origem simulados (setup)
-```
-
-Os schemas do projeto, o volume e as permissões são criados pelo bundle
-(`resources/governanca.yml`). Em dev, o modo development prefixa os schemas com
-`dev_<usuário>_`, isolando cada desenvolvedor. No ambiente do cliente (target `prod`), o
-catálogo é o do cliente (`prd`), os schemas são `<projeto>` e `<projeto>_gold`, e a
-landing é um volume externo sobre o ADLS.
-
-**No bundle:** o nome é `essentials_<projeto>` e a variável `projeto` gera os schemas e os
-nomes do job (`essentials_<projeto>_carga_diaria`) e do pipeline (`essentials_<projeto>`).
-Cada projeto fica numa pasta própria no workspace (`.bundle/essentials_<projeto>/<target>`).
-
-### Quem acessa o quê
-
-| Grupo (variável do bundle) | Bronze e silver | Gold e painel | Landing | Dado pessoal na gold |
-|---|---|---|---|---|
-| `grupo_engenharia` | tudo | tudo | lê e grava | conforme o grupo abaixo |
-| `grupo_leitura_gold` | nada | lê | nada | vê `****` |
-| `grupo_dados_pessoais` | — | — | — | vê o valor |
-
-Decisões e alternativas em `docs/adr/0001-modelo-de-acesso-no-unity-catalog.md` e
-`docs/adr/0002-dados-pessoais-no-unity-catalog.md`. As colunas com dado pessoal levam a
-tag `pii` no Unity Catalog.
-
-**Começar um projeto novo do pacote:**
-
-1. Copie este repositório com o nome `essentials-<projeto>`.
-2. No `databricks.yml`, troque `bundle.name` para `essentials_<projeto>` e o `default` da
-   variável `projeto`.
-3. Em `setup/00_setup_free_edition.sql`, troque `portfolio` pelo nome do projeto.
-4. Reescreva `config/fontes.yml`, os `src/pipeline/silver_<fonte>.sql` e os
-   `src/pipeline/gold_*.sql` (a skill `novo-cliente` do Claude Code conduz esse passo).
-
-### Padrão de nomes das tabelas: `camada_tipo_nome`
-
-| Prefixo | Tipo | Exemplo | Para que serve |
-|---|---|---|---|
-| `bronze_` | bruta | `bronze_agenda` | dado exatamente como chegou |
-| `silver_int_` | intermediária | `silver_int_agenda_retrato` | passos internos; onde ficam as regras de qualidade |
-| `silver_` | atual | `silver_agenda` | estado atual de cada registro |
-| `silver_..._historico` | histórico | `silver_agenda_historico` | todas as versões (SCD tipo 2) |
-| `gold_dim_` | dimensão | `gold_dim_cargo` | cadastros que dão contexto à fato |
-| `gold_fato_` | fato | `gold_fato_entrevista` | eventos do negócio, uma linha por evento |
-| `gold_agg_` | agregada | `gold_agg_entrevista_mensal` | totais prontos para o painel |
-| `mon_` | monitoramento | `mon_qualidade_diaria` | event log, qualidade, atraso e custo (só engenharia) |
-
-Toda tabela leva `TBLPROPERTIES ('camada' = ..., 'tipo' = ...)` e um `COMMENT`.
-
-### Padrão de nomes das colunas: prefixo da classe da informação
-
-| Prefixo | Tipo | Uso | | Prefixo | Tipo | Uso |
-|---|---|---|---|---|---|---|
-| `id_` | inteiro/texto | identificador | | `qt_` | inteiro/decimal | quantidade |
-| `cd_` | texto/inteiro | código | | `vl_` | decimal/inteiro | valor |
-| `nm_` | texto | nome | | `pc_` | decimal | percentual |
-| `ds_` | texto | descrição | | `dt_` | data | data |
-| `sg_` | texto | sigla | | `dh_` | timestamp | data e hora |
-| `st_` | texto | status | | `hr_` | texto | hora (hh:mm) |
-| `nr_` | texto/inteiro | número (telefone, documento) | | `fl_` | booleano | flag |
-
-A validação do `fontes.yml` recusa coluna sem prefixo conhecido ou com prefixo que não
-combina com o tipo (ex.: `dt_` em texto). Colunas técnicas começam com `_` (`_fonte`,
-`_arquivo_origem`, `_ingerido_em`).
-
-## Arquitetura
+Pré-requisitos: conta no [Databricks Free Edition](https://www.databricks.com/learn/free-edition),
+Python 3.12 e a CLI do Databricks (`winget install Databricks.DatabricksCLI` no Windows,
+`brew tap databricks/tap && brew install databricks` no macOS).
 
 ```
- config/fontes.yml ──(validado por config/fontes.schema.json)──┐
-                                                                │ lido por bronze.py e silver.py
- FONTES                         LANDING ZONE                    ▼
- ┌─────────────┐               ┌───────────────────────┐   ┌───────────────────────────────┐
- │ arquivo     │──────────────▶│ /Volumes/.../landing  │──▶│ bronze_<fonte>                │
- │ banco  ─────┼─job ingestão─▶│ (dev)                 │   │ Auto Loader, dado como chegou │
- │ api    ─────┼─job ingestão─▶│ abfss://landing@...   │   │ + _fonte _arquivo_origem      │
- └─────────────┘               │ (prod)                │   │   _ingerido_em                │
- ┌─────────────┐               └───────────────────────┘   └──────────────┬────────────────┘
- │ tabela (UC) │─────────────────────────────────────────▶ bronze_<fonte> │
- └─────────────┘                                            (MV/streaming) │
-                                                                           ▼
-                          silver_<fonte>.sql (opcional) ──▶ silver_int_<fonte>_preparada
-                                                                           ▼
-        limpeza padrão, nomes padronizados e regras do YAML como expectations (silver.py)
-          incremental: silver_<fonte> · snapshot: silver_int_<fonte>_retrato
-          cdc: silver_int_<fonte>_mudancas
-                                                                           ▼
-                          AUTO CDC (snapshot e cdc): silver_<fonte> (estado atual)
-                                               + silver_<fonte>_historico (SCD 2)
-                                                                           ▼
-                        gold_*.sql: gold_dim_* · gold_fato_* · gold_agg_*
-                                                                           ▼
-                                        Painel AI/BI (Dashboards + Genie)
-
- Lakeflow Jobs: essentials_<projeto>_carga_diaria · 6h (America/Sao_Paulo)
-   tem_fonte_api ──(true)──▶ ingestao_api ──┐
-   tem_fonte_banco ─(true)─▶ ingestao_banco ┼─▶ atualizar_lakehouse ─▶ governanca_depois
-   governanca_antes (função de máscara) ────┘     (pipeline)          (tags pii, views mon_*)
-
- Observabilidade: event log mon_log_eventos ─▶ mon_qualidade_diaria · mon_atualizacao
-   · mon_custo_diario ─▶ painel "Saúde da plataforma" e alerta SQL de atraso (9h)
+databricks auth login --host https://<seu-workspace>.cloud.databricks.com
+$env:BUNDLE_VAR_alert_email = "voce@exemplo.com"      # PowerShell; não é versionado
 ```
 
-As ingestões só rodam quando o `fontes.yml` tem fonte daquele tipo (variáveis
-`ingerir_banco` e `ingerir_api`; um teste confere a coerência). Sem fonte, aparecem como
-puladas e não custam nada (`docs/adr/0004-ingestao-so-com-fonte.md`).
-
-As regras de qualidade ficam numa tabela intermediária, e não numa view, porque o AUTO
-CDC FROM SNAPSHOT lê a origem como um retrato e não aplica expectations de views.
-
-## Fontes do exemplo
-
-| Fonte | Tipo | Modo | Chave | Detalhe |
-|---|---|---|---|---|
-| `agenda` | arquivo (texto) | snapshot + histórico | `dt_entrevista`, `nm_candidato` | a planilha do ano inteiro é reenviada a cada vez; a data só aparece na linha `AGENDA DIA`, tratada em `silver_agenda.sql` |
-| `cargos` | tabela | snapshot | `id_cargo` | `essentials.portfolio_origem.cadastro_cargos`, criada pelo setup; liga o prefixo da vaga a uma área |
-
-## Tabelas geradas
-
-| Tabela | Objeto | Camada · tipo | O que tem |
-|---|---|---|---|
-| `bronze_agenda` | streaming table | bronze · bruta | cada arquivo da agenda inteiro numa linha (`value`), como chegou |
-| `bronze_cargos` | materialized view | bronze · bruta | cópia da tabela de cargos |
-| `silver_int_agenda_preparada` | view temporária | silver · intermediária | uma linha por entrevista, com a data do separador repetida |
-| `silver_int_agenda_retrato` | materialized view | silver · intermediária | último retrato limpo; **regras de qualidade da agenda** |
-| `silver_int_cargos_retrato` | materialized view | silver · intermediária | cadastro limpo; **regras de qualidade dos cargos** |
-| `silver_int_cargos_unico_ds_prefixo_vaga` | materialized view | silver · intermediária | checagem da regra `unico` |
-| `silver_agenda` | streaming table (AUTO CDC) | silver · atual | estado atual de cada entrevista |
-| `silver_agenda_historico` | streaming table (SCD 2) | silver · histórico | cada mudança de status, com `__START_AT` e `__END_AT` |
-| `silver_cargos` | streaming table (AUTO CDC) | silver · atual | cadastro atual de cargos |
-| `gold_dim_cargo` | materialized view | gold · dimensão | cargos e áreas, com o membro `-1 = Não classificada` |
-| `gold_fato_entrevista` | materialized view | gold · fato | entrevista + `id_cargo` + `fl_compareceu`, `fl_aprovado`, `fl_sem_retorno` |
-| `gold_agg_entrevista_mensal` | materialized view | gold · agregada | `qt_` por mês, área e status |
-| `mon_log_eventos` | event log do pipeline | monitoramento | todos os eventos das atualizações do pipeline |
-| `mon_qualidade_diaria` | view | monitoramento · qualidade | por dia, tabela e regra: aprovadas, descartadas e alertas |
-| `mon_atualizacao` | view | monitoramento · atualização | última carga do pipeline e último dado novo de cada silver |
-| `mon_custo_diario` | view | monitoramento · custo | DBUs e custo de lista do job e do pipeline |
-
-As `mon_*` ficam no schema do projeto e são criadas pela tarefa `governanca_depois`
-(`docs/adr/0003-monitoramento-fora-do-pipeline.md`).
-
-### Regras de qualidade da agenda
-
-| Regra | Ação | O que verifica |
-|---|---|---|
-| `nome_preenchido` | drop | `nm_candidato` preenchido |
-| `data_entrevista_valida` | drop | `dt_entrevista` reconhecida (`dd/MM/yyyy` ou `yyyy-MM-dd`) |
-| `status_conhecido` | alerta | `st_entrevista` dentro da lista depois do de-para |
-| `telefone_valido` | alerta | `nr_telefone` com 10 ou 11 dígitos (um número que o Excel converteu para `4,19E+10` não passa) |
-| `horario_valido` | alerta | `hr_entrevista` no formato `HH:mm` |
-
-O status passa por um de-para no YAML (`Aprovada` → `Aprovado`, `N/ atendeu` → `Não
-atendeu`, `Cancelou` → `Cancelado`, vazio → `Pendente`), e o telefone sai mascarado
-(`(41) ****-1234`) por causa da LGPD. Nos modos snapshot e cdc, toda coluna da chave
-precisa de uma regra `nao_nulo` com `drop`: o AUTO CDC não aceita chave nula.
-
-## O `config/fontes.yml`
-
-Cada fonte informa: `nome`, `tipo` (arquivo, tabela, banco ou api), o bloco do tipo,
-`modo_carga` (incremental, snapshot ou cdc), `historico`, `chave_primaria`,
-`coluna_atualizacao`, `colunas` (nome padronizado, `origem`, tipo, formatos de data,
-caixa, de-para, máscara) e `regras` (nao_nulo, valores_aceitos, expressao, unico, com
-ação drop ou alerta). Os campos estão explicados nos comentários do próprio arquivo, e o
-formato é validado por [`config/fontes.schema.json`](config/fontes.schema.json) no pytest
-e no começo de cada execução do pipeline.
-
-| Tipo | Como chega à bronze | Testado em |
-|---|---|---|
-| `arquivo` | Auto Loader lê a pasta da fonte na landing | Free Edition e Azure |
-| `tabela` | lê a tabela do Unity Catalog (MV no snapshot, streaming nos outros modos) | Free Edition e Azure |
-| `banco` | `src/ingestao/banco_para_landing.py` lê pelo Lakehouse Federation, com watermark, e grava parquet na landing | **só Azure** |
-| `api` | `src/ingestao/api_para_landing.py` chama a API com token do secret scope e grava JSON na landing | **só Azure** |
-
-O Free Edition restringe acesso externo, então `banco` e `api` não foram testados nele.
-
-## Estrutura de pastas
-
-```
-.
-├── databricks.yml                     # bundle, variáveis (projeto, catálogo) e targets dev/prod
-├── config/
-│   ├── fontes.yml                     # fontes do projeto (o que muda por cliente)
-│   └── fontes.schema.json             # JSON Schema do fontes.yml
-├── resources/
-│   ├── pipeline.yml                   # pipeline serverless
-│   ├── job.yml                        # ingestão de banco/api + pipeline, às 6h
-│   └── dashboard.yml                  # painel AI/BI
-├── src/
-│   ├── dashboards/entrevistas.lvdash.json  # painel AI/BI como código (3 páginas)
-│   ├── essentials/config_fontes.py    # lê e valida a config; gera expectations, SQL de limpeza e nomes
-│   ├── pipeline/
-│   │   ├── bronze.py                  # bronze genérica, uma tabela por fonte
-│   │   ├── silver.py                  # silver genérica: limpeza, nomes, expectations, AUTO CDC
-│   │   ├── silver_agenda.sql          # lógica específica da agenda
-│   │   └── gold_entrevistas.sql       # gold_dim_cargo, gold_fato_entrevista, gold_agg_entrevista_mensal
-│   └── ingestao/
-│       ├── api_para_landing.py
-│       └── banco_para_landing.py
-├── setup/00_setup_free_edition.sql    # catálogo, schemas, Volume e tabela de cargos
-├── data/
-│   ├── gerar_dados_exemplo.py         # gera as agendas fictícias v1 e v2
-│   └── agenda_exemplo_v*.csv          # saída do gerador (o resto de data/ fica fora do git)
-├── tests/                             # pytest, sem Databricks
-├── docs/roteiro-de-operacao.md        # guia para o cliente
-├── .github/workflows/                 # ci.yml e deploy.yml
-├── .claude/skills/                    # nova-fonte e novo-cliente
-├── ruff.toml                          # regras de lint
-└── CLAUDE.md
-```
-
-## Passo a passo no Free Edition
-
-O Free Edition roda **somente os dados fictícios** do gerador
-(`data/gerar_dados_exemplo.py`). Os arquivos têm o mesmo formato da planilha real do
-RH (cabeçalho, linhas `AGENDA DIA`, `;`, UTF-8 com BOM, CRLF e a mesma sujeira), mas
-nomes e telefones inventados. Dados reais de clientes nunca entram aqui: veja
-[Dados reais e LGPD](#dados-reais-e-lgpd).
-
-1. **Crie a conta** no [Databricks Free Edition](https://www.databricks.com/learn/free-edition)
-   e anote a URL do workspace.
-2. **Instale a CLI do Databricks**:
-   - Windows: `winget install Databricks.DatabricksCLI`
-   - macOS: `brew tap databricks/tap && brew install databricks`
-3. **Faça login**: `databricks auth login --host https://<seu-workspace>.cloud.databricks.com`
-4. **Configuração local, fora do repositório**: o host do workspace vem do perfil criado
-   no login (passo 3), e o e-mail de alerta, da variável `BUNDLE_VAR_alert_email` (no
-   PowerShell, `$env:BUNDLE_VAR_alert_email = "voce@exemplo.com"`) ou de
-   `--var="alert_email=voce@exemplo.com"` no `deploy`. Nenhum dos dois é versionado.
-5. **Rode o setup**: no **SQL Editor**, execute `setup/00_setup_free_edition.sql`. Ele
-   cria só o que não pertence ao bundle: o catálogo `essentials`, o `USE CATALOG` do grupo
-   de leitura e a origem simulada `essentials.portfolio_origem.cadastro_cargos`.
-6. **Valide e implante**: o deploy cria os schemas do projeto, o volume `landing` e as
-   permissões. Nos comandos abaixo, `<schema>` é o schema de dev,
-   `dev_<seu usuário>_portfolio` (o `deploy` mostra o nome).
-   ```
-   databricks bundle validate -t dev
-   databricks bundle deploy -t dev
-   ```
-7. **Gere as agendas fictícias e envie a versão 1** para a pasta da fonte no volume. A
-   pasta precisa existir antes do envio, e o pipeline falha se ela estiver vazia:
+1. No **SQL Editor**, rode `setup/00_setup_free_edition.sql` (catálogo e origem simulada).
+2. Implante: `databricks bundle validate -t dev` e `databricks bundle deploy -t dev`.
+3. Gere as agendas fictícias e envie a v1 para a landing:
    ```
    python data/gerar_dados_exemplo.py
    databricks fs mkdir dbfs:/Volumes/essentials/<schema>/landing/agenda
    databricks fs cp data/agenda_exemplo_v1.csv dbfs:/Volumes/essentials/<schema>/landing/agenda/
-   databricks bundle run essentials_carga_diaria -t dev
    ```
-8. **Confira**: no SQL Editor, consulte `essentials.<schema>_gold.gold_agg_entrevista_mensal`.
-   No pipeline, a aba **Data quality** do nó `silver_int_agenda_retrato` mostra as linhas
-   descartadas (as 2 entrevistas sem nome do gerador) e os alertas (telefones inválidos,
-   status "Talvez", entrevista sem horário).
-9. **Segunda carga (snapshot e histórico)**: a versão 2 é a mesma planilha reenviada
-   inteira, com o status preenchido nas entrevistas que estavam vazias e mais um dia de
-   agenda:
-   ```
-   databricks fs cp data/agenda_exemplo_v2.csv dbfs:/Volumes/essentials/<schema>/landing/agenda/
-   databricks bundle run essentials_carga_diaria -t dev
-   ```
-   A bronze lê só o arquivo novo, a `silver_agenda` passa de `Pendente` para o status
-   preenchido e a `silver_agenda_historico` guarda as duas versões de cada uma. Para
-   conferir no SQL Editor:
-   ```sql
-   -- Entrevistas que mudaram: a versão antiga fechada (__END_AT preenchido) e a nova aberta.
-   SELECT dt_entrevista, nm_candidato, st_entrevista, __START_AT, __END_AT
-   FROM essentials.<schema>.silver_agenda_historico
-   WHERE (dt_entrevista, nm_candidato) IN (
-     SELECT dt_entrevista, nm_candidato
-     FROM essentials.<schema>.silver_agenda_historico
-     GROUP BY ALL HAVING count(*) > 1
-   )
-   ORDER BY nm_candidato, __START_AT;
-   ```
+4. Rode a carga: `databricks bundle run essentials_carga_diaria -t dev`.
+5. Confira `essentials.<schema>_gold.gold_agg_entrevista_mensal` e os painéis; depois
+   envie a v2 e rode de novo para ver o histórico.
 
-No modo development, o job e o pipeline ganham o prefixo `[dev <usuário>]` e o
-agendamento das 6h fica pausado.
+`<schema>` é `dev_<seu usuário>_portfolio` (o `deploy` mostra o nome). O passo a passo
+completo, com o que conferir em cada etapa e os totais esperados, está em
+[`docs/guia-free-edition.md`](docs/guia-free-edition.md).
 
-## Dicionário de dados
+Para desenvolver: `pip install -r requirements-dev.txt`, `pre-commit install`, e antes de
+cada PR `ruff check .`, `pytest -q` e `databricks bundle validate -t dev`.
 
-Toda coluna da silver e da gold tem descrição no Unity Catalog. O cliente consulta pelo
-**Catalog Explorer** (aba **Columns** de cada tabela) ou por SQL, e o Genie e o Assistant
-usam as mesmas descrições para entender os dados.
+## Como adaptar a um cliente
 
-| Onde a descrição nasce | Como chega ao Unity Catalog |
+1. Copie este repositório com o nome `essentials-<projeto>`.
+2. No `databricks.yml`, troque `bundle.name` para `essentials_<projeto>`, o `default` da
+   variável `projeto` e o `projeto` do target `ci` (`<projeto>_ci`).
+3. Em `setup/00_setup_free_edition.sql`, troque `portfolio` pelo nome do projeto.
+4. Reescreva `config/fontes.yml`, os `src/pipeline/silver_<fonte>.sql` e os
+   `src/pipeline/gold_*.sql`. A skill `novo-cliente` do Claude Code conduz esse passo
+   pelo **perfil** dos arquivos do cliente, sem ver os dados.
+5. Leve ao Azure do cliente: [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md).
+
+## Documentação
+
+| Assunto | Onde |
 |---|---|
-| Colunas da silver | campo `descricao` de cada coluna no `config/fontes.yml` (obrigatório) → `silver.py` cria as tabelas com o schema do contrato e `COMMENT` por coluna |
-| Colunas técnicas (`_fonte`, `_arquivo_origem`, `_ingerido_em`) e do histórico (`__START_AT`, `__END_AT`) | descrições padrão em `src/essentials/config_fontes.py` |
-| Colunas da gold | lista de colunas com tipo e `COMMENT` em cada `CREATE OR REFRESH MATERIALIZED VIEW` |
-
-A silver tem **contrato explícito**: só entram as colunas declaradas no YAML (e as
-técnicas). Colunas da origem que não foram declaradas ficam só na bronze, então nenhuma
-coluna chega à silver sem descrição. Os testes garantem isso: o YAML recusa coluna sem
-`descricao`, e a gold recusa coluna sem tipo e `COMMENT`.
-
-Para exportar o dicionário (por exemplo, para uma planilha de entrega ao cliente):
-
-```sql
-SELECT table_name AS tabela, column_name AS coluna, full_data_type AS tipo, comment AS descricao
-FROM essentials.information_schema.columns
-WHERE table_schema IN ('<schema>', '<schema>_gold')
-  AND (table_name LIKE 'silver%' OR table_name LIKE 'gold%')
-ORDER BY table_name, ordinal_position;
-```
-
-## Painel AI/BI
-
-O painel **Essentials · portfolio · Entrevistas** é versionado como código
-(`src/dashboards/entrevistas.lvdash.json` + `resources/dashboard.yml`) e implantado pelo
-mesmo `bundle deploy` do pipeline. Ele usa o **Databricks AI/BI**: roda no SQL warehouse
-serverless, não cobra licença por usuário e respeita as permissões do Unity Catalog
-(`embed_credentials: false`: quem não tem acesso à gold não vê os dados).
-
-| Página | Conteúdo |
-|---|---|
-| **Visão geral** | contadores de entrevistas, comparecimento e aprovação; barras por mês e situação (concluído, em andamento, pendente); pizza por status; filtros de período e área |
-| **Áreas e vagas** | comparecimento e aprovação por área; entrevistas por vaga e situação; filtros de período e área |
-| **Pendências** | lista de trabalho do RH: entrevistas sem retorno, status não identificado e vagas sem área no cadastro, com filtro por motivo |
-
-A situação (`st_situacao`) é calculada na gold, não no painel: regra de negócio fica no
-modelo de dados. As consultas do painel leem só tabelas `gold_` e não citam catálogo nem
-schema; o bundle aponta para o ambiente certo com `dataset_catalog` e `dataset_schema`.
-O warehouse é localizado pelo nome (`lookup` da variável `warehouse_id`).
-
-**Ajustes visuais feitos na tela** (cores, posições) voltam para o repositório com:
-```
-databricks bundle generate dashboard --resource painel_entrevistas --force -t dev
-```
-
-**Saúde da plataforma:** um segundo painel (`src/dashboards/saude.lvdash.json`), só para
-a engenharia, lê as views `mon_*` do schema do projeto: horas desde a última carga,
-tabelas atrasadas, descartes e alertas por dia e regra, e custo diário. É separado para o
-negócio não ver o schema do projeto (ADR 0001).
-
-**Genie (opcional):** no painel, ative um espaço Genie sobre `gold_fato_entrevista` e
-`gold_agg_entrevista_mensal` para perguntas livres, como "quantos aprovados em Cozinha em
-setembro?".
-
-## Levando ao Azure Databricks do cliente
-
-1. **No Azure do cliente**: workspace Azure Databricks Premium com Unity Catalog, conta
-   ADLS Gen2 com o contêiner `landing` e um Access Connector.
-2. **No Unity Catalog**: storage credential, **external location** para
-   `abfss://landing@<conta>.dfs.core.windows.net/` (o volume `landing` de prod é externo
-   sobre ela), catálogo `prd` com `USE CATALOG` para os grupos do projeto, e os grupos
-   da conta `essentials_engenharia`, `essentials_leitura_gold` e
-   `essentials_dados_pessoais` (ou troque os nomes nas variáveis de `prod`). Os schemas,
-   o volume e as permissões são criados pelo deploy.
-3. **Fontes `tabela`**: troque `{catalogo}.{projeto}_origem...` no `config/fontes.yml`
-   pelo nome real da tabela do cliente.
-4. **Fontes `banco`**: crie a conexão (`CREATE CONNECTION`) e um catálogo estrangeiro
-   **com o mesmo nome** (`CREATE FOREIGN CATALOG ... USING CONNECTION`).
-5. **Fontes `api`**: crie o secret scope e guarde o token (`databricks secrets put-secret`).
-6. **Service principal** de produção com acesso ao catálogo, à external location, às
-   conexões e ao secret scope.
-7. **No `databricks.yml`**: preencha o `host` de `prod`, `STORAGEACCOUNT`, o
-   `service_principal_name`, o `cliente` (tag de custo) e o `usuario_alerta` (usuário do
-   workspace que recebe o alerta de atraso). Para a view de custo, o service principal
-   precisa de `SELECT` em `system.billing`; para separar o custo serverless por tag, o
-   administrador cria uma política de uso serverless com as tags do projeto.
-8. **No GitHub**: environment `prod` com revisor obrigatório, variáveis
-   `DATABRICKS_HOST_PROD` e `DATABRICKS_CLIENT_ID_PROD` e, no Databricks, a federation
-   policy do service principal para o repositório (OIDC).
-9. Rode o workflow **Deploy produção** e configure o **Azure Budgets** com o teto do
-   diagnóstico.
-
-## Desenvolvimento com Claude Code
-
-O projeto vem com uma camada de IA versionada em `.claude/`, para que o uso de agentes
-siga as mesmas regras do time:
-
-| Peça | O que faz |
-|---|---|
-| `.claude/settings.json` | **permissões**: libera lint, testes e `bundle validate`; pede confirmação para deploy, run, commit e push; **nega** produção, `destroy`, push forçado e leitura de `.env` e dados reais |
-| `.claude/hooks/` | **guardrails determinísticos** em Python: bloqueiam comandos de produção, push na `main`, leitura de dados reais e tokens; rodam o ruff em todo `.py` editado |
-| `scripts/perfilar_dados.py` | **perfil sem dados pessoais**: o modelo entende a estrutura de um arquivo do cliente sem ver nomes, CPFs ou telefones |
-| `.claude/agents/` | 6 subagentes: arquiteto, engenheiro, QA, DevOps, revisor de segurança e documentador |
-| `.claude/skills/` | 8 skills: novo cliente, nova fonte, novo indicador, revisão de qualidade, implantar em dev, revisar PR, ADR e entrega |
-| `tests/evals/` | casos de avaliação das skills críticas, com dados fictícios |
-
-O princípio: **o que não pode falhar vira permissão ou hook; o que é orientação fica no
-`CLAUDE.md` ou numa skill.** Os detalhes estão em `docs/padroes/` e os hooks são testados
-em `tests/test_hooks.py`.
-
-## CI/CD
-
-| Workflow | Gatilho | O que faz |
-|---|---|---|
-| `ci.yml` | pull request para a `main` | `ruff check .`, `pytest -q` (inclui a validação do `fontes.yml` e dos padrões de nomes), `databricks bundle validate -t dev` e varredura de segredos no histórico (gitleaks) |
-| `deploy.yml` | manual (`workflow_dispatch`) | `bundle validate` e `bundle deploy -t prod` no environment `prod`, com login OIDC |
-| `integracao.yml` | 1h de segunda a sexta e manual (nunca em PR) | implanta o target `ci`, carrega a agenda fictícia v1 e a v2, confere os dados (`tests/integracao/`) e destrói tudo no fim |
-
-- **Testes de integração** (`docs/adr/0005-testes-de-integracao.md`): o target `ci` usa o
-  projeto `<projeto>_ci`, com schemas e estado de deploy próprios, sem tocar no dev. As
-  asserções conferem linhas na silver, descartes e alertas por regra, chaves sem nulo e
-  sem duplicata, versões no histórico após a v2, fato completa e agregada igual à fato.
-  O `pytest -q` do CI de PR roda só os testes de unidade.
-
-- `DATABRICKS_HOST_DEV` (variável do repositório) é a URL do workspace de dev; o
-  `databricks.yml` não traz o host.
-- O Free Edition não oferece service principal com OIDC, por isso o CI de dev usa token.
-- Quando houver produção, ative o deploy automático descomentando o `push` em `deploy.yml`.
-- Nada é alterado à mão em produção: tudo passa pelo bundle.
-
-### Cadeia de suprimentos
-
-- **Actions fixadas pelo SHA do commit**, com a versão em comentário: uma tag pode ser
-  movida para outro código, um SHA não.
-- **Dependências com versão fixa** num único arquivo, `requirements-runtime.txt`, que o
-  pipeline e o job instalam com `-r`; o `requirements-dev.txt` o inclui.
-- **Dependabot** (`.github/dependabot.yml`) propõe toda semana as atualizações de actions
-  e pacotes, só de versões publicadas há pelo menos 14 dias.
-- **Permissões mínimas**: cada job do GitHub Actions declara só o que usa.
-
-### pre-commit
-
-As mesmas verificações do CI rodam na sua máquina antes de cada commit: ruff, YAML e
-JSON válidos, fim de arquivo, espaços sobrando, chave privada e segredos (gitleaks).
-
-```
-pip install -r requirements-dev.txt
-pre-commit install            # uma vez: ativa o hook de commit deste repositório
-pre-commit run --all-files    # opcional: verifica tudo de uma vez
-```
+| Arquitetura: fluxo dos dados, job, Unity Catalog, tabelas, regras, dicionário, painéis | [`docs/arquitetura.md`](docs/arquitetura.md) |
+| Rodar no Free Edition, passo a passo | [`docs/guia-free-edition.md`](docs/guia-free-edition.md) |
+| Levar ao Azure Databricks do cliente | [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md) |
+| Operação do dia a dia, para o cliente | [`docs/roteiro-de-operacao.md`](docs/roteiro-de-operacao.md) |
+| Desenvolvimento: Claude Code, fluxo dos agentes, CI/CD, cadeia de suprimentos | [`docs/desenvolvimento.md`](docs/desenvolvimento.md) |
+| Padrões: nomes, camadas, LGPD, fluxo de trabalho | [`docs/padroes/`](docs/padroes/) |
+| Decisões de arquitetura (ADRs) | [`docs/adr/`](docs/adr/README.md) |
+| Plano de evolução para o padrão sênior | [`docs/plano-padrao-senior.md`](docs/plano-padrao-senior.md) |
+| Histórico de versões | [`CHANGELOG.md`](CHANGELOG.md) |
+| Regras para o Claude Code | [`CLAUDE.md`](CLAUDE.md) |
 
 ## Dados reais e LGPD
 
-- **Dados reais de clientes só rodam no ambiente do cliente** (Azure Databricks, na
-  assinatura dele), nunca no Free Edition. O Free Edition é uma conta pessoal fora do
-  contrato e do controle do cliente; levar dados pessoais para lá seria um tratamento
-  sem base legal.
-- **No repositório só entram dados fictícios**: `data/*.csv` está no `.gitignore`, com
-  exceção das agendas `agenda_exemplo_v*.csv` do gerador. Isso também impede que o
-  bundle envie arquivos reais ao workspace.
-- **Na silver, o telefone sai mascarado.** A bronze guarda o dado bruto e deve ter acesso
-  restrito à equipe técnica.
-- A Logos atua como operadora dos dados, seguindo as instruções do cliente, com acordo
-  de confidencialidade assinado antes do diagnóstico.
+Dados reais de clientes só rodam no Azure Databricks do cliente, na assinatura dele;
+no Free Edition e no repositório entram só os dados fictícios do gerador
+([ADR 0010](docs/adr/0010-free-edition-so-com-dados-ficticios.md)). O telefone sai
+mascarado na silver, o nome e o telefone têm máscara de coluna na gold e a tag `pii` no
+Unity Catalog, e o negócio só lê a gold
+([`docs/padroes/lgpd.md`](docs/padroes/lgpd.md)).
 
 ## Próximos passos
 
 - Completar o cadastro de cargos até zerar as entrevistas com `id_cargo = -1`.
-- Painel versionado no bundle.
 - Metric views no Unity Catalog para as taxas de comparecimento e aprovação.
+- A fábrica (Fase 7 do plano): gerar um projeto de cliente novo com
+  `databricks bundle init`, a partir de um template.
+- **Direção futura, fora do Essentials:** um módulo de IA para o pacote Enterprise, com
+  RAG sobre documentos do cliente (Vector Search sobre uma tabela de trechos gerada por
+  pipeline), agente de perguntas sobre a gold (Genie e ferramentas no Unity Catalog),
+  avaliação da qualidade das respostas e rastreamento (MLflow). Será um projeto separado,
+  com plano próprio.
 
 ## Aviso
 

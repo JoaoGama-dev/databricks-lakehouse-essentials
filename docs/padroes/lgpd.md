@@ -7,7 +7,11 @@
 - **Dados fictícios** são os únicos versionados: `data/agenda_exemplo_v*.csv`, gerados
   por `data/gerar_dados_exemplo.py`.
 - **O Free Edition roda só dados fictícios.** Dados reais rodam apenas no ambiente Azure
-  do cliente, na assinatura dele.
+  do cliente, na assinatura dele. O Free Edition é uma conta pessoal fora do contrato e do
+  controle do cliente: levar dados pessoais para lá seria um tratamento sem base legal
+  ([ADR 0010](../adr/0010-free-edition-so-com-dados-ficticios.md)).
+- A Logos atua como **operadora** dos dados, seguindo as instruções do cliente, com acordo
+  de confidencialidade assinado antes do diagnóstico.
 
 ## O que o modelo (Claude) pode ver
 

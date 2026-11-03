@@ -18,4 +18,6 @@
       `mascarar` (`docs/padroes/lgpd.md`)
 - [ ] **Segurança**: nenhum segredo; actions por SHA; dependências com versão fixa
 - [ ] **ADR**: decisão de arquitetura registrada em `docs/adr/`, quando houver
-- [ ] **Documentação**: README e roteiro de operação atualizados, quando mudar o uso
+- [ ] **Documentação**: `docs/` (arquitetura, guias, roteiro de operação) atualizados quando
+      mudar o uso; README só se mudar a visão geral
+- [ ] **CHANGELOG**: mudança anotada em `[Unreleased]` no `CHANGELOG.md`

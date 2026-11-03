@@ -51,7 +51,8 @@ regras e indicadores **antes de alterar qualquer arquivo**. Regras de LGPD em
    - atualize as `libraries` de `resources/pipeline.yml`;
    - ajuste os testes que citam fontes ou colunas pelo nome (`agenda`, `cargos`,
      `dt_entrevista`...) em `tests/test_projeto.py`;
-   - atualize `README.md`, `CLAUDE.md` e `docs/roteiro-de-operacao.md`.
+   - atualize `README.md` (nome do projeto e exemplo), `docs/arquitetura.md` (fontes,
+     tabelas e regras), `CLAUDE.md` e `docs/roteiro-de-operacao.md`.
 
 5. **Lembrar dos dados reais**: confira que os arquivos do cliente estão em
    `data/privado/` e fora do Git antes de qualquer commit, e que dados reais só vão para
