@@ -10,8 +10,20 @@ só a versão menor.
 
 ## [Unreleased]
 
+### Adicionado
+
+- Fase 7, base de produção: ação `falhar` nas regras (exemplo `data_plausivel`); regras
+  da chave geradas sozinhas; views `mon_volume`, `mon_estrutura`, `mon_execucoes` e
+  `mon_custo_mensal`; tabela `mon_falhas` e tarefa `registrar_falha` com o motivo sem dado
+  pessoal; alertas `falha_carga`, `qualidade_carga` e `custo_teto`; leitura de planilhas
+  Excel; cenários de falha (agendas v3 e v4) na integração; ADRs 0014 e 0015.
+
 ### Alterado
 
+- Auto Loader em modo `rescue`; aviso de falha do job também para o suporte da Logos;
+  landing de produção por variável (`landing_url`); painel Saúde da plataforma com taxa
+  de sucesso, falhas, volume, estrutura e teto de custo; roteiro de operação com os novos
+  avisos e o canal de envio de arquivos.
 - Roteiro revisado a partir da Fase 7: o repositório passa a ser só o pacote Essentials,
   com a tabela de cobertura do pacote no plano e as Fases 7 (base de produção), 8
   (ambientes e esteira do cliente), 9 (template) e 10 (kit de serviço). Testes só no Free

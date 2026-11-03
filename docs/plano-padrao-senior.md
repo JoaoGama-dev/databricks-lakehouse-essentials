@@ -467,12 +467,12 @@ O que o pacote e a sustentação prometem, e onde cada item está ou vai estar.
 | Código no repositório do cliente, CI/CD, nada à mão em produção | pronto | Fases 2 e 5 |
 | Monitoramento diário: aviso de falha, de demora e de atraso | pronto | Fase 4 |
 | Registros barrados por regra e custo de nuvem, para o relatório mensal | pronto | Fase 4 |
-| Regras de qualidade que **param a carga**, chave conferida sozinha, alerta de volume | falta | Fase 7 |
-| Detectar **mudança de estrutura na origem** no mesmo dia | falta | Fase 7 |
-| Aviso de falha **com o motivo**, abrindo chamado no suporte da Logos | falta | Fase 7 |
-| **Taxa de sucesso** das cargas e consumo comparado ao **teto** do diagnóstico | falta | Fase 7 |
-| Ler as **planilhas Excel** do cliente | falta | Fase 7 |
-| Canal padrão para o cliente enviar arquivos à landing | falta | Fase 7 |
+| Regras de qualidade que **param a carga**, chave conferida sozinha, alerta de volume | pronto | Fase 7 (ADR 0014) |
+| Detectar **mudança de estrutura na origem** no mesmo dia | pronto | Fase 7 (ADR 0014) |
+| Aviso de falha **com o motivo**, abrindo chamado no suporte da Logos | pronto | Fase 7 (ADR 0015) |
+| **Taxa de sucesso** das cargas e consumo comparado ao **teto** do diagnóstico | pronto | Fase 7 |
+| Ler as **planilhas Excel** do cliente | pronto (testado num pipeline serverless) | Fase 7 |
+| Canal padrão para o cliente enviar arquivos à landing | pronto, documentado | Fase 7 |
 | Ambientes `dev` e `prod` **no workspace do cliente** (catálogos `dev` e `prd`) | falta (hoje o `dev` é o Free Edition) | Fase 8 |
 | Deploy de produção no merge da `main`, com aprovação; sqlfluff e validação do pipeline no PR | falta | Fase 8 |
 | Alertas de orçamento (80% e 100% do teto) desde o primeiro dia | manual, documentado | `docs/roteiro-de-operacao.md` |
