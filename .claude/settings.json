@@ -62,5 +62,44 @@
       "Read(./data/tabela_*)",
       "Read(./.databricks/**)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/proteger_comandos.py"],
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Edit|Write|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/proteger_arquivos.py"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/lint_apos_edicao.py"],
+            "timeout": 90
+          }
+        ]
+      }
+    ]
   }
 }
