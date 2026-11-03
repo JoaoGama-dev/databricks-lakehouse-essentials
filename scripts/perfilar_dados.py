@@ -66,7 +66,7 @@ def forma_geral(valor: str) -> str:
     """Forma resumida (9+, A+, Aa+), para agrupar linhas da mesma estrutura."""
     if not valor.strip():
         return ""
-    return re.sub(r"(9)+", "9+", re.sub(r"[Aa]+", "A+", forma(valor)))
+    return re.sub(r"9+", "9+", re.sub(r"[Aa][Aa+]*", "A+", forma(valor)))
 
 
 def ler_texto(caminho: Path) -> tuple[str, dict]:

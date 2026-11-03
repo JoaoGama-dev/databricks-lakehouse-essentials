@@ -1,0 +1,13 @@
+data_admissao,nome_colaborador,cpf,vaga,salario,status_admissao
+2025-09-01,Ana Lima,222.333.444-01,Cozinheiro,"2.800,00",Admitido
+2025-09-01,Bruno Rocha,222.333.444-02,Atendente Barigui,"2.100,00",admitido
+2025-09-08,Carla Dias,222.333.444-03,Estoquista,"2.300,00",Desistiu
+2025-09-08,Diego Gomes,222.333.444-04,Frentista,"2.400,00",Admitido
+2025-09-15,Eduarda Santos,222.333.444-05,Confeiteira,"2.600,00",Em análise
+2025-09-15,Felipe Moreira,222.333.444-06,Recepcionista Araucária,"2.200,00",ADMITIDO
+2025-09-22,Gabriela Pereira,222.333.444-07,Vendedora ótica,"2.150,00",Admitido
+2025-09-22,Henrique Barbosa,222.333.444-08,Garçom Barigui,"2.050,00",desistiu
+2025-09-29,Isabela Cardoso,222.333.444-09,Assistente financeiro,"3.200,50",Admitido
+2025-09-29,Jonas Teixeira,,Cozinheira,"2.800,00",Admitido
+2025-10-06,Karina Almeida,222.333.444-11,Estoquista,"2.300,00",Admitido
+2025-10-06,Lucas Nogueira,222.333.444-12,Frentista,"2.400,00",Em análise

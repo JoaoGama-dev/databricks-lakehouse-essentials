@@ -356,6 +356,24 @@ setembro?".
 9. Rode o workflow **Deploy produção** e configure o **Azure Budgets** com o teto do
    diagnóstico.
 
+## Desenvolvimento com Claude Code
+
+O projeto vem com uma camada de IA versionada em `.claude/`, para que o uso de agentes
+siga as mesmas regras do time:
+
+| Peça | O que faz |
+|---|---|
+| `.claude/settings.json` | **permissões**: libera lint, testes e `bundle validate`; pede confirmação para deploy, run, commit e push; **nega** produção, `destroy`, push forçado e leitura de `.env` e dados reais |
+| `.claude/hooks/` | **guardrails determinísticos** em Python: bloqueiam comandos de produção, push na `main`, leitura de dados reais e tokens; rodam o ruff em todo `.py` editado |
+| `scripts/perfilar_dados.py` | **perfil sem dados pessoais**: o modelo entende a estrutura de um arquivo do cliente sem ver nomes, CPFs ou telefones |
+| `.claude/agents/` | 6 subagentes: arquiteto, engenheiro, QA, DevOps, revisor de segurança e documentador |
+| `.claude/skills/` | 8 skills: novo cliente, nova fonte, novo indicador, revisão de qualidade, implantar em dev, revisar PR, ADR e entrega |
+| `tests/evals/` | casos de avaliação das skills críticas, com dados fictícios |
+
+O princípio: **o que não pode falhar vira permissão ou hook; o que é orientação fica no
+`CLAUDE.md` ou numa skill.** Os detalhes estão em `docs/padroes/` e os hooks são testados
+em `tests/test_hooks.py`.
+
 ## CI/CD
 
 | Workflow | Gatilho | O que faz |

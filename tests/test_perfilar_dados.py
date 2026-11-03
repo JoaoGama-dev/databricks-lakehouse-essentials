@@ -112,6 +112,14 @@ def test_forma_esconde_o_conteudo(valor, esperado):
     assert perfilar_dados.forma(valor) == esperado
 
 
+@pytest.mark.parametrize(
+    ("valor", "esperado"),
+    [("TOTAL", "A+"), ("AGENDA DIA 04/08/2025", "A+ A+ 9+/9+/9+"), ("Maria Silva", "A+ A+"), ("", "")],
+)
+def test_forma_geral_agrupa_linhas_da_mesma_estrutura(valor, esperado):
+    assert perfilar_dados.forma_geral(valor) == esperado
+
+
 def test_excel_e_recusado_com_orientacao(tmp_path):
     planilha = tmp_path / "dados.xlsx"
     planilha.write_bytes(b"PK")
