@@ -2,3 +2,5 @@
 pytest==8.4.1
 ruff==0.12.7
 pre-commit==4.7.0
+# Testes de integração (tests/integracao/, scripts/integracao.py).
+databricks-sdk==0.154.0

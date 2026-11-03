@@ -1,0 +1,91 @@
+name: Integração
+
+# Teste de ponta a ponta no Free Edition com os dados fictícios (docs/adr/0005): implanta
+# o target ci (schemas dev_<usuário>_<projeto>_ci*, separados do dev), carrega a agenda v1
+# e a v2, confere os dados e apaga tudo no fim, mesmo quando algo falha.
+# Nunca roda em pull request: não há gatilho de PR, então código de fork não chega ao
+# token do workspace.
+on:
+  workflow_dispatch:
+  schedule:
+    # 1h em Brasília (4h UTC), de segunda a sexta.
+    - cron: "0 4 * * 1-5"
+
+# Nenhuma permissão por padrão; o job declara só o que usa.
+permissions: {}
+
+# Uma execução por vez: duas ao mesmo tempo disputariam os mesmos schemas do ci.
+concurrency:
+  group: integracao
+  cancel-in-progress: false
+
+jobs:
+  integracao:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # O Free Edition não tem service principal com OIDC: o ci usa o token de dev.
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST_DEV }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+      INTEGRACAO_RECURSOS: recursos-ci.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements-dev.txt
+
+      - uses: databricks/setup-cli@2bf4520fd10723ed5a22eca62a8c8a63714a7ba9 # v1.21.0
+
+      - name: Implantar o target ci
+        run: databricks bundle deploy -t ci --auto-approve
+
+      - name: Guardar os nomes dos recursos do ci
+        run: databricks bundle summary -t ci -o json > "$INTEGRACAO_RECURSOS"
+
+      - name: Preparar origem simulada e landing vazia
+        run: python scripts/integracao.py preparar
+
+      # A gold usa a função de máscara: ela precisa existir antes de validar o grafo.
+      - name: Criar a função de máscara
+        run: databricks bundle run essentials_carga_diaria -t ci --only governanca_antes
+
+      - name: Validar o grafo do pipeline (sem processar dados)
+        run: databricks bundle run essentials_pipeline -t ci --validate-only
+
+      - name: Enviar a agenda v1
+        run: python scripts/integracao.py enviar --versao 1
+
+      - name: Carga com a v1
+        run: databricks bundle run essentials_carga_diaria -t ci
+
+      - name: Conferir os dados da v1
+        run: INTEGRACAO_VERSAO=1 pytest -m integracao tests/integracao -v
+
+      - name: Enviar a agenda v2
+        run: python scripts/integracao.py enviar --versao 2
+
+      - name: Carga com a v2
+        run: databricks bundle run essentials_carga_diaria -t ci
+
+      - name: Conferir os dados da v2 e o histórico
+        run: INTEGRACAO_VERSAO=2 pytest -m integracao tests/integracao -v
+
+      - name: Destruir o target ci
+        if: always()
+        run: databricks bundle destroy -t ci --auto-approve
+
+      # O que o destroy não leva (event log, origem simulada). Só aceita schemas *_ci*.
+      - name: Apagar os schemas que sobrarem do ci
+        if: always()
+        run: |
+          if [ -f "$INTEGRACAO_RECURSOS" ]; then
+            python scripts/integracao.py limpar
+          else
+            echo "Sem resumo do bundle: o deploy não chegou a criar recursos."
+          fi
