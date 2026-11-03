@@ -41,8 +41,37 @@ variables:
   alert_email:
     # Não versione o e-mail real: passe-o no deploy com --var="alert_email=..." ou com a
     # variável de ambiente BUNDLE_VAR_alert_email.
-    description: E-mail que recebe o aviso quando a carga diária falha
+    description: E-mail que recebe os avisos de falha, demora e atraso da carga diária
     default: alertas@exemplo.com
+  usuario_alerta:
+    # O alerta SQL só notifica usuários do workspace (ou um destino de notificação criado
+    # pelo administrador; veja docs/roteiro-de-operacao.md), não um e-mail qualquer.
+    description: Usuário do workspace que recebe o alerta SQL de atraso da carga
+    default: ${workspace.current_user.userName}
+  cliente:
+    description: Cliente do projeto, em snake_case; vira a tag cliente para separar o custo
+    default: demonstracao
+  ingerir_banco:
+    # Precisa refletir o fontes.yml: um teste falha se divergir (docs/adr/0004).
+    description: '"true" quando o fontes.yml tem fonte do tipo banco; senão a tarefa é pulada'
+    default: "false"
+  ingerir_api:
+    description: '"true" quando o fontes.yml tem fonte do tipo api; senão a tarefa é pulada'
+    default: "false"
+  limite_duracao_carga_segundos:
+    description: Duração da carga diária que dispara o aviso de demora (normal em dev, 2 a 6 min)
+    default: 900
+  limite_atraso_horas:
+    description: Horas sem atualização do pipeline que disparam o alerta de atraso
+    default: 26
+
+# Tags em todos os recursos (job, pipeline), para separar o custo por projeto e cliente
+# nas tabelas de sistema de faturamento.
+presets:
+  tags:
+    projeto: ${var.projeto}
+    cliente: ${var.cliente}
+    ambiente: ${bundle.target}
 
 targets:
   # Free Edition: só serverless, landing zone num volume gerenciado do Unity Catalog.
@@ -51,6 +80,12 @@ targets:
   dev:
     mode: development
     default: true
+    resources:
+      alerts:
+        # Em dev o alerta de atraso fica pausado: dá para rodá-lo à mão na tela do alerta.
+        atraso_carga:
+          schedule:
+            pause_status: PAUSED
 
   # Azure Databricks do cliente: landing num volume externo sobre o ADLS Gen2, execução
   # pelo service principal e grupos do cliente.
@@ -62,6 +97,9 @@ targets:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       catalog: prd
+      # Troque pelo nome do cliente e pelo usuário responsável pela carga no workspace dele.
+      cliente: cliente
+      usuario_alerta: responsavel@cliente.com.br
       grupo_engenharia: essentials_engenharia
       grupo_leitura_gold: essentials_leitura_gold
       grupo_dados_pessoais: essentials_dados_pessoais

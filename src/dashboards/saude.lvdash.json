@@ -1,0 +1,952 @@
+{
+  "datasets": [
+    {
+      "name": "ds_atualizacao",
+      "displayName": "Atualização da carga",
+      "queryLines": [
+        "SELECT nm_tabela, dh_ultima_ingestao, dh_ultima_atualizacao, qt_horas_sem_atualizacao,\n",
+        "  fl_atrasada, CAST(fl_atrasada AS INT) AS qt_atrasada\n",
+        "FROM mon_atualizacao"
+      ]
+    },
+    {
+      "name": "ds_qualidade",
+      "displayName": "Qualidade diária",
+      "queryLines": [
+        "SELECT dt_execucao, nm_tabela, nm_regra, ds_acao, qt_aprovadas, qt_descartadas, qt_alertas\n",
+        "FROM mon_qualidade_diaria"
+      ]
+    },
+    {
+      "name": "ds_custo",
+      "displayName": "Custo diário",
+      "queryLines": [
+        "SELECT dt_uso, nm_recurso, ds_produto, qt_dbus, vl_custo_lista, sg_moeda\n",
+        "FROM mon_custo_diario\n",
+        "WHERE dt_uso >= current_date() - INTERVAL 90 DAYS"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "saude_plataforma",
+      "displayName": "Saúde da plataforma",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo_saude",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Saúde da plataforma\n",
+                "Atraso da carga, qualidade dos dados e custo do projeto. Só para a equipe de engenharia."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro_periodo_saude",
+            "queries": [
+              {
+                "name": "filtro_periodo_saude_ds_qualidade",
+                "query": {
+                  "datasetName": "ds_qualidade",
+                  "fields": [
+                    {
+                      "name": "dt_execucao",
+                      "expression": "`dt_execucao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro_periodo_saude_ds_custo",
+                "query": {
+                  "datasetName": "ds_custo",
+                  "fields": [
+                    {
+                      "name": "dt_uso",
+                      "expression": "`dt_uso`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dt_execucao",
+                    "displayName": "Período",
+                    "queryName": "filtro_periodo_saude_ds_qualidade"
+                  },
+                  {
+                    "fieldName": "dt_uso",
+                    "displayName": "Período",
+                    "queryName": "filtro_periodo_saude_ds_custo"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Período"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_horas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_atualizacao",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "MAX(`qt_horas_sem_atualizacao`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Horas desde a última carga"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Horas desde a última carga"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_atrasadas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_atualizacao",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "SUM(`qt_atrasada`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Tabelas atrasadas"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tabelas atrasadas"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 4,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_custo",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_custo",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "SUM(`vl_custo_lista`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Custo de lista no período"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Custo de lista no período"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 4,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_atualizacao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_atualizacao",
+                  "fields": [
+                    {
+                      "name": "nm_tabela",
+                      "expression": "`nm_tabela`"
+                    },
+                    {
+                      "name": "dh_ultima_atualizacao",
+                      "expression": "`dh_ultima_atualizacao`"
+                    },
+                    {
+                      "name": "dh_ultima_ingestao",
+                      "expression": "`dh_ultima_ingestao`"
+                    },
+                    {
+                      "name": "qt_horas_sem_atualizacao",
+                      "expression": "`qt_horas_sem_atualizacao`"
+                    },
+                    {
+                      "name": "fl_atrasada",
+                      "expression": "`fl_atrasada`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "nm_tabela",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Tabela",
+                    "displayName": "Tabela",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "dh_ultima_atualizacao",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Última carga",
+                    "displayName": "Última carga",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "dh_ultima_ingestao",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Último dado novo",
+                    "displayName": "Último dado novo",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_horas_sem_atualizacao",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Horas sem carga",
+                    "displayName": "Horas sem carga",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "fl_atrasada",
+                    "type": "boolean",
+                    "displayAs": "boolean",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Atrasada",
+                    "displayName": "Atrasada",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Atualização por tabela"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_descartadas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_qualidade",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "SUM(`qt_descartadas`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Linhas descartadas"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Linhas descartadas"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_alertas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_qualidade",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "SUM(`qt_alertas`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Alertas de qualidade"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Alertas de qualidade"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 11,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_descartadas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_qualidade",
+                  "fields": [
+                    {
+                      "name": "dt_execucao",
+                      "expression": "`dt_execucao`"
+                    },
+                    {
+                      "name": "qt_descartadas",
+                      "expression": "SUM(`qt_descartadas`)"
+                    },
+                    {
+                      "name": "nm_regra",
+                      "expression": "`nm_regra`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "dt_execucao",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Dia"
+                },
+                "y": {
+                  "fieldName": "qt_descartadas",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Linhas"
+                },
+                "color": {
+                  "fieldName": "nm_regra",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Regra"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Linhas descartadas por dia e regra"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_alertas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_qualidade",
+                  "fields": [
+                    {
+                      "name": "dt_execucao",
+                      "expression": "`dt_execucao`"
+                    },
+                    {
+                      "name": "qt_alertas",
+                      "expression": "SUM(`qt_alertas`)"
+                    },
+                    {
+                      "name": "nm_regra",
+                      "expression": "`nm_regra`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "dt_execucao",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Dia"
+                },
+                "y": {
+                  "fieldName": "qt_alertas",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Linhas"
+                },
+                "color": {
+                  "fieldName": "nm_regra",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Regra"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Alertas por dia e regra"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 14,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_qualidade",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_qualidade",
+                  "fields": [
+                    {
+                      "name": "dt_execucao",
+                      "expression": "`dt_execucao`"
+                    },
+                    {
+                      "name": "nm_tabela",
+                      "expression": "`nm_tabela`"
+                    },
+                    {
+                      "name": "nm_regra",
+                      "expression": "`nm_regra`"
+                    },
+                    {
+                      "name": "ds_acao",
+                      "expression": "`ds_acao`"
+                    },
+                    {
+                      "name": "qt_aprovadas",
+                      "expression": "`qt_aprovadas`"
+                    },
+                    {
+                      "name": "qt_descartadas",
+                      "expression": "`qt_descartadas`"
+                    },
+                    {
+                      "name": "qt_alertas",
+                      "expression": "`qt_alertas`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "dt_execucao",
+                    "type": "date",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Dia",
+                    "displayName": "Dia",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_tabela",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Tabela",
+                    "displayName": "Tabela",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_regra",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Regra",
+                    "displayName": "Regra",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_acao",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Ação",
+                    "displayName": "Ação",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_aprovadas",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Aprovadas",
+                    "displayName": "Aprovadas",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_descartadas",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "Descartadas",
+                    "displayName": "Descartadas",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_alertas",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "Alertas",
+                    "displayName": "Alertas",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Qualidade por dia, tabela e regra"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_custo",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_custo",
+                  "fields": [
+                    {
+                      "name": "dt_uso",
+                      "expression": "`dt_uso`"
+                    },
+                    {
+                      "name": "vl_custo_lista",
+                      "expression": "SUM(`vl_custo_lista`)"
+                    },
+                    {
+                      "name": "nm_recurso",
+                      "expression": "`nm_recurso`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "dt_uso",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Dia"
+                },
+                "y": {
+                  "fieldName": "vl_custo_lista",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Custo de lista"
+                },
+                "color": {
+                  "fieldName": "nm_recurso",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Recurso"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Custo diário por recurso (preço de lista)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 26,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}
