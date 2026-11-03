@@ -139,9 +139,8 @@ def gatilhos() -> dict:
 
 
 def test_workflow_nunca_roda_em_pull_request():
-    assert "pull_request" not in gatilhos()
-    assert "pull_request_target" not in gatilhos()
-    assert {"workflow_dispatch", "schedule"} <= set(gatilhos())
+    # Só manual e agendado: nada de pull_request, pull_request_target nem push.
+    assert set(gatilhos()) == {"workflow_dispatch", "schedule"}
 
 
 def test_workflow_com_permissoes_minimas_e_sem_sobreposicao():

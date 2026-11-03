@@ -340,7 +340,7 @@ tag; nenhuma dependência sem versão.
 projeto identificável; nenhuma tarefa ociosa diária.
 
 **Status: concluída (branch `fase-4`).** Decisões tomadas na execução (ADRs 0003 e 0004;
-os ADRs da Fase 6 passam a ser numerados a partir de 0005):
+os ADRs da Fase 6 passam a ser numerados a partir de 0006, depois do 0005 da Fase 5):
 
 - As views `mon_*` ficam fora do pipeline, criadas pela tarefa `governanca_depois`: na
   primeira atualização o event log ainda não existe. A ação de cada regra vem do
@@ -380,6 +380,25 @@ os ADRs da Fase 6 passam a ser numerados a partir de 0005):
    linhas de exemplo.
 
 **Aceite:** o workflow de integração passa de ponta a ponta com os dados fictícios.
+
+**Status: concluída (branch `fase-5`).** Decisões tomadas na execução (ADR 0005):
+
+- Target `ci` próprio (projeto `<projeto>_ci`, estado de deploy separado), em vez de
+  `-t dev` com outra variável, que recriaria os recursos do dev.
+- A origem simulada do `ci` é criada pelo próprio `setup/00_setup_free_edition.sql`;
+  `scripts/integracao.py` só aceita schemas terminados em `_ci`, `_ci_gold` e `_ci_origem`.
+- Ordem: `governanca_antes` antes do `--validate-only` (a gold usa a função de máscara).
+  O workflow começa e termina apagando o `ci`, para a v1 nunca ser lida sobre sobras.
+- `prevent_destroy` saiu da base e fica nos targets `dev` e `prod`: a CLI antes da
+  v1.22.0 ignora override para `false`, e o destroy do CI foi recusado na 1ª execução.
+- Totais esperados (semente fixa): v1 229 no retrato e 227 na silver; v2 236, 234, 252
+  no histórico e 18 fechadas; 2 descartes em `nome_preenchido`.
+- Workflow à 1h de segunda a sexta e manual, nunca em PR; validado na branch com um
+  gatilho `push` temporário, removido antes do merge. Agendamento do job pausado em dev.
+- Sem testes locais com PySpark (item opcional): Java e ~300 MB no Windows; a integração
+  já executa as expressões no Databricks.
+- O Free Edition recusa novas execuções de job depois de muito uso no dia ("Triggering
+  new runs ... is currently disabled temporarily"); o workflow falha nesse caso.
 
 ---
 
