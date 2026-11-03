@@ -31,7 +31,27 @@ uma entrevista passou de Pendente para Aprovado.
 3. A execução mais recente deve estar com o ícone verde (**Succeeded**). Vermelho
    (**Failed**) significa que a carga falhou.
 
-Se a carga falhar, quem está cadastrado no alerta recebe um **e-mail automático**.
+Avisos automáticos por e-mail:
+
+| Aviso | Quando | Quem recebe |
+|---|---|---|
+| Falha da carga | a execução termina com erro | o e-mail cadastrado no job |
+| Carga demorada | a execução passa de 15 minutos (o normal é menos de 6) | o e-mail cadastrado no job |
+| Carga atrasada | às 9h, se a última carga concluída tem mais de 26 horas (inclusive quando o job nem rodou) | o usuário responsável no workspace |
+
+As tarefas **ingestao_banco** e **ingestao_api** aparecem como **Excluded** (puladas)
+quando o projeto não tem fonte desse tipo. Isso é normal e não custa nada.
+
+### Painel "Saúde da plataforma" (equipe de engenharia)
+
+Em **Dashboards**, abra **Essentials · portfolio · Saúde da plataforma**. Ele mostra:
+
+- horas desde a última carga e se alguma tabela está atrasada;
+- por dia e regra, quantas linhas foram descartadas e quantos alertas houve;
+- o custo diário do job e do pipeline, pelo preço de lista.
+
+O painel só abre para a equipe de engenharia: as tabelas `mon_*` ficam no schema do
+projeto, fechado para os usuários de negócio.
 
 ## 3. Como ver os registros descartados (aba Data quality)
 
@@ -53,6 +73,9 @@ Se a carga falhar, quem está cadastrado no alerta recebe um **e-mail automátic
 | `prefixo_unico` | **alerta** | o mesmo prefixo cadastrado duas vezes (aparece em **silver_int_cargos_unico_ds_prefixo_vaga**) |
 
 Alertas não impedem a carga, mas indicam algo a corrigir na planilha ou no cadastro.
+
+A aba Data quality mostra uma atualização por vez. O histórico, dia a dia, fica na view
+`mon_qualidade_diaria` do schema do projeto e no painel "Saúde da plataforma" (seção 2).
 
 ## 4. Vagas "Não classificada"
 
@@ -96,6 +119,32 @@ O consumo de nuvem é pago diretamente à Microsoft, na assinatura da empresa.
    são enviados ao atingir **80%** e **100%** do teto.
 
 Se o custo subir sem motivo aparente (sem aumento de dados), avise o suporte.
+
+### Relatório mensal de custo do projeto (equipe de engenharia)
+
+O consumo da Databricks fica nas tabelas de sistema de faturamento. A view
+`mon_custo_diario`, no schema do projeto, já filtra o job e o pipeline do projeto pelos
+IDs deles. Para o relatório do mês anterior, rode num SQL warehouse (troque `<catálogo>`
+e `<schema>` pelos do projeto, por exemplo `prd` e `portfolio`):
+
+```sql
+SELECT date_trunc('MONTH', dt_uso) AS dt_mes, nm_recurso, ds_produto,
+  round(sum(qt_dbus), 2) AS qt_dbus, round(sum(vl_custo_lista), 2) AS vl_custo_lista,
+  first(sg_moeda) AS sg_moeda
+FROM <catálogo>.<schema>.mon_custo_diario
+WHERE dt_uso >= add_months(date_trunc('MONTH', current_date()), -1)
+  AND dt_uso < date_trunc('MONTH', current_date())
+GROUP BY ALL
+ORDER BY nm_recurso, ds_produto;
+```
+
+O valor é o **preço de lista**, sem os descontos do contrato. Para somar outros recursos
+do mesmo cliente, filtre `system.billing.usage` pelas tags `projeto`, `cliente` e
+`ambiente`, que o bundle coloca no job e no pipeline. No faturamento **serverless**, a
+documentação da Databricks garante as tags só por uma **política de uso serverless**
+(*serverless usage policy*, antes chamada *budget policy*) com essas tags, criada pelo
+administrador da conta e aplicada ao job **e** ao pipeline: o pipeline disparado pelo job
+não herda a política do job.
 
 ## 8. O que significa cada coluna (dicionário de dados)
 

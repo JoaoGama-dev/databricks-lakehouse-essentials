@@ -28,7 +28,12 @@ validação do `config/fontes.yml` recusam o que fugir dele.
 | `gold_fato_<nome>` | `fato` | `gold_fato_entrevista` |
 | `gold_agg_<nome>` | `agregada` | `gold_agg_entrevista_mensal` |
 
+| `mon_<nome>` | `qualidade`, `atualizacao`, `custo` | `mon_qualidade_diaria` |
+
 - Fato e dimensão no singular.
+- `mon_*` são as views de monitoramento (camada `monitoramento`), criadas pela tarefa
+  `governanca_depois` a partir de `src/essentials/monitoramento_sql.py`; o event log
+  publicado do pipeline é `mon_log_eventos`. Ficam no schema do projeto (ADR 0003).
 - Toda tabela com `COMMENT` e `TBLPROPERTIES ('camada' = ..., 'tipo' = ...)`; os tipos
   válidos estão em `TIPOS_DE_TABELA` (`src/essentials/config_fontes.py`).
 

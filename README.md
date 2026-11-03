@@ -80,6 +80,7 @@ tag `pii` no Unity Catalog.
 | `gold_dim_` | dimensão | `gold_dim_cargo` | cadastros que dão contexto à fato |
 | `gold_fato_` | fato | `gold_fato_entrevista` | eventos do negócio, uma linha por evento |
 | `gold_agg_` | agregada | `gold_agg_entrevista_mensal` | totais prontos para o painel |
+| `mon_` | monitoramento | `mon_qualidade_diaria` | event log, qualidade, atraso e custo (só engenharia) |
 
 Toda tabela leva `TBLPROPERTIES ('camada' = ..., 'tipo' = ...)` e um `COMMENT`.
 
@@ -128,10 +129,17 @@ combina com o tipo (ex.: `dt_` em texto). Colunas técnicas começam com `_` (`_
                                         Painel AI/BI (Dashboards + Genie)
 
  Lakeflow Jobs: essentials_<projeto>_carga_diaria · 6h (America/Sao_Paulo)
-   ingestao_api ─┐
-                 ├─▶ atualizar_lakehouse (pipeline)
-   ingestao_banco┘
+   tem_fonte_api ──(true)──▶ ingestao_api ──┐
+   tem_fonte_banco ─(true)─▶ ingestao_banco ┼─▶ atualizar_lakehouse ─▶ governanca_depois
+   governanca_antes (função de máscara) ────┘     (pipeline)          (tags pii, views mon_*)
+
+ Observabilidade: event log mon_log_eventos ─▶ mon_qualidade_diaria · mon_atualizacao
+   · mon_custo_diario ─▶ painel "Saúde da plataforma" e alerta SQL de atraso (9h)
 ```
+
+As ingestões só rodam quando o `fontes.yml` tem fonte daquele tipo (variáveis
+`ingerir_banco` e `ingerir_api`; um teste confere a coerência). Sem fonte, aparecem como
+puladas e não custam nada (`docs/adr/0004-ingestao-so-com-fonte.md`).
 
 As regras de qualidade ficam numa tabela intermediária, e não numa view, porque o AUTO
 CDC FROM SNAPSHOT lê a origem como um retrato e não aplica expectations de views.
@@ -159,6 +167,13 @@ CDC FROM SNAPSHOT lê a origem como um retrato e não aplica expectations de vie
 | `gold_dim_cargo` | materialized view | gold · dimensão | cargos e áreas, com o membro `-1 = Não classificada` |
 | `gold_fato_entrevista` | materialized view | gold · fato | entrevista + `id_cargo` + `fl_compareceu`, `fl_aprovado`, `fl_sem_retorno` |
 | `gold_agg_entrevista_mensal` | materialized view | gold · agregada | `qt_` por mês, área e status |
+| `mon_log_eventos` | event log do pipeline | monitoramento | todos os eventos das atualizações do pipeline |
+| `mon_qualidade_diaria` | view | monitoramento · qualidade | por dia, tabela e regra: aprovadas, descartadas e alertas |
+| `mon_atualizacao` | view | monitoramento · atualização | última carga do pipeline e último dado novo de cada silver |
+| `mon_custo_diario` | view | monitoramento · custo | DBUs e custo de lista do job e do pipeline |
+
+As `mon_*` ficam no schema do projeto e são criadas pela tarefa `governanca_depois`
+(`docs/adr/0003-monitoramento-fora-do-pipeline.md`).
 
 ### Regras de qualidade da agenda
 
@@ -345,6 +360,11 @@ O warehouse é localizado pelo nome (`lookup` da variável `warehouse_id`).
 databricks bundle generate dashboard --resource painel_entrevistas --force -t dev
 ```
 
+**Saúde da plataforma:** um segundo painel (`src/dashboards/saude.lvdash.json`), só para
+a engenharia, lê as views `mon_*` do schema do projeto: horas desde a última carga,
+tabelas atrasadas, descartes e alertas por dia e regra, e custo diário. É separado para o
+negócio não ver o schema do projeto (ADR 0001).
+
 **Genie (opcional):** no painel, ative um espaço Genie sobre `gold_fato_entrevista` e
 `gold_agg_entrevista_mensal` para perguntas livres, como "quantos aprovados em Cozinha em
 setembro?".
@@ -366,8 +386,11 @@ setembro?".
 5. **Fontes `api`**: crie o secret scope e guarde o token (`databricks secrets put-secret`).
 6. **Service principal** de produção com acesso ao catálogo, à external location, às
    conexões e ao secret scope.
-7. **No `databricks.yml`**: preencha o `host` de `prod`, `STORAGEACCOUNT` e o
-   `service_principal_name`.
+7. **No `databricks.yml`**: preencha o `host` de `prod`, `STORAGEACCOUNT`, o
+   `service_principal_name`, o `cliente` (tag de custo) e o `usuario_alerta` (usuário do
+   workspace que recebe o alerta de atraso). Para a view de custo, o service principal
+   precisa de `SELECT` em `system.billing`; para separar o custo serverless por tag, o
+   administrador cria uma política de uso serverless com as tags do projeto.
 8. **No GitHub**: environment `prod` com revisor obrigatório, variáveis
    `DATABRICKS_HOST_PROD` e `DATABRICKS_CLIENT_ID_PROD` e, no Databricks, a federation
    policy do service principal para o repositório (OIDC).

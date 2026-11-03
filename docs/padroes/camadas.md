@@ -47,14 +47,27 @@
 - Regra de negócio (ex.: situação concluído, em andamento, pendente) fica na gold, não no
   painel.
 
+## Monitoramento
+
+- O pipeline publica o event log em `mon_log_eventos`. As views `mon_*` (qualidade
+  diária, atualização e custo) são geradas por `src/essentials/monitoramento_sql.py` e
+  criadas pela tarefa `governanca_depois`, fora do pipeline (ADR 0003).
+- Regra nova no `fontes.yml` entra sozinha em `mon_qualidade_diaria`, com a ação do YAML.
+- Fonte `banco` ou `api` nova: troque `ingerir_banco`/`ingerir_api` para `"true"` no
+  `databricks.yml` (um teste confere; ADR 0004).
+
 ## Dicionário de dados (obrigatório)
 
 - Toda coluna da silver tem `descricao` no `fontes.yml`; vira `COMMENT` pelo schema do
   contrato em `silver.py`.
 - Toda view da gold declara as colunas com tipo e `COMMENT`, na ordem do `SELECT`.
 - Toda tabela tem `COMMENT`.
+- As views `mon_*` também: `COMMENT` em cada coluna e `TBLPROPERTIES` com
+  `'camada' = 'monitoramento'`.
 
 ## Painel AI/BI
 
-- `src/dashboards/*.lvdash.json` + `resources/dashboard.yml`. As consultas leem só tabelas
-  `gold_` e não citam catálogo nem schema (`dataset_catalog`/`dataset_schema` no bundle).
+- `src/dashboards/*.lvdash.json` + `resources/dashboard.yml`. As consultas não citam
+  catálogo nem schema (`dataset_catalog`/`dataset_schema` no bundle). O painel do negócio
+  lê só tabelas `gold_`; o de saúde da plataforma lê só as views `mon_*`, do schema do
+  projeto.

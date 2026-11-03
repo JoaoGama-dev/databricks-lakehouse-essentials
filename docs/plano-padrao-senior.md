@@ -339,6 +339,24 @@ tag; nenhuma dependência sem versão.
 **Aceite:** event log consultável; histórico de qualidade; alerta de atraso; custo por
 projeto identificável; nenhuma tarefa ociosa diária.
 
+**Status: concluída (branch `fase-4`).** Decisões tomadas na execução (ADRs 0003 e 0004;
+os ADRs da Fase 6 passam a ser numerados a partir de 0005):
+
+- As views `mon_*` ficam fora do pipeline, criadas pela tarefa `governanca_depois`: na
+  primeira atualização o event log ainda não existe. A ação de cada regra vem do
+  `fontes.yml`, porque o event log só traz aprovadas e reprovadas.
+- O atraso é medido pela última atualização concluída do pipeline; o `_ingerido_em` só
+  muda com arquivo novo e daria alarme falso.
+- Alert v2 só notifica usuários do workspace (ou destinos de notificação): variável
+  `usuario_alerta`, separada do `alert_email` do job.
+- Custo filtrado pelos IDs do job e do pipeline: no Free Edition as tags chegam ao
+  faturamento do job, mas não ao do pipeline serverless; no cliente, tags garantidas por
+  política de uso serverless.
+- Painel "Saúde da plataforma" separado, sobre o schema do projeto (ADR 0001).
+- Ingestões com `condition_task` e `run_if: NONE_FAILED`; um teste mantém as variáveis
+  coerentes com o `fontes.yml`.
+- Limite de duração em 900 s: as execuções de dev levam de 2,4 a 5,3 min.
+
 ---
 
 ## Fase 5 — Testes de integração e de dados
