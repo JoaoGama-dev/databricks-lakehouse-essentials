@@ -1,4 +1,4 @@
+-r requirements-runtime.txt
 pytest==8.4.1
-PyYAML==6.0.2
-jsonschema==4.25.0
 ruff==0.12.7
+pre-commit==4.7.0

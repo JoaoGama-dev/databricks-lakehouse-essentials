@@ -8,13 +8,15 @@ on:
   # push:
   #   branches: [main]
 
-permissions:
-  id-token: write # necessário para o login OIDC, sem token guardado no repositório
-  contents: read
+# Nenhuma permissão por padrão; o job declara só o que usa.
+permissions: {}
 
 jobs:
   deploy_prod:
     runs-on: ubuntu-24.04
+    permissions:
+      id-token: write # necessário para o login OIDC, sem token guardado no repositório
+      contents: read
     # O environment "prod" no GitHub pede aprovação manual antes de rodar.
     environment: prod
     env:
@@ -22,9 +24,9 @@ jobs:
       DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST_PROD }}
       DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID_PROD }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: databricks/setup-cli@v1.21.0
+      - uses: databricks/setup-cli@2bf4520fd10723ed5a22eca62a8c8a63714a7ba9 # v1.21.0
 
       - name: Validar bundle (prod)
         run: databricks bundle validate -t prod

@@ -43,8 +43,21 @@ subagentes ficam em `.claude/agents/` e as skills em `.claude/skills/`.
   `python-is-python3` ou um alias).
 - **Sandbox do Claude Code:** não roda no Windows nativo (só macOS, Linux e WSL2), então
   não está ativado. A proteção vem das permissões e dos hooks.
-- Versões de ferramentas fixadas em `requirements-dev.txt` e nos workflows. Atualize por
-  PR, com versões publicadas há pelo menos 2 semanas.
+## Cadeia de suprimentos
+
+- **Versões fixas, num lugar só por tipo:**
+  - pacotes do Databricks (pipeline e jobs): `requirements-runtime.txt`, instalado com
+    `-r`; o `requirements-dev.txt` o inclui e acrescenta as ferramentas de desenvolvimento;
+  - actions: pelo SHA do commit, com a versão em comentário;
+  - pre-commit: `rev` pelo SHA, com `# frozen: vX.Y.Z`;
+  - gitleaks: a mesma versão no job `segredos` do CI (com o SHA-256 do binário) e no
+    pre-commit; ao atualizar, troque nos dois lugares (um teste confere).
+- **Dependabot** abre os PRs de atualização toda semana, só de versões publicadas há pelo
+  menos 14 dias (`cooldown`). Cada PR passa pelo CI e só entra com o merge do responsável.
+- **pre-commit**: rode `pre-commit install` uma vez por clone; os hooks repetem o CI
+  (ruff, YAML, JSON, espaços, chave privada, segredos) antes de cada commit.
+- **Segurança do repositório**: `SECURITY.md` explica o reporte privado de
+  vulnerabilidades; `CODEOWNERS` define quem revisa; o template de PR traz o checklist.
 
 ## Lint
 

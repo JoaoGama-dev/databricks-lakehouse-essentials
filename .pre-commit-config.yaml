@@ -1,0 +1,30 @@
+# Verificações que rodam antes de cada commit (pre-commit), na sua máquina.
+# Instalar uma vez: pip install -r requirements-dev.txt && pre-commit install
+# Rodar em tudo:     pre-commit run --all-files
+# Cada rev é o SHA do commit da versão indicada em "frozen" (uma tag pode ser movida).
+# O gitleaks usa a mesma versão do job "segredos" do CI (.github/workflows/ci.yml).
+
+# Os CSVs fictícios imitam a exportação do Excel (UTF-8 com BOM e CRLF): não podem ser
+# "consertados" pelos hooks de espaço e fim de arquivo.
+exclude: ^(data/agenda_exemplo_v\d+\.csv|tests/evals/.*\.csv)$
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 4cbc74d53fe5634e58e0e65db7d28939c9cec3f7 # frozen: v0.12.7
+    hooks:
+      - id: ruff-check
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # frozen: v8.30.1
+    hooks:
+      - id: gitleaks

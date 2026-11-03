@@ -1,22 +1,26 @@
 name: CI
 
 # Roda em todo pull request para a main: lint, testes e validação do bundle.
-# Actions e runner com versão fixa: atualize por PR, com versões publicadas há pelo
-# menos 2 semanas. Os jobs "testes" e "validar_bundle" são obrigatórios na main.
+# Actions fixadas pelo SHA do commit (a tag só no comentário: uma tag pode ser movida,
+# um SHA não) e runner com versão fixa. O Dependabot propõe as atualizações, depois de
+# 14 dias de publicadas. Os jobs "testes", "validar_bundle" e "segredos" são
+# obrigatórios na main.
 on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+# Nenhuma permissão por padrão; cada job declara só o que usa.
+permissions: {}
 
 jobs:
   testes:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -32,10 +36,12 @@ jobs:
   validar_bundle:
     needs: testes
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: databricks/setup-cli@v1.21.0
+      - uses: databricks/setup-cli@2bf4520fd10723ed5a22eca62a8c8a63714a7ba9 # v1.21.0
 
       # O Free Edition não tem service principal com OIDC, por isso dev usa token.
       # O host do workspace de dev vem só da variável do repositório (não está no databricks.yml).
@@ -44,3 +50,29 @@ jobs:
         env:
           DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST_DEV }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+
+  # Procura segredos (tokens, chaves, senhas) em todo o histórico do repositório.
+  # Usa o binário oficial do gitleaks, conferido pelo SHA-256 da release, em vez de uma
+  # action de terceiros. A mesma versão roda no pre-commit (.pre-commit-config.yaml);
+  # para atualizar, troque a versão e o SHA-256 nos dois lugares.
+  segredos:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Instalar gitleaks (versão e SHA-256 fixos)
+        env:
+          GITLEAKS_VERSAO: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          arquivo="gitleaks_${GITLEAKS_VERSAO}_linux_x64.tar.gz"
+          curl -sSfL -o "$arquivo" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSAO}/${arquivo}"
+          echo "${GITLEAKS_SHA256}  ${arquivo}" | sha256sum --check --strict
+          tar -xzf "$arquivo" gitleaks
+
+      - name: Procurar segredos no histórico
+        run: ./gitleaks git --redact --no-banner --verbose .

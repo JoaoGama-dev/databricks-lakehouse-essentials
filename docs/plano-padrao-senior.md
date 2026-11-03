@@ -260,6 +260,18 @@ oficial do Claude Code:
 **Aceite:** CI com 3 jobs verdes (testes, validar_bundle, segredos); nenhuma action por
 tag; nenhuma dependência sem versão.
 
+**Status: concluída (branch `fase-2`).** Decisões tomadas na execução:
+
+- Versões num único arquivo, `requirements-runtime.txt`, instalado pelo pipeline e pelo
+  job com `-r` (cada dependência do bundle é uma linha de requisitos do pip), em vez de
+  variáveis do bundle: assim o Dependabot também o atualiza. Validado com o job rodando
+  em dev.
+- gitleaks no CI pelo binário oficial conferido pelo SHA-256 da release, em vez da
+  action: sem Node, sem licença para organizações e a mesma versão do pre-commit.
+- Dependabot com `cooldown` de 14 dias, a regra das 2 semanas aplicada automaticamente.
+- O histórico completo do repositório foi varrido pelo gitleaks antes do PR: nada
+  encontrado.
+
 ---
 
 ## Fase 3 — Governança no Unity Catalog como código

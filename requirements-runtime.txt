@@ -1,0 +1,6 @@
+# Dependências que rodam no Databricks (pipeline e jobs de ingestão).
+# Único lugar com estas versões: resources/pipeline.yml e resources/job.yml instalam
+# este arquivo com "-r", e o requirements-dev.txt o inclui. O Dependabot o atualiza.
+PyYAML==6.0.2
+jsonschema==4.25.0
+requests==2.34.2
