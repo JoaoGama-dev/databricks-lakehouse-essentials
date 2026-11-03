@@ -1,0 +1,18 @@
+data;hora;paciente;cpf;telefone;especialidade;status;valor
+03/02/2026;08:00;Bruna Teixeira;111.222.333-01;(41) 90000-1101;Cardiologia;Realizado;250,00
+03/02/2026;08:30;Caio Almeida;111.222.333-02;(41) 90000-1102;Dermatologia;realizado;180,00
+03/02/2026;09:00;Daniela Rocha;111.222.333-03;41900001103;Pediatria;Faltou;150,00
+03/02/2026;09:30;Eduardo Lima;111.222.333-04;(41) 90000-1104;Cardiologia;CANCELADO;250,00
+04/02/2026;08:00;Fernanda Dias;111.222.333-05;(41) 90000-1105;Ortopedia;Realizado;220,00
+04/02/2026;08:30;Gustavo Nogueira;111.222.333-06;(41) 90000-1106;Pediatria;Remarcado;150,00
+04/02/2026;09:00;Helena Barbosa;111.222.333-07;;Dermatologia;Realizado;180,00
+04/02/2026;09:30;Igor Pereira;111.222.333-08;(41) 90000-1108;Cardiologia;faltou;250,00
+05/02/2026;08:00;Jonas Moreira;111.222.333-09;(41) 90000-1109;Ortopedia;Realizado;220,00
+05/02/2026;08:30;Karina Santos;111.222.333-10;(41) 90000-1110;Pediatria;;150,00
+05/02/2026;09:00;Lucas Cardoso;111.222.333-11;(41) 90000-1111;Dermatologia;Realizado;180,00
+05/02/2026;09:30;Mariana Gomes;111.222.333-12;(41) 90000-1112;Cardiologia;Realizado;250,00
+06/02/2026;08:00;Nicolas Ferreira;111.222.333-13;(41) 90000-1113;Ortopedia;Cancelado;220,00
+06/02/2026;08:30;Olívia Esteves;111.222.333-14;(41) 90000-1114;Pediatria;Realizado;150,00
+06/02/2026;09:00;Paulo Hoffmann;111.222.333-15;(41) 90000-1115;Cardiologia;Realizado;250,00
+06/02/2026;09:30;Rafaela Oliveira;111.222.333-16;(41) 90000-1116;Dermatologia;Realizado;180,00
+TOTAL;;;;;;;3.330,00

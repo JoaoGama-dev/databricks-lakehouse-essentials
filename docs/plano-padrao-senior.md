@@ -220,6 +220,19 @@ e conferir a lista. Não é para o CI chamar o modelo.
 vazar valores sensíveis (com teste); `CLAUDE.md` enxuto apontando para `docs/padroes/`;
 6 subagentes e 8 skills; ruff e pytest verdes.
 
+**Status: concluída (branch `fase-1`).** Ajustes feitos ao confirmar a documentação
+oficial do Claude Code:
+
+- O hook `PreToolUse` não recebe o texto do pedido do usuário; a proteção do
+  `deploy.yml` virou a regra `ask` `Edit(./.github/workflows/deploy.yml)`.
+- Subagentes não restringem ferramentas por pasta; `qa-dados` e `documentador` usam o
+  hook `restringir_edicao.py` no próprio frontmatter.
+- O sandbox não roda no Windows nativo; não foi ativado (registrado em
+  `docs/padroes/fluxo-de-trabalho.md`).
+- O perfilamento não lê Excel (nenhuma biblioteca instalada): orienta salvar como CSV.
+- O hook de comandos bloqueia qualquer menção a planilhas reais, inclusive em mensagens
+  de commit; para citar caminhos de dados, use `git commit -F`.
+
 ---
 
 ## Fase 2 — Segurança e cadeia de suprimentos
