@@ -163,7 +163,7 @@
       "properties": {
         "nome": { "$ref": "#/$defs/nome_sql" },
         "tipo": { "enum": ["nao_nulo", "valores_aceitos", "expressao", "unico"] },
-        "acao": { "enum": ["drop", "alerta"] },
+        "acao": { "enum": ["drop", "alerta", "falhar"] },
         "coluna": { "type": "string" },
         "colunas": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
         "valores": { "type": "array", "items": { "type": ["string", "number"] }, "minItems": 1 },

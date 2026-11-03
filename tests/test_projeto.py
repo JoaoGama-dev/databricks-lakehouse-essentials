@@ -22,6 +22,7 @@ from essentials.config_fontes import (
     expressoes_silver,
     nome_tabela_origem,
     pasta_landing,
+    regras_efetivas,
     schema_silver,
     tabelas_da_fonte,
     validar_config,
@@ -147,12 +148,51 @@ def test_prefixo_precisa_combinar_com_o_tipo():
         validar_config(config)
 
 
-def test_chave_do_auto_cdc_precisa_de_regra_nao_nulo_com_drop():
+def test_chave_sem_regra_ganha_nao_nulo_com_drop_sozinha():
     config = config_bruta()
     agenda = config["fontes"][0]
     agenda["regras"] = [r for r in agenda["regras"] if r["nome"] != "nome_preenchido"]
-    with pytest.raises(ValueError, match="chave sem regra nao_nulo com drop: nm_candidato"):
+    validar_config(config)
+    geradas = [r for r in regras_efetivas(agenda) if r not in agenda["regras"]]
+    esperada = {"nome": "chave_nm_candidato_preenchida", "tipo": "nao_nulo", "coluna": "nm_candidato", "acao": "drop"}
+    assert geradas == [esperada]
+    descartar, _, _ = expectations(agenda)
+    assert descartar["chave_nm_candidato_preenchida"] == "`nm_candidato` IS NOT NULL"
+
+
+def test_chave_ja_conferida_no_yaml_nao_ganha_regra_repetida():
+    for f in FONTES:
+        assert regras_efetivas(f) == f.get("regras", []), f["nome"]
+
+
+def test_chave_do_auto_cdc_nao_aceita_nao_nulo_so_com_alerta():
+    config = config_bruta()
+    regra = next(r for r in config["fontes"][0]["regras"] if r["nome"] == "nome_preenchido")
+    regra["acao"] = "alerta"
+    with pytest.raises(ValueError, match="regra nao_nulo da chave precisa de drop ou falhar: nm_candidato"):
         validar_config(config)
+
+
+def test_incremental_ganha_regra_de_chave_unica():
+    fonte_incremental = {"nome": "vendas", "modo_carga": "incremental", "chave_primaria": ["id_venda"], "regras": []}
+    regras = regras_efetivas(fonte_incremental)
+    assert {"nome": "chave_unica", "tipo": "unico", "colunas": ["id_venda"], "acao": "alerta"} in regras
+    assert tabelas_da_fonte(fonte_incremental)["unicidade"] == ["silver_int_vendas_unico_id_venda"]
+    # Nos modos snapshot e cdc a chave já sai única: nenhuma checagem a mais.
+    for modo in ("snapshot", "cdc"):
+        assert not any(r["tipo"] == "unico" for r in regras_efetivas({**fonte_incremental, "modo_carga": modo}))
+
+
+def test_regra_falhar_vira_expectation_que_para_a_carga():
+    f = {"nome": "x", "modo_carga": "snapshot", "chave_primaria": ["id_x"], "regras": [
+        {"nome": "id_x_preenchido", "tipo": "nao_nulo", "coluna": "id_x", "acao": "drop"},
+        {"nome": "arquivo_certo", "tipo": "expressao", "expressao": "qt_linhas > 0", "acao": "falhar"},
+    ]}
+    descartar, alertar, falhar = expectations(f)
+    assert falhar == {"arquivo_certo": "qt_linhas > 0"}
+    assert "arquivo_certo" not in descartar and "arquivo_certo" not in alertar
+    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    assert "dp.expect_all_or_fail(falhar)" in codigo
 
 
 # Bronze ---------------------------------------------------------------------------
@@ -184,13 +224,13 @@ def test_tabela_de_apoio_e_criada_no_setup():
 
 @pytest.mark.parametrize("f", FONTES, ids=lambda f: f["nome"])
 def test_regras_viram_expectations(f):
-    descartar, alertar = expectations(f)
-    for regra in f.get("regras", []):
+    descartar, alertar, falhar = expectations(f)
+    destinos = {"drop": descartar, "alerta": alertar, "falhar": falhar}
+    for regra in regras_efetivas(f):
         if regra["tipo"] == "unico":
-            assert regra["nome"] not in descartar and regra["nome"] not in alertar
+            assert all(regra["nome"] not in destino for destino in destinos.values())
             continue
-        destino = descartar if regra["acao"] == "drop" else alertar
-        assert destino[regra["nome"]] == expressao_regra(regra)
+        assert destinos[regra["acao"]][regra["nome"]] == expressao_regra(regra)
 
 
 def test_expressoes_das_regras():

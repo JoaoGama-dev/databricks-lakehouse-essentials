@@ -4,7 +4,8 @@ Para cada fonte:
   1. lê a bronze, ou a view silver_int_<nome>_preparada quando há src/pipeline/silver_<nome>.sql;
   2. aplica a limpeza padrão (TRIM, tipos, datas em mais de um formato, de-para, máscara)
      e dá às colunas os nomes padronizados do YAML (dt_, nm_, st_...);
-  3. aplica as regras do YAML como expectations (drop descarta, alerta só conta);
+  3. aplica as regras do YAML como expectations (drop descarta, alerta só conta, falhar
+     para a carga), mais as regras padrão da chave (regras_efetivas);
   4. grava conforme o modo de carga:
        incremental -> streaming table silver_<nome>, com as regras, só acrescenta
        snapshot    -> materialized view silver_int_<nome>_retrato, com as regras, e
@@ -57,11 +58,13 @@ def limpar(df: DataFrame, fonte: dict) -> DataFrame:
 
 
 def com_expectations(funcao, fonte: dict):
-    descartar, alertar = expectations(fonte)
+    descartar, alertar, falhar = expectations(fonte)
     if descartar:
         funcao = dp.expect_all_or_drop(descartar)(funcao)
     if alertar:
         funcao = dp.expect_all(alertar)(funcao)
+    if falhar:
+        funcao = dp.expect_all_or_fail(falhar)(funcao)
     return funcao
 
 
