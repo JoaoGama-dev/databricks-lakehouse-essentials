@@ -19,10 +19,9 @@ resources:
         - environment_key: ingestao
           spec:
             environment_version: "2"
+            # Versões fixas, num único lugar: requirements-runtime.txt.
             dependencies:
-              - pyyaml
-              - jsonschema
-              - requests
+              - -r ${workspace.file_path}/requirements-runtime.txt
       tasks:
         - task_key: ingestao_api
           environment_key: ingestao

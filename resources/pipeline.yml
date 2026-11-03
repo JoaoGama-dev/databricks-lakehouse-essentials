@@ -18,9 +18,9 @@ resources:
         fontes_config: ${workspace.file_path}/config/fontes.yml
         diretorio_codigo: ${workspace.file_path}/src
       environment:
+        # Versões fixas, num único lugar: requirements-runtime.txt.
         dependencies:
-          - pyyaml
-          - jsonschema
+          - -r ${workspace.file_path}/requirements-runtime.txt
       libraries:
         - file:
             path: ../src/pipeline/bronze.py
