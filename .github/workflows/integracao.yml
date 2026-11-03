@@ -10,6 +10,9 @@ on:
   schedule:
     # 1h em Brasília (4h UTC), de segunda a sexta.
     - cron: "0 4 * * 1-5"
+  # TEMPORÁRIO: validar o workflow na branch antes do merge. Removido no último commit.
+  push:
+    branches: [fase-5]
 
 # Nenhuma permissão por padrão; o job declara só o que usa.
 permissions: {}
