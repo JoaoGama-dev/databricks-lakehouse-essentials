@@ -421,6 +421,13 @@ em `tests/test_hooks.py`.
 |---|---|---|
 | `ci.yml` | pull request para a `main` | `ruff check .`, `pytest -q` (inclui a validação do `fontes.yml` e dos padrões de nomes), `databricks bundle validate -t dev` e varredura de segredos no histórico (gitleaks) |
 | `deploy.yml` | manual (`workflow_dispatch`) | `bundle validate` e `bundle deploy -t prod` no environment `prod`, com login OIDC |
+| `integracao.yml` | 1h de segunda a sexta e manual (nunca em PR) | implanta o target `ci`, carrega a agenda fictícia v1 e a v2, confere os dados (`tests/integracao/`) e destrói tudo no fim |
+
+- **Testes de integração** (`docs/adr/0005-testes-de-integracao.md`): o target `ci` usa o
+  projeto `<projeto>_ci`, com schemas e estado de deploy próprios, sem tocar no dev. As
+  asserções conferem linhas na silver, descartes e alertas por regra, chaves sem nulo e
+  sem duplicata, versões no histórico após a v2, fato completa e agregada igual à fato.
+  O `pytest -q` do CI de PR roda só os testes de unidade.
 
 - `DATABRICKS_HOST_DEV` (variável do repositório) é a URL do workspace de dev; o
   `databricks.yml` não traz o host.

@@ -81,8 +81,46 @@ targets:
     mode: development
     default: true
     resources:
+      # Os dados do projeto nunca são apagados por um destroy (também em prod).
+      schemas:
+        projeto:
+          lifecycle:
+            prevent_destroy: true
+        gold:
+          lifecycle:
+            prevent_destroy: true
+      volumes:
+        landing:
+          lifecycle:
+            prevent_destroy: true
+      jobs:
+        # O modo development não pausa um agendamento com pause_status explícito: em dev a
+        # carga roda só quando alguém manda (o workflow de integração roda toda noite).
+        essentials_carga_diaria:
+          schedule:
+            pause_status: PAUSED
       alerts:
         # Em dev o alerta de atraso fica pausado: dá para rodá-lo à mão na tela do alerta.
+        atraso_carga:
+          schedule:
+            pause_status: PAUSED
+
+  # Testes de integração (.github/workflows/integracao.yml, docs/adr/0005): o mesmo
+  # workspace do dev, com estado de deploy próprio e o projeto com sufixo _ci, o que gera
+  # dev_<usuário>_<projeto>_ci e dev_<usuário>_<projeto>_ci_gold, sem tocar no dev.
+  # O workflow apaga tudo ao fim, por isso aqui os schemas e o volume ficam sem
+  # prevent_destroy (a proteção é declarada só no dev e no prod).
+  ci:
+    mode: development
+    variables:
+      # Sempre o projeto do bundle + "_ci" (um teste confere).
+      projeto: portfolio_ci
+    resources:
+      jobs:
+        essentials_carga_diaria:
+          schedule:
+            pause_status: PAUSED
+      alerts:
         atraso_carga:
           schedule:
             pause_status: PAUSED
@@ -104,11 +142,20 @@ targets:
       grupo_leitura_gold: essentials_leitura_gold
       grupo_dados_pessoais: essentials_dados_pessoais
     resources:
+      schemas:
+        projeto:
+          lifecycle:
+            prevent_destroy: true
+        gold:
+          lifecycle:
+            prevent_destroy: true
       volumes:
         landing:
           volume_type: EXTERNAL
           # Precisa de uma external location do Unity Catalog sobre este caminho.
           storage_location: abfss://landing@STORAGEACCOUNT.dfs.core.windows.net/${var.projeto}
+          lifecycle:
+            prevent_destroy: true
     run_as:
       # Application ID do service principal de produção.
       service_principal_name: 00000000-0000-0000-0000-000000000000
