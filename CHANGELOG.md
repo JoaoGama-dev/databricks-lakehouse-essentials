@@ -10,6 +10,13 @@ só a versão menor.
 
 ## [Unreleased]
 
+### Alterado
+
+- Roteiro revisado a partir da Fase 7: o repositório passa a ser só o pacote Essentials,
+  com a tabela de cobertura do pacote no plano e as Fases 7 (base de produção), 8
+  (ambientes e esteira do cliente), 9 (template) e 10 (kit de serviço). Testes só no Free
+  Edition; sem Terraform por enquanto.
+
 ## [0.7.0] - 2026-11-03
 
 Fase 6: documentação de engenharia.

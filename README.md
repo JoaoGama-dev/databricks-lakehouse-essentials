@@ -136,15 +136,18 @@ Unity Catalog, e o negócio só lê a gold
 
 ## Próximos passos
 
-- Completar o cadastro de cargos até zerar as entrevistas com `id_cargo = -1`.
-- Metric views no Unity Catalog para as taxas de comparecimento e aprovação.
-- A fábrica (Fase 7 do plano): gerar um projeto de cliente novo com
-  `databricks bundle init`, a partir de um template.
-- **Direção futura, fora do Essentials:** um módulo de IA para o pacote Enterprise, com
-  RAG sobre documentos do cliente (Vector Search sobre uma tabela de trechos gerada por
-  pipeline), agente de perguntas sobre a gold (Genie e ferramentas no Unity Catalog),
-  avaliação da qualidade das respostas e rastreamento (MLflow). Será um projeto separado,
-  com plano próprio.
+Este repositório é o pacote **Essentials** completo; o que falta para fechá-lo está no
+[plano](docs/plano-padrao-senior.md), com a tabela de cobertura do pacote:
+
+- Base de produção (Fase 7): regra que para a carga, chave conferida sozinha, alerta de
+  volume, detecção de mudança na origem, aviso de falha com o motivo, taxa de sucesso,
+  teto de custo e leitura de planilhas Excel.
+- Ambientes e esteira do cliente (Fase 8): `dev` e `prod` no workspace do cliente e
+  deploy de produção no merge da `main`, com aprovação.
+- A fábrica (Fase 9): gerar o projeto de um cliente novo com `databricks bundle init`.
+- Kit de serviço (Fase 10): relatório de diagnóstico, treinamento, guia de Power BI e
+  relatório mensal da sustentação.
+- No exemplo: completar o cadastro de cargos até zerar as entrevistas com `id_cargo = -1`.
 
 ## Aviso
 
