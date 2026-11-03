@@ -158,8 +158,18 @@ def passos() -> list[dict]:
     return workflow()["jobs"]["integracao"]["steps"]
 
 
+def test_workflow_comeca_limpo():
+    comandos = [passo.get("run", "") for passo in passos()]
+    deploy = next(i for i, comando in enumerate(comandos) if "bundle deploy -t ci" in comando)
+    limpeza = next(i for i, comando in enumerate(comandos) if "bundle destroy -t ci" in comando)
+    assert limpeza < deploy
+    assert "integracao.py limpar" in comandos[limpeza]
+
+
 def test_workflow_segue_a_ordem_e_sempre_limpa():
     comandos = [passo.get("run", "") for passo in passos()]
+    deploy = next(i for i, comando in enumerate(comandos) if "bundle deploy -t ci" in comando)
+    comandos = comandos[deploy:]
     ordem = [
         "bundle deploy -t ci",
         "bundle summary -t ci",
@@ -175,7 +185,13 @@ def test_workflow_segue_a_ordem_e_sempre_limpa():
     ]
     posicoes = [next(i for i, comando in enumerate(comandos) if trecho in comando) for trecho in ordem]
     assert posicoes == sorted(posicoes), ordem
-    for passo in passos():
+    # Depois do deploy, destroy e limpeza rodam mesmo quando um passo anterior falha.
+    for passo in passos()[deploy:]:
         if "bundle destroy" in passo.get("run", "") or "integracao.py limpar" in passo.get("run", ""):
             assert passo["if"] == "always()", passo["name"]
+
+
+def test_workflow_nunca_toca_em_prod():
+    comandos = [passo.get("run", "") for passo in passos()]
     assert all("-t prod" not in comando and "--target prod" not in comando for comando in comandos)
+    assert all("-t ci" in comando for comando in comandos if "databricks bundle" in comando)

@@ -42,6 +42,14 @@ jobs:
 
       - uses: databricks/setup-cli@2bf4520fd10723ed5a22eca62a8c8a63714a7ba9 # v1.21.0
 
+      # Começa do zero: sobras de uma execução anterior (destroy que falhou, teste local)
+      # fariam a v1 ser lida sobre dados antigos. Sem nada implantado, os dois são no-op.
+      - name: Apagar sobras de execuções anteriores
+        run: |
+          databricks bundle summary -t ci -o json > "$INTEGRACAO_RECURSOS"
+          databricks bundle destroy -t ci --auto-approve
+          python scripts/integracao.py limpar
+
       - name: Implantar o target ci
         run: databricks bundle deploy -t ci --auto-approve
 
