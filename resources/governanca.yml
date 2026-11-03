@@ -1,0 +1,48 @@
+# Governança no Unity Catalog como código: schemas, volume e permissões do projeto.
+# Modelo de acesso (docs/adr/0001-modelo-de-acesso-no-unity-catalog.md):
+#   <projeto>       bronze e silver, com dado bruto e intermediário: só engenharia
+#   <projeto>_gold  gold, pronta para o negócio: engenharia e leitura
+#   landing         arquivos recebidos das fontes: só engenharia
+# prevent_destroy: um "bundle destroy" nunca apaga os dados do projeto.
+resources:
+  schemas:
+    projeto:
+      catalog_name: ${var.catalog}
+      name: ${var.projeto}
+      comment: Projeto do pacote Essentials, camadas bronze e silver. Acesso só da engenharia.
+      lifecycle:
+        prevent_destroy: true
+      grants:
+        - principal: ${var.grupo_engenharia}
+          privileges:
+            - ALL_PRIVILEGES
+
+    gold:
+      catalog_name: ${var.catalog}
+      name: ${var.projeto}_gold
+      comment: Projeto do pacote Essentials, camada gold (dimensões, fatos e agregadas) para o negócio.
+      lifecycle:
+        prevent_destroy: true
+      grants:
+        - principal: ${var.grupo_engenharia}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.grupo_leitura_gold}
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+
+  volumes:
+    landing:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.projeto.name}
+      name: landing
+      volume_type: MANAGED
+      comment: Landing zone do projeto, uma pasta por fonte (config/fontes.yml).
+      lifecycle:
+        prevent_destroy: true
+      grants:
+        - principal: ${var.grupo_engenharia}
+          privileges:
+            - READ_VOLUME
+            - WRITE_VOLUME

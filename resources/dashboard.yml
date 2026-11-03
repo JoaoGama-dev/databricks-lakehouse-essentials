@@ -9,8 +9,8 @@ resources:
       display_name: Essentials · ${var.projeto} · Entrevistas
       file_path: ../src/dashboards/entrevistas.lvdash.json
       warehouse_id: ${var.warehouse_id}
-      dataset_catalog: ${var.catalog}
-      dataset_schema: ${var.schema}
+      dataset_catalog: ${resources.schemas.gold.catalog_name}
+      dataset_schema: ${resources.schemas.gold.name}
       # Quem abre o painel consulta com as próprias permissões do Unity Catalog:
       # sem acesso à gold, não vê os dados.
       embed_credentials: false

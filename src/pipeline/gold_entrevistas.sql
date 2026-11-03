@@ -2,10 +2,13 @@
 -- Padrão de nomes: gold_<tipo>_<nome> (dim, fato, agg) e colunas com prefixo da classe da
 -- informação (id_, nm_, dt_, st_, fl_, qt_...), como na silver.
 -- Dicionário de dados: toda coluna é declarada com tipo e COMMENT, na ordem do SELECT.
+-- As tabelas gold vão para o schema gold (${schema_gold}), o único com leitura para o
+-- negócio (docs/adr/0001-modelo-de-acesso-no-unity-catalog.md); a silver fica no schema
+-- padrão do pipeline.
 
 -- Dimensão de cargos. O membro id_cargo = -1 ("Não classificada") recebe as entrevistas
 -- cuja vaga não combina com nenhum prefixo cadastrado, para a fato nunca ficar sem cargo.
-CREATE OR REFRESH MATERIALIZED VIEW gold_dim_cargo (
+CREATE OR REFRESH MATERIALIZED VIEW ${schema_gold}.gold_dim_cargo (
   id_cargo BIGINT COMMENT 'Identificador do cargo; -1 é o membro Não classificada.',
   ds_prefixo_vaga STRING COMMENT 'Começo do nome da vaga, em minúsculas, que identifica o cargo.',
   nm_area STRING COMMENT 'Área da empresa à qual o cargo pertence.',
@@ -28,7 +31,7 @@ SELECT
 
 -- Fato de entrevistas: uma linha por entrevista, no estado atual. O cargo é o de prefixo
 -- mais longo que combina com o nome da vaga ("auxiliar de cozinha" ganha de "auxiliar").
-CREATE OR REFRESH MATERIALIZED VIEW gold_fato_entrevista (
+CREATE OR REFRESH MATERIALIZED VIEW ${schema_gold}.gold_fato_entrevista (
   dt_entrevista DATE COMMENT 'Data da entrevista.',
   dt_mes_entrevista DATE COMMENT 'Primeiro dia do mês da entrevista, para agrupar por mês.',
   hr_entrevista STRING COMMENT 'Horário da entrevista no formato HH:mm.',
@@ -74,7 +77,7 @@ QUALIFY row_number() OVER (
 ) = 1;
 
 -- Agregada mensal por área, situação e status, base dos gráficos do painel.
-CREATE OR REFRESH MATERIALIZED VIEW gold_agg_entrevista_mensal (
+CREATE OR REFRESH MATERIALIZED VIEW ${schema_gold}.gold_agg_entrevista_mensal (
   dt_mes_entrevista DATE COMMENT 'Primeiro dia do mês das entrevistas.',
   nm_area STRING COMMENT 'Área da empresa (Não classificada quando a vaga não tem cargo cadastrado).',
   st_situacao STRING COMMENT 'Situação para acompanhamento: Concluído, Em andamento, Pendente ou Não identificado.',
@@ -95,7 +98,7 @@ AS SELECT
   count_if(f.fl_compareceu) AS qt_compareceram,
   count_if(f.fl_aprovado) AS qt_aprovados,
   count_if(f.fl_sem_retorno) AS qt_sem_retorno
-FROM gold_fato_entrevista AS f
-JOIN gold_dim_cargo AS d
+FROM ${schema_gold}.gold_fato_entrevista AS f
+JOIN ${schema_gold}.gold_dim_cargo AS d
   ON f.id_cargo = d.id_cargo
 GROUP BY f.dt_mes_entrevista, d.nm_area, f.st_situacao, f.st_entrevista;

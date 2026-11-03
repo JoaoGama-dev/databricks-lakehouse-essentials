@@ -31,7 +31,9 @@ RAIZ = Path(__file__).resolve().parents[1]
 CONFIG = RAIZ / "config" / "fontes.yml"
 PASTA_PIPELINE = RAIZ / "src" / "pipeline"
 SETUP = RAIZ / "setup" / "00_setup_free_edition.sql"
-PADRAO_TABELA_SQL = re.compile(r"CREATE OR REFRESH (?:STREAMING TABLE|MATERIALIZED VIEW)\s+(\w+)", re.IGNORECASE)
+PADRAO_TABELA_SQL = re.compile(
+    r"CREATE OR REFRESH (?:STREAMING TABLE|MATERIALIZED VIEW)\s+(?:\$\{\w+\}\.)?(\w+)", re.IGNORECASE
+)
 
 FONTES = carregar_fontes(CONFIG)
 
@@ -321,7 +323,7 @@ def test_toda_tabela_da_silver_e_criada_com_schema():
 @pytest.mark.parametrize("arquivo", arquivos_gold(), ids=lambda a: a.name)
 def test_colunas_da_gold_tem_tipo_e_descricao(arquivo):
     sql = arquivo.read_text(encoding="utf-8")
-    blocos = re.findall(r"MATERIALIZED VIEW \w+ \((.*?)\n\)\nCOMMENT", sql, re.DOTALL)
+    blocos = re.findall(r"MATERIALIZED VIEW (?:\$\{\w+\}\.)?\w+ \((.*?)\n\)\nCOMMENT", sql, re.DOTALL)
     assert len(blocos) == len(PADRAO_TABELA_SQL.findall(sql)), "toda view da gold declara as colunas"
     prefixos = "|".join(PREFIXOS_POR_TIPO)
     for bloco in blocos:
@@ -366,29 +368,31 @@ def test_pipeline_serverless_com_configuracao():
     configuracao = pipeline()
     assert configuracao["serverless"] is True
     assert configuracao["continuous"] is False
-    assert {"catalogo", "projeto", "landing_path", "fontes_config", "diretorio_codigo"} <= set(
+    assert {"catalogo", "projeto", "schema_gold", "landing_path", "fontes_config", "diretorio_codigo"} <= set(
         configuracao["configuration"]
     )
 
 
 def test_estrutura_do_pacote_essentials():
-    """Catálogo do pacote, schema e landing por projeto, bundle com o nome do projeto."""
+    """Catálogo do pacote, schemas e landing do projeto no bundle, bundle com o nome do projeto."""
     bundle = carregar_yaml(RAIZ / "databricks.yml")
     variaveis = bundle["variables"]
     projeto = variaveis["projeto"]["default"]
     assert bundle["bundle"]["name"] == f"essentials_{projeto}"
     assert variaveis["catalog"]["default"] == "essentials"
-    assert variaveis["schema"]["default"] == "${var.projeto}"
-    assert variaveis["landing_path"]["default"] == "/Volumes/${var.catalog}/${var.projeto}/landing"
     assert "${var.projeto}" in pipeline()["name"]
+    assert pipeline()["schema"] == "${resources.schemas.projeto.name}"
+    assert pipeline()["configuration"]["schema_gold"] == "${resources.schemas.gold.name}"
+    assert pipeline()["configuration"]["landing_path"].startswith("/Volumes/${resources.volumes.landing.")
+
+
+def test_setup_cria_so_o_que_nao_pertence_ao_bundle():
     setup = SETUP.read_text(encoding="utf-8")
-    for comando in (
-        "CREATE CATALOG IF NOT EXISTS essentials\n",
-        f"CREATE SCHEMA IF NOT EXISTS essentials.{projeto}\n",
-        f"CREATE VOLUME IF NOT EXISTS essentials.{projeto}.landing\n",
-        f"CREATE SCHEMA IF NOT EXISTS essentials.{projeto}_origem\n",
-    ):
-        assert comando in setup
+    projeto = carregar_yaml(RAIZ / "databricks.yml")["variables"]["projeto"]["default"]
+    assert "CREATE CATALOG IF NOT EXISTS essentials\n" in setup
+    assert f"CREATE SCHEMA IF NOT EXISTS essentials.{projeto}_origem\n" in setup
+    assert f"CREATE SCHEMA IF NOT EXISTS essentials.{projeto}\n" not in setup
+    assert "CREATE VOLUME" not in setup
 
 
 def test_nome_da_tabela_de_origem_usa_catalogo_e_projeto():
@@ -476,8 +480,8 @@ def test_painel_esta_no_bundle_sem_ambiente_fixo():
     recurso = carregar_yaml(RAIZ / "resources" / "dashboard.yml")["resources"]["dashboards"]["painel_entrevistas"]
     assert (RAIZ / "resources" / recurso["file_path"]).resolve() == PAINEL.resolve()
     assert recurso["warehouse_id"] == "${var.warehouse_id}"
-    assert recurso["dataset_catalog"] == "${var.catalog}"
-    assert recurso["dataset_schema"] == "${var.schema}"
+    assert recurso["dataset_catalog"] == "${resources.schemas.gold.catalog_name}"
+    assert recurso["dataset_schema"] == "${resources.schemas.gold.name}"
     assert recurso["embed_credentials"] is False
 
 

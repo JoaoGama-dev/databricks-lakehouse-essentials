@@ -31,7 +31,7 @@ resources:
               - --config
               - ${workspace.file_path}/config/fontes.yml
               - --landing
-              - ${var.landing_path}
+              - /Volumes/${resources.volumes.landing.catalog_name}/${resources.volumes.landing.schema_name}/${resources.volumes.landing.name}
               - --codigo
               - ${workspace.file_path}/src
 
@@ -43,7 +43,7 @@ resources:
               - --config
               - ${workspace.file_path}/config/fontes.yml
               - --landing
-              - ${var.landing_path}
+              - /Volumes/${resources.volumes.landing.catalog_name}/${resources.volumes.landing.schema_name}/${resources.volumes.landing.name}
               - --codigo
               - ${workspace.file_path}/src
 

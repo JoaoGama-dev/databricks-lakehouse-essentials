@@ -1,22 +1,19 @@
 -- Preparação do Free Edition: rode uma vez antes do primeiro deploy do projeto.
 --
--- Convenção do pacote Essentials:
+-- Este arquivo cria só o que NÃO pertence ao bundle do projeto:
 --   catálogo essentials             um só para todos os projetos do pacote
---   schema   essentials.<projeto>   bronze, silver, gold e o volume landing do projeto
 --   schema   essentials.<projeto>_origem   sistemas de origem simulados do projeto
+-- Os schemas do projeto (<projeto> e <projeto>_gold), o volume landing e as permissões
+-- são criados pelo bundle (resources/governanca.yml) no "databricks bundle deploy".
 -- Para outro projeto, troque "portfolio" pelo nome do projeto (a variável "projeto"
 -- do databricks.yml) em todo este arquivo.
 
 CREATE CATALOG IF NOT EXISTS essentials
 COMMENT 'Pacote Essentials da Logos Analytics: um schema por projeto.';
 
--- Schema das tabelas do projeto e Volume que serve de landing zone.
--- Cada fonte do tipo arquivo tem sua pasta: /Volumes/essentials/portfolio/landing/<caminho>/
-CREATE SCHEMA IF NOT EXISTS essentials.portfolio
-COMMENT 'Projeto portfolio do pacote Essentials: bronze, silver e gold da agenda de entrevistas.';
-
-CREATE VOLUME IF NOT EXISTS essentials.portfolio.landing
-COMMENT 'Landing zone do projeto portfolio: arquivos recebidos das fontes, uma pasta por fonte.';
+-- O grupo de leitura (variável grupo_leitura_gold; no Free Edition, "account users")
+-- precisa entrar no catálogo para chegar ao schema gold, onde o bundle dá o SELECT.
+GRANT USE CATALOG ON CATALOG essentials TO `account users`;
 
 -- Tabela de apoio que simula um sistema de origem do cliente (fonte "cargos", tipo tabela).
 -- Liga o começo do nome da vaga, em minúsculas, a uma área da empresa.
