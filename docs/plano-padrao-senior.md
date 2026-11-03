@@ -415,6 +415,23 @@ os ADRs da Fase 6 passam a ser numerados a partir de 0006, depois do 0005 da Fas
 4. README reorganizado: visão de 1 minuto no topo, depois "como rodar", e os detalhes
    remetendo a `docs/`.
 
+**Status: concluída (branch `fase-6`).** Decisões tomadas na execução:
+
+- ADRs retroativos numerados de 0006 a 0011 (0001 a 0005 já eram das Fases 3 a 5), com
+  a data da decisão e a do registro, e mais dois para as Fases 1 e 2: 0012 guardrails do
+  Claude Code e 0013 cadeia de suprimentos. Índice em `docs/adr/README.md`.
+- Tags retroativas nos merges de cada fase: `v0.1.0` (plano, PR #5), `v0.2.0` (#6),
+  `v0.3.0` (#7), `v0.4.0` (#10), `v0.5.0` (#11), `v0.6.0` (#12) e `v0.7.0` no merge desta
+  fase.
+- README de 492 para cerca de 140 linhas; o conteúdo detalhado foi para
+  `docs/arquitetura.md`, `docs/guia-free-edition.md`, `docs/levando-ao-azure.md` e
+  `docs/desenvolvimento.md`, sem perda. O diagrama dos agentes fica em
+  `docs/desenvolvimento.md`, com link no README.
+- Mermaid só com `flowchart` e `#60;`/`#62;` no lugar de `< >`; sem Node na máquina, a
+  renderização é conferida no GitHub. Um teste barra link relativo quebrado no README e
+  em `docs/`.
+- A direção futura do módulo de IA Enterprise ficou nos próximos passos do README.
+
 ---
 
 ## Fase 7 — A fábrica: template de bundle
