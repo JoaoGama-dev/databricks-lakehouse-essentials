@@ -328,7 +328,7 @@ def test_colunas_da_gold_tem_tipo_e_descricao(arquivo):
     prefixos = "|".join(PREFIXOS_POR_TIPO)
     for bloco in blocos:
         for linha in [linha.strip() for linha in bloco.strip().splitlines()]:
-            assert re.fullmatch(rf"({prefixos})_\w+ [A-Z]+ COMMENT '.{{10,}}',?", linha), linha
+            assert re.fullmatch(rf"({prefixos})_\w+ [A-Z]+ COMMENT '[^']{{10,}}'( MASK [\w${{}}.]+)?,?", linha), linha
 
 
 def test_preparacao_sql_existe_quando_pedida():
@@ -407,7 +407,7 @@ def test_job_roda_ingestao_antes_do_pipeline():
     pipeline_id = tarefas["atualizar_lakehouse"]["pipeline_task"]["pipeline_id"]
     assert pipeline_id == "${resources.pipelines.essentials_pipeline.id}"
     dependencias = {d["task_key"] for d in tarefas["atualizar_lakehouse"]["depends_on"]}
-    assert dependencias == {"ingestao_api", "ingestao_banco"}
+    assert dependencias == {"ingestao_api", "ingestao_banco", "governanca_antes"}
     for chave in ("ingestao_api", "ingestao_banco"):
         assert (RAIZ / "resources" / tarefas[chave]["spark_python_task"]["python_file"]).is_file()
 

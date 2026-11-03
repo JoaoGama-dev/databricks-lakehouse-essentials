@@ -73,6 +73,9 @@
 #     mapa_valores         de-para de valores escritos de vários jeitos (compara em minúsculas)
 #     valor_se_vazio       valor usado quando o campo vem vazio
 #     mascarar             telefone (deixa só os 4 últimos dígitos) | hash (sha256), por LGPD
+#     sensivel             true marca dado pessoal: a coluna recebe a tag "pii" no Unity
+#                          Catalog e, na gold, a máscara de coluna (docs/adr/0002). Toda
+#                          coluna com "mascarar" precisa ter sensivel: true.
 #
 # REGRAS (viram expectations, com os nomes padronizados das colunas)
 #   nome      nome da regra, aparece na aba Data quality
@@ -114,6 +117,7 @@ fontes:
       nm_candidato:
         origem: nome_candidato
         descricao: Nome do candidato, sem espaços sobrando e com as iniciais maiúsculas.
+        sensivel: true
         tipo: texto
         caixa: titulo
         remover_ponto_final: true
@@ -126,6 +130,7 @@ fontes:
       nr_telefone:
         origem: telefone
         descricao: Telefone do candidato mascarado por LGPD (DDD e 4 últimos dígitos); vazio quando inválido.
+        sensivel: true
         tipo: texto
         mascarar: telefone
       st_entrevista:

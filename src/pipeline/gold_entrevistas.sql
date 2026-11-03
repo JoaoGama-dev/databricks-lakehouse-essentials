@@ -4,7 +4,8 @@
 -- Dicionário de dados: toda coluna é declarada com tipo e COMMENT, na ordem do SELECT.
 -- As tabelas gold vão para o schema gold (${schema_gold}), o único com leitura para o
 -- negócio (docs/adr/0001-modelo-de-acesso-no-unity-catalog.md); a silver fica no schema
--- padrão do pipeline.
+-- padrão do pipeline. Colunas com dado pessoal (sensivel: true no fontes.yml) declaram a
+-- máscara de coluna (MASK), criada pela tarefa governanca_antes (docs/adr/0002).
 
 -- Dimensão de cargos. O membro id_cargo = -1 ("Não classificada") recebe as entrevistas
 -- cuja vaga não combina com nenhum prefixo cadastrado, para a fato nunca ficar sem cargo.
@@ -35,12 +36,12 @@ CREATE OR REFRESH MATERIALIZED VIEW ${schema_gold}.gold_fato_entrevista (
   dt_entrevista DATE COMMENT 'Data da entrevista.',
   dt_mes_entrevista DATE COMMENT 'Primeiro dia do mês da entrevista, para agrupar por mês.',
   hr_entrevista STRING COMMENT 'Horário da entrevista no formato HH:mm.',
-  nm_candidato STRING COMMENT 'Nome do candidato.',
+  nm_candidato STRING COMMENT 'Nome do candidato (dado pessoal: mascarado para quem não é do grupo de dados pessoais).' MASK ${catalogo}.${schema_projeto}.mascarar_dado_pessoal,
   nm_vaga STRING COMMENT 'Nome da vaga como escrito na agenda.',
   id_cargo BIGINT COMMENT 'Cargo da vaga (chave para gold_dim_cargo); -1 quando a vaga não tem prefixo cadastrado.',
   st_entrevista STRING COMMENT 'Resultado da entrevista padronizado (Aprovado, Reprovado, Não atendeu, Cancelado, Reagendado, Pendente).',
   st_situacao STRING COMMENT 'Situação para acompanhamento: Concluído, Em andamento, Pendente ou Não identificado.',
-  nr_telefone STRING COMMENT 'Telefone do candidato mascarado por LGPD (DDD e 4 últimos dígitos).',
+  nr_telefone STRING COMMENT 'Telefone do candidato (dado pessoal: já parcial na silver e mascarado aqui para quem não é do grupo de dados pessoais).' MASK ${catalogo}.${schema_projeto}.mascarar_dado_pessoal,
   fl_compareceu BOOLEAN COMMENT 'Verdadeiro quando o candidato compareceu (Aprovado ou Reprovado).',
   fl_aprovado BOOLEAN COMMENT 'Verdadeiro quando o candidato foi aprovado.',
   fl_sem_retorno BOOLEAN COMMENT 'Verdadeiro quando a entrevista já passou e o resultado não foi registrado.'

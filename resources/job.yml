@@ -47,10 +47,55 @@ resources:
               - --codigo
               - ${workspace.file_path}/src
 
+        # Cria a função de máscara de dados pessoais, usada pelas colunas sensíveis da gold.
+        - task_key: governanca_antes
+          environment_key: ingestao
+          spark_python_task:
+            python_file: ../src/governanca/governanca.py
+            parameters:
+              - --etapa
+              - antes
+              - --config
+              - ${workspace.file_path}/config/fontes.yml
+              - --codigo
+              - ${workspace.file_path}/src
+              - --catalogo
+              - ${resources.schemas.projeto.catalog_name}
+              - --schema
+              - ${resources.schemas.projeto.name}
+              - --schema-gold
+              - ${resources.schemas.gold.name}
+              - --grupo-dados-pessoais
+              - ${var.grupo_dados_pessoais}
+
         - task_key: atualizar_lakehouse
           depends_on:
             - task_key: ingestao_api
             - task_key: ingestao_banco
+            - task_key: governanca_antes
           pipeline_task:
             pipeline_id: ${resources.pipelines.essentials_pipeline.id}
             full_refresh: false
+
+        # Aplica a tag pii nas colunas sensíveis da silver e da gold (config/fontes.yml).
+        - task_key: governanca_depois
+          depends_on:
+            - task_key: atualizar_lakehouse
+          environment_key: ingestao
+          spark_python_task:
+            python_file: ../src/governanca/governanca.py
+            parameters:
+              - --etapa
+              - depois
+              - --config
+              - ${workspace.file_path}/config/fontes.yml
+              - --codigo
+              - ${workspace.file_path}/src
+              - --catalogo
+              - ${resources.schemas.projeto.catalog_name}
+              - --schema
+              - ${resources.schemas.projeto.name}
+              - --schema-gold
+              - ${resources.schemas.gold.name}
+              - --grupo-dados-pessoais
+              - ${var.grupo_dados_pessoais}

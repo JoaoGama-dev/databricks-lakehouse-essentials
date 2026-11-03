@@ -15,6 +15,7 @@ resources:
       configuration:
         catalogo: ${var.catalog}
         projeto: ${var.projeto}
+        schema_projeto: ${resources.schemas.projeto.name}
         schema_gold: ${resources.schemas.gold.name}
         landing_path: /Volumes/${resources.volumes.landing.catalog_name}/${resources.volumes.landing.schema_name}/${resources.volumes.landing.name}
         fontes_config: ${workspace.file_path}/config/fontes.yml
