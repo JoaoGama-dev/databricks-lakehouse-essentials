@@ -44,8 +44,11 @@
 #                      temporária silver_int_<nome>_preparada, lida no lugar da bronze.
 #
 # BLOCO DO TIPO (só o do tipo escolhido)
-#   arquivo:  formato (csv | json | parquet | texto), caminho (pasta dentro da landing),
-#             opcoes (opções de leitura do Auto Loader, como header e sep)
+#   arquivo:  formato (csv | json | parquet | texto | excel), caminho (pasta dentro da
+#             landing), opcoes (opções de leitura do Auto Loader, como header e sep; no
+#             excel, dataAddress para escolher a aba ou o intervalo, ex.: "Agenda!A1:F500",
+#             e headerRows, padrão 1). No excel, coluna nova na planilha é ignorada (o
+#             Auto Loader de Excel não evolui schema); nos outros, vai para _rescued_data.
 #   tabela:   nome_completo (catalogo.schema.tabela; {catalogo} e {projeto} viram o
 #             catálogo e o projeto do target)
 #   banco:    conexao (conexão do Unity Catalog; o catálogo estrangeiro tem o mesmo nome),

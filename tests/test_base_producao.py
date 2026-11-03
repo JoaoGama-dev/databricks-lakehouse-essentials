@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from essentials.config_fontes import carregar_fontes
+from essentials.config_fontes import carregar_fontes, validar_config
 from essentials.monitoramento_sql import (
     TAMANHO_MAXIMO_MOTIVO,
     colunas_novas_na_origem,
@@ -87,6 +87,29 @@ def test_estrutura_conta_dado_resgatado_e_e_valida_sem_aviso():
 def test_bronze_de_arquivo_nao_falha_com_coluna_nova():
     codigo = (RAIZ / "src" / "pipeline" / "bronze.py").read_text(encoding="utf-8")
     assert '.option("cloudFiles.schemaEvolutionMode", "rescue")' in codigo
+
+
+# 7.7 Planilhas Excel -------------------------------------------------------------------------
+
+
+def test_fonte_de_planilha_excel_e_aceita_e_lida_pelo_auto_loader():
+    config = carregar_yaml(RAIZ / "config" / "fontes.yml")
+    planilha = {
+        "nome": "metas",
+        "descricao": "Metas mensais enviadas em Excel.",
+        "tipo": "arquivo",
+        "arquivo": {"formato": "excel", "caminho": "metas", "opcoes": {"dataAddress": "Metas!A1:C100"}},
+        "modo_carga": "snapshot",
+        "chave_primaria": ["dt_mes"],
+        "coluna_atualizacao": "_arquivo_origem",
+        "colunas": {"dt_mes": {"origem": "mes", "descricao": "Mês da meta.", "tipo": "data"}},
+    }
+    config["fontes"].append(planilha)
+    validar_config(config)
+    codigo = (RAIZ / "src" / "pipeline" / "bronze.py").read_text(encoding="utf-8")
+    assert '"excel": "excel"' in codigo
+    # O Auto Loader de Excel exige schemaEvolutionMode none (documentação da Databricks).
+    assert '.option("cloudFiles.schemaEvolutionMode", "none")' in codigo
 
 
 # 7.4 Falha com motivo -----------------------------------------------------------------------

@@ -67,7 +67,7 @@
       "required": ["formato", "caminho"],
       "additionalProperties": false,
       "properties": {
-        "formato": { "enum": ["csv", "json", "parquet", "texto"] },
+        "formato": { "enum": ["csv", "json", "parquet", "texto", "excel"] },
         "caminho": { "type": "string", "minLength": 1 },
         "opcoes": {
           "type": "object",
