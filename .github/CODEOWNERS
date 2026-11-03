@@ -1,0 +1,8 @@
+# Responsáveis pela revisão: o GitHub pede a revisão deles nos pull requests que tocam
+# estes caminhos. Hoje o projeto tem um responsável; acrescente o time quando houver.
+* @JoaoGama-dev
+
+# Arquivos que mudam permissões, produção ou guardrails pedem atenção redobrada.
+/.github/ @JoaoGama-dev
+/.claude/ @JoaoGama-dev
+/databricks.yml @JoaoGama-dev

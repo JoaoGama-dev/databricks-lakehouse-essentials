@@ -120,3 +120,37 @@ def test_gitleaks_tem_a_mesma_versao_no_ci_e_no_pre_commit():
     job = carregar_yaml(RAIZ / ".github" / "workflows" / "ci.yml")["jobs"]["segredos"]
     versao_ci = next(p["env"]["GITLEAKS_VERSAO"] for p in job["steps"] if "GITLEAKS_VERSAO" in p.get("env", {}))
     assert str(versao_ci) == versao_pre_commit
+
+
+# 2.6 Arquivos do repositório ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "arquivo",
+    [
+        "LICENSE",
+        "SECURITY.md",
+        ".github/CODEOWNERS",
+        ".github/pull_request_template.md",
+        ".github/ISSUE_TEMPLATE/bug.md",
+        ".github/ISSUE_TEMPLATE/nova-fonte.md",
+        ".github/ISSUE_TEMPLATE/novo-indicador.md",
+        ".github/ISSUE_TEMPLATE/config.yml",
+    ],
+)
+def test_arquivos_do_repositorio_existem(arquivo):
+    assert (RAIZ / arquivo).is_file()
+
+
+def test_licenca_e_a_mesma_do_readme():
+    licenca = (RAIZ / "LICENSE").read_text(encoding="utf-8")
+    readme = (RAIZ / "README.md").read_text(encoding="utf-8")
+    assert "Todos os direitos reservados" in licenca and "Todos os direitos reservados" in readme
+    assert "não pode copiá-lo, modificá-lo, distribuí-lo nem usá-lo comercialmente" in licenca
+
+
+def test_templates_de_issue_tem_frontmatter():
+    for modelo in (RAIZ / ".github" / "ISSUE_TEMPLATE").glob("*.md"):
+        texto = modelo.read_text(encoding="utf-8")
+        meta = yaml.safe_load(texto.split("---\n")[1])
+        assert meta["name"] and meta["about"] and meta["labels"], modelo.name
