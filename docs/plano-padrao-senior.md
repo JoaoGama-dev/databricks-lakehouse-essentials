@@ -430,38 +430,143 @@ os ADRs da Fase 6 passam a ser numerados a partir de 0006, depois do 0005 da Fas
 - Mermaid só com `flowchart` e `#60;`/`#62;` no lugar de `< >`; sem Node na máquina, a
   renderização é conferida no GitHub. Um teste barra link relativo quebrado no README e
   em `docs/`.
-- A direção futura do módulo de IA Enterprise ficou nos próximos passos do README.
+- A direção futura do módulo de IA ficou nos próximos passos do README; saiu depois, na
+  revisão do roteiro, quando o repositório passou a ser só o Essentials.
 
 ---
 
-## Fase 7 — A fábrica: template de bundle
+## Roteiro revisado a partir da Fase 7 (2026-11-03)
 
-Objetivo: criar um projeto de cliente novo com um comando, em vez de copiar o repositório.
+Depois da Fase 6, o roteiro foi revisto contra o que a Logos oferece no pacote
+**Essentials** e nos planos de sustentação indicados para ele (Monitoramento e Básico).
+Decisões:
+
+- **Este repositório é só o Essentials**, completo. Professional e Enterprise serão
+  projetos próprios, depois que o Essentials estiver fechado.
+- **Testes só no Free Edition**, como até aqui (unidade no CI de PR e integração
+  noturna). Sem Terraform e sem validação numa nuvem real por enquanto; a infraestrutura
+  da nuvem do cliente segue o passo a passo manual de `docs/levando-ao-azure.md`.
+- **Azure é o padrão**, mas nada de nuvem fica fixo no bundle: outra nuvem deve exigir só
+  configuração, não mudança de código.
+
+As fases seguem as regras de sempre: plano aprovado antes, uma branch e um PR por fase,
+commits por item e sintaxe confirmada na documentação oficial.
+
+### Cobertura do pacote Essentials
+
+O que o pacote e a sustentação prometem, e onde cada item está ou vai estar.
+
+| Promessa | Situação | Onde |
+| --- | --- | --- |
+| Até 2 fontes, limpas, organizadas e atualizadas todo dia | pronto | Fases anteriores |
+| Fontes de arquivo, tabela, banco e API (Python para banco e API) | pronto; banco e API sem teste real (Free Edition) | Fases anteriores |
+| 1 tabela de indicadores e 1 painel de até 3 páginas (concluído, em andamento, pendente) | pronto | Fases anteriores |
+| Controle de acesso por perfil (1 grupo de leitura) e dicionário de dados | pronto | Fase 3 |
+| Dados pessoais mascarados (LGPD) | pronto | Fase 3 |
+| Guia de uso (roteiro de operação) e documentação técnica | pronto | Fase 6 |
+| Código no repositório do cliente, CI/CD, nada à mão em produção | pronto | Fases 2 e 5 |
+| Monitoramento diário: aviso de falha, de demora e de atraso | pronto | Fase 4 |
+| Registros barrados por regra e custo de nuvem, para o relatório mensal | pronto | Fase 4 |
+| Regras de qualidade que **param a carga**, chave conferida sozinha, alerta de volume | falta | Fase 7 |
+| Detectar **mudança de estrutura na origem** no mesmo dia | falta | Fase 7 |
+| Aviso de falha **com o motivo**, abrindo chamado no suporte da Logos | falta | Fase 7 |
+| **Taxa de sucesso** das cargas e consumo comparado ao **teto** do diagnóstico | falta | Fase 7 |
+| Ler as **planilhas Excel** do cliente | falta | Fase 7 |
+| Canal padrão para o cliente enviar arquivos à landing | falta | Fase 7 |
+| Ambientes `dev` e `prod` **no workspace do cliente** (catálogos `dev` e `prd`) | falta (hoje o `dev` é o Free Edition) | Fase 8 |
+| Deploy de produção no merge da `main`, com aprovação; sqlfluff e validação do pipeline no PR | falta | Fase 8 |
+| Alertas de orçamento (80% e 100% do teto) desde o primeiro dia | manual, documentado | `docs/roteiro-de-operacao.md` |
+| Projeto de cada cliente gerado por um comando | falta | Fase 9 |
+| Relatório de diagnóstico, treinamento de 2 h, Power BI quando preferido, relatório mensal da sustentação | falta | Fase 10 |
+
+O Essentials fica completo quando as Fases 7 a 10 forem concluídas.
+
+---
+
+## Fase 7 — Base de produção
+
+Objetivo: fechar o que o Essentials e a sustentação prometem na operação do dia a dia.
+
+1. **Qualidade padrão de mercado**:
+   - ação `falhar` (`expect_or_fail`) para regras críticas, que param a carga;
+   - regras `nao_nulo` e `unico` geradas sozinhas a partir da `chave_primaria`;
+   - alerta de volume: carga vazia ou queda acima de um limite em relação à anterior.
+2. **Mudança de estrutura na origem**: detectar colunas novas ou dados em
+   `_rescued_data` na bronze, com a view `mon_estrutura` e aviso.
+3. **Aviso de falha com o motivo**: tarefa final que só roda quando alguma tarefa falha,
+   lê o erro e avisa o e-mail do cliente e o suporte da Logos (abre o chamado).
+   Confirmar na documentação o mecanismo de envio (destino de notificação, e-mail ou
+   webhook) antes de propor.
+4. **Taxa de sucesso das cargas**: view `mon_execucoes` (tabelas de sistema de jobs), no
+   painel de saúde.
+5. **Teto de custo como variável**: `mon_custo_diario` compara o consumo com o teto
+   combinado no diagnóstico.
+6. **Planilhas Excel (`.xlsx`)**: confirmar se o Databricks lê nativamente; se não, um
+   passo de conversão documentado.
+7. **Canal de chegada dos arquivos** na landing do cliente, documentado no guia de nuvem
+   e no roteiro de operação. Nada de nuvem fixo no bundle (a landing de prod por
+   variável).
+
+**Aceite:** cada regra e alerta novo com teste de unidade e coberto pelo workflow de
+integração, com casos fictícios que disparam cada um; CI verde.
+
+---
+
+## Fase 8 — Ambientes e esteira do cliente
+
+1. **Target `dev` no workspace do cliente**, com o catálogo `dev`, separado do Free
+   Edition (que continua só com dados fictícios).
+2. **Deploy de produção no merge da `main`**, com aprovação no environment `prod`.
+3. **sqlfluff** no lint e **update de validação do pipeline** (`--validate-only`) em todo
+   PR, avaliando o custo no Free Edition.
+
+Sem workspace de cliente para implantar, o que for do cliente é conferido por
+`bundle validate` e no CI.
+
+**Aceite:** targets validados no CI; o fluxo PR → merge → aprovação → prod documentado.
+
+---
+
+## Fase 9 — A fábrica: template de bundle
+
+Objetivo: criar o projeto de um cliente Essentials com um comando, em vez de copiar o
+repositório.
 
 1. Transforme o acelerador num **template de bundle da Databricks** (pasta `template/`
    com o schema de perguntas e os arquivos parametrizados), para usar com
    `databricks bundle init <caminho ou URL do repositório>`. Perguntas mínimas: nome do
-   projeto, catálogo, e-mail de alerta, se terá painel, tipos de fonte esperados.
-   Confirme o formato de template na documentação oficial.
+   projeto, cliente, catálogo, e-mail de alerta, se terá painel e tipos de fonte
+   esperados. Confirme o formato de template na documentação oficial.
 2. O projeto gerado já sai com: `fontes.yml` vazio comentado, CI/CD, `.claude/`
    completo (settings, hooks, agentes, skills), `docs/padroes/`, ADRs base e roteiro de
    operação com marcadores para os nomes do cliente.
 3. Teste no CI: gerar um projeto a partir do template numa pasta temporária e rodar
    `ruff`, `pytest` e `bundle validate` nele.
-4. **[AÇÃO HUMANA]** Marcar o repositório como *Template repository* no GitHub, se
-   preferir também esse caminho.
+
+Achados do planejamento feito em 2026-11-03, que continuam valendo: o template precisa
+de uma pasta `template/` própria, então os arquivos genéricos são copiados do
+repositório por um script, com teste de sincronia; os testes se dividem entre genéricos
+e do exemplo, para um projeto vazio passar no CI; o `fontes.yml` passa a aceitar lista
+vazia; o SQL das `mon_*` precisa ser válido com zero fontes; e arquivos sem `.tmpl` são
+copiados sem passar pelo motor de template (o `{{job.id}}` do job fica intacto).
 
 **Aceite:** um projeto novo gerado pelo template passa no CI sem edição manual.
 
 ---
 
-## Fora do escopo agora — módulo de IA (pacote Enterprise)
+## Fase 10 — Kit de serviço
 
-Não implementar no Essentials. Registrar só como direção futura no README:
-RAG sobre documentos do cliente (Vector Search sobre uma tabela de trechos gerada por
-pipeline), agente de perguntas sobre a gold (Genie e ferramentas no Unity Catalog),
-avaliação de qualidade das respostas e rastreamento (MLflow). Quando chegar a hora, será
-um projeto separado, com seu próprio plano.
+1. **Relatório de diagnóstico**: modelo, como skill, com o perfil das fontes (pelo
+   `perfilar_dados.py`), escopo, riscos e estimativa de custo de nuvem com teto.
+2. **Treinamento de 2 h** para usuários: roteiro e material, a partir do roteiro de
+   operação.
+3. **Power BI** quando o cliente preferir: guia de conexão ao SQL warehouse em modo
+   Import, com atualização agendada.
+4. **Relatório mensal da sustentação**: script que gera o resumo das views `mon_*`
+   (cargas e taxa de sucesso, registros barrados, consumo contra o teto).
+
+**Aceite:** cada item com o seu modelo no repositório e referenciado na skill `entrega`
+ou no roteiro de operação.
 
 ---
 
@@ -472,7 +577,7 @@ Cada peça resolve um problema criado pela anterior:
 | Conceito | Problema que resolve | Onde aparece para você |
 | --- | --- | --- |
 | Janela de contexto | o modelo só "vê" uma quantidade limitada de texto por vez | `CLAUDE.md` enxuto, `/clear` entre tarefas, subagentes com contexto próprio |
-| RAG | o modelo não conhece os documentos da empresa e não cabem todos no contexto | produto futuro (Enterprise); no seu dia a dia, o Claude Code lê os arquivos direto |
+| RAG | o modelo não conhece os documentos da empresa e não cabem todos no contexto | fora do escopo deste repositório; no seu dia a dia, o Claude Code lê os arquivos direto |
 | Embeddings | para buscar por significado, o texto vira vetor | parte do RAG |
 | Banco vetorial | guardar e buscar vetores rápido | Vector Search da Databricks, no RAG futuro |
 | Tool calling | o modelo só gera texto; para agir, chama ferramentas | o Claude Code lendo arquivos e rodando `ruff`, `pytest`, `databricks` |
