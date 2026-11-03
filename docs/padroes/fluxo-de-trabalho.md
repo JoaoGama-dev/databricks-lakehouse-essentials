@@ -22,10 +22,27 @@ databricks bundle validate -t dev
 Esses comandos estão liberados em `.claude/settings.json`. O hook `lint_apos_edicao.py`
 também roda o ruff em cada `.py` editado.
 
+### Testes de unidade e de integração
+
+- `pytest -q` roda só os testes de **unidade** (marcador `unidade`, automático para tudo
+  fora de `tests/integracao/`): sem Databricks, no CI de PR e no pre-commit.
+- Os testes de **integração** (`tests/integracao/`, marcador `integracao`) rodam no
+  workflow `integracao.yml`, à noite de segunda a sexta ou à mão (*Run workflow*). Ele
+  implanta o target `ci`, carrega a agenda fictícia v1 e a v2, confere os dados e destrói
+  tudo no fim (ADR 0005). Os totais esperados ficam em `tests/integracao/esperado.py`.
+- Mudou o gerador, o `fontes.yml` ou a silver da agenda? Rode o workflow no PR (*Run
+  workflow* na branch) e atualize o `esperado.py` se os totais mudarem de propósito.
+- Para rodar na sua máquina: `databricks bundle deploy -t ci`, `databricks bundle summary
+  -t ci -o json > recursos-ci.json` e os passos do workflow. O destroy do `ci` só roda no
+  GitHub Actions (localmente o hook bloqueia qualquer `bundle destroy`).
+
 ## Implantação
 
 - **dev (Free Edition):** `databricks bundle deploy -t dev` e `databricks bundle run ... -t dev`
-  pedem confirmação (regra `ask`). Defina `BUNDLE_VAR_alert_email` antes do deploy.
+  pedem confirmação (regra `ask`). Defina `BUNDLE_VAR_alert_email` antes do deploy. O
+  agendamento do job fica pausado em dev: a carga roda quando alguém manda.
+- **ci (Free Edition):** usado só pelos testes de integração, com o projeto `<projeto>_ci`
+  e estado de deploy próprio; nunca toca nos schemas do dev.
 - **prod (Azure do cliente):** só pelo workflow `deploy.yml` no GitHub, com aprovação do
   environment `prod`. Qualquer comando local com `-t prod` é bloqueado (deny e hook).
 - Nada é alterado à mão em produção.
