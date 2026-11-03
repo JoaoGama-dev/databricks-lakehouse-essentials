@@ -7,7 +7,8 @@ dos recursos vêm do resumo do bundle, gravado pelo workflow depois do deploy:
 
 Comandos:
     python scripts/integracao.py preparar           cria <projeto>_origem e esvazia a landing
-    python scripts/integracao.py enviar --versao 1  envia data/agenda_exemplo_v1.csv
+    python scripts/integracao.py enviar --versao 1  envia data/agenda_exemplo_v1.csv (1 a 4)
+    python scripts/integracao.py alterar-origem     cenário: a origem cargos ganha uma coluna
     python scripts/integracao.py limpar             apaga os schemas do CI que sobrarem
 
 Por segurança, nada aqui toca num schema cujo nome não termine em _ci, _ci_gold ou
@@ -161,6 +162,16 @@ def enviar(recursos: dict, versao: int) -> None:
     print(f"Enviado {arquivo.name} para {destino}.")
 
 
+COLUNA_NOVA_NA_ORIGEM = "cd_centro_custo"
+
+
+def alterar_origem(recursos: dict) -> None:
+    """Cenário de mudança na origem: a tabela de cargos do CI ganha uma coluna nova."""
+    origem = f"`{recursos['catalogo']}`.`{verificar_schema_ci(recursos['schema_origem'])}`.cadastro_cargos"
+    executar_sql(cliente(), recursos["warehouse_id"], f"ALTER TABLE {origem} ADD COLUMN {COLUNA_NOVA_NA_ORIGEM} STRING")
+    print(f"Coluna {COLUNA_NOVA_NA_ORIGEM} acrescentada em {origem}.")
+
+
 def limpar(recursos: dict) -> None:
     w = cliente()
     for schema in (recursos["schema"], recursos["schema_gold"], recursos["schema_origem"]):
@@ -171,8 +182,8 @@ def limpar(recursos: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("comando", choices=["preparar", "enviar", "limpar"])
-    parser.add_argument("--versao", type=int, choices=[1, 2], help="versão da agenda fictícia (enviar)")
+    parser.add_argument("comando", choices=["preparar", "enviar", "alterar-origem", "limpar"])
+    parser.add_argument("--versao", type=int, choices=[1, 2, 3, 4], help="versão da agenda fictícia (enviar)")
     args = parser.parse_args()
     if not ARQUIVO_RECURSOS.is_file():
         sys.exit(f"Resumo do bundle não encontrado em {ARQUIVO_RECURSOS}: rode o deploy -t ci antes.")
@@ -183,6 +194,8 @@ def main() -> None:
         if not args.versao:
             parser.error("enviar precisa de --versao")
         enviar(recursos, args.versao)
+    elif args.comando == "alterar-origem":
+        alterar_origem(recursos)
     else:
         limpar(recursos)
 

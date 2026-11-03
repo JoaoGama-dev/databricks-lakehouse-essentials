@@ -11,9 +11,13 @@ espaços no nome, telefones inválidos, linha sem nome, linha sem horário e ent
 reagendada no mesmo dia. Nomes e telefones são inventados (telefones no padrão
 41 90000-xxxx).
 
-Gera duas versões da mesma planilha:
+Gera quatro versões da mesma planilha:
   agenda_exemplo_v1.csv  carga inicial, com algumas entrevistas sem status
   agenda_exemplo_v2.csv  a mesma agenda com esses status preenchidos e mais um dia
+  agenda_exemplo_v3.csv  cenário de falha: só o último mês da v2 (queda de volume)
+  agenda_exemplo_v4.csv  cenário de falha: a v2 com uma entrevista em 2019, que viola a
+                         regra data_plausivel (falhar) e para a carga
+A v3 e a v4 são geradas depois da v1 e da v2, sem mudar o conteúdo delas.
 
 Uso:
     python data/gerar_dados_exemplo.py           # grava em data/
@@ -29,6 +33,10 @@ from pathlib import Path
 
 ARQUIVO_V1 = "agenda_exemplo_v1.csv"
 ARQUIVO_V2 = "agenda_exemplo_v2.csv"
+ARQUIVO_V3 = "agenda_exemplo_v3.csv"
+ARQUIVO_V4 = "agenda_exemplo_v4.csv"
+INICIO_DO_ULTIMO_MES = date(2025, 11, 1)
+DIA_FORA_DO_PERIODO = date(2019, 3, 15)
 CODIFICACAO = "utf-8-sig"  # UTF-8 com BOM, como o Excel exporta
 QUEBRA_DE_LINHA = "\r\n"
 LINHAS_VAZIAS_NO_FIM = 9
@@ -186,9 +194,13 @@ def gerar(pasta_saida: Path, semente: int = 42) -> list[Path]:
     ]
     v2 += montar_agenda(dias_uteis(date(2025, 12, 1), date(2025, 12, 1)), nomes, rng, chance_de_agenda=1.0)
 
+    # Cenários de falha, montados só a partir da v2 (a v1 e a v2 não mudam).
+    v3 = [e for e in v2 if e["dia"] >= INICIO_DO_ULTIMO_MES]
+    v4 = [{**v2[0], "dia": DIA_FORA_DO_PERIODO, "horario": "10:00"}, *v2]
+
     pasta_saida.mkdir(parents=True, exist_ok=True)
-    caminhos = [pasta_saida / ARQUIVO_V1, pasta_saida / ARQUIVO_V2]
-    for caminho, entrevistas in zip(caminhos, (v1, v2), strict=True):
+    caminhos = [pasta_saida / nome for nome in (ARQUIVO_V1, ARQUIVO_V2, ARQUIVO_V3, ARQUIVO_V4)]
+    for caminho, entrevistas in zip(caminhos, (v1, v2, v3, v4), strict=True):
         gravar(caminho, linhas_da_planilha(entrevistas, random.Random(semente)))
     return caminhos
 

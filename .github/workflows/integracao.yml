@@ -7,6 +7,12 @@ name: Integração
 # token do workspace.
 on:
   workflow_dispatch:
+    inputs:
+      cenarios_de_falha:
+        # Por enquanto só à mão: são mais duas cargas (docs/adr/0014 e 0015).
+        description: Rodar também os cenários de falha (v3 queda de volume e coluna nova; v4 regra que para a carga)
+        type: boolean
+        default: false
   schedule:
     # 1h em Brasília (4h UTC), de segunda a sexta.
     - cron: "0 4 * * 1-5"
@@ -73,7 +79,7 @@ jobs:
         run: databricks bundle run essentials_carga_diaria -t ci
 
       - name: Conferir os dados da v1
-        run: INTEGRACAO_VERSAO=1 pytest -m integracao tests/integracao -v
+        run: INTEGRACAO_VERSAO=1 pytest -m integracao tests/integracao/test_carga.py -v
 
       - name: Enviar a agenda v2
         run: python scripts/integracao.py enviar --versao 2
@@ -82,7 +88,33 @@ jobs:
         run: databricks bundle run essentials_carga_diaria -t ci
 
       - name: Conferir os dados da v2 e o histórico
-        run: INTEGRACAO_VERSAO=2 pytest -m integracao tests/integracao -v
+        run: INTEGRACAO_VERSAO=2 pytest -m integracao tests/integracao/test_carga.py -v
+
+      # Cenários de falha: só quando pedidos (inputs.cenarios_de_falha).
+      - name: "Cenário v3: queda de volume e coluna nova na origem"
+        if: inputs.cenarios_de_falha
+        run: |
+          python scripts/integracao.py enviar --versao 3
+          python scripts/integracao.py alterar-origem
+          databricks bundle run essentials_carga_diaria -t ci
+
+      - name: Conferir os avisos do cenário v3
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=v3 pytest -m integracao tests/integracao/test_cenarios.py -v
+
+      - name: "Cenário v4: regra que para a carga (a carga deve falhar)"
+        if: inputs.cenarios_de_falha
+        run: |
+          python scripts/integracao.py enviar --versao 4
+          if databricks bundle run essentials_carga_diaria -t ci; then
+            echo "A carga com a v4 deveria ter falhado pela regra data_plausivel."
+            exit 1
+          fi
+          echo "A carga falhou, como esperado."
+
+      - name: Conferir o motivo registrado no cenário v4
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=v4 pytest -m integracao tests/integracao/test_cenarios.py -v
 
       - name: Destruir o target ci
         if: always()

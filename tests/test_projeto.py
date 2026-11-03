@@ -610,8 +610,17 @@ def agendas(tmp_path_factory) -> list[Path]:
     return importar_gerador().gerar(tmp_path_factory.mktemp("agendas"))
 
 
-def test_gerador_cria_as_duas_versoes(agendas):
-    assert [caminho.name for caminho in agendas] == ["agenda_exemplo_v1.csv", "agenda_exemplo_v2.csv"]
+def test_gerador_cria_as_quatro_versoes(agendas):
+    assert [caminho.name for caminho in agendas] == [f"agenda_exemplo_v{n}.csv" for n in range(1, 5)]
+
+
+def test_cenarios_de_falha_saem_da_v2(agendas):
+    v2, v3, v4 = (ler_agenda(caminho) for caminho in agendas[1:])
+    # v3: só o último mês, uma queda bem maior que o limite de 50% do alerta de volume.
+    assert 0 < len(v3) < len(v2) / 2
+    # v4: a v2 inteira mais uma entrevista antes de 2020, que viola a regra data_plausivel.
+    assert len(v4) == len(v2) + 1
+    assert any(e["data"].endswith("/2019") for e in v4)
 
 
 def test_agenda_tem_formato_da_planilha_real(agendas):
@@ -641,7 +650,7 @@ def test_agenda_tem_a_sujeira_da_planilha_real(agendas):
 
 
 def test_v2_preenche_os_status_vazios(agendas):
-    v1, v2 = (ler_agenda(caminho) for caminho in agendas)
+    v1, v2 = (ler_agenda(caminho) for caminho in agendas[:2])
     status_v2 = {(e["data"], e["horario"], e["nome"]): e["status"] for e in v2}
     vazios = [e for e in v1 if e["status"] == "" and e["nome"]]
     assert vazios
