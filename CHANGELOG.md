@@ -10,12 +10,64 @@ só a versão menor.
 
 ## [Unreleased]
 
+### Adicionado
+
+- Fase 7, base de produção: ação `falhar` nas regras (exemplo `data_plausivel`); regras
+  da chave geradas sozinhas; views `mon_volume`, `mon_estrutura`, `mon_execucoes` e
+  `mon_custo_mensal`; tabela `mon_falhas` e tarefa `registrar_falha` com o motivo sem dado
+  pessoal; alertas `falha_carga`, `qualidade_carga` e `custo_teto`; leitura de planilhas
+  Excel; cenários de falha (agendas v3 e v4) na integração; ADRs 0014 e 0015.
+
+- Campo `data_referencia` por fonte snapshot (`ingestao`, `conteudo` ou `nome_arquivo`): o
+  retrato é o arquivo mais recente pela data de referência, não pela ordem de ingestão; a
+  agenda usa `max(dt_entrevista)` (ADR 0016).
+- Avisos `arquivo_ignorado` e `codificacao_invalida` em `mon_estrutura`, cobertos pelo
+  alerta `qualidade_carga`.
+- Agendas fictícias v5 (reenvio da v2), v6 (a v1 atrasada), v7 (só cabeçalho) e v8 (v2 em
+  cp1252) e cenários de integração: v1, v2, v5, v6, v7, full refresh, v8, v3 e v4.
+- `scripts/gerar_exclusao_titular.py`: gera o SQL de exclusão de um titular para revisão
+  humana, sem executar nada e com o titular só como parâmetro (ADR 0017).
+- `docs/padroes/retencao-e-exclusao.md` (política de retenção e exclusão de titular),
+  `docs/cenarios-reais.md` (matriz de incidentes, defesas e testes) e ADRs 0016 e 0017.
+
 ### Alterado
 
+- Testes enxugados por risco (327 para 272 e, com os novos, 336): cada teste protege contra
+  dado errado, vazamento de dado pessoal, custo, deploy quebrado ou falha de segurança.
+- `pipelines.reset.allowed = false` na bronze de arquivo, banco e API e no histórico SCD2:
+  o full refresh do grafo inteiro é recusado sem apagar o histórico nem reingerir a
+  landing. Mudar o schema da bronze
+  passa a ser um procedimento manual, com decisão registrada.
+- Roteiro de operação, `lgpd.md`, `camadas.md`, `arquitetura.md` e `desenvolvimento.md`
+  com os avisos novos, a regra de testes por risco e os cenários de integração.
+- Auto Loader em modo `rescue`; aviso de falha do job também para o suporte da Logos;
+  landing de produção por variável (`landing_url`); painel Saúde da plataforma com taxa
+  de sucesso, falhas, volume, estrutura e teto de custo; roteiro de operação com os novos
+  avisos e o canal de envio de arquivos.
 - Roteiro revisado a partir da Fase 7: o repositório passa a ser só o pacote Essentials,
   com a tabela de cobertura do pacote no plano e as Fases 7 (base de produção), 8
   (ambientes e esteira do cliente), 9 (template) e 10 (kit de serviço). Testes só no Free
   Edition; sem Terraform por enquanto.
+
+### Removido
+
+- Testes que conferiam a forma e a ordem dos ADRs e do CHANGELOG; ficou só a conferência de
+  links relativos quebrados.
+
+### Corrigido
+
+- Uma planilha antiga reenviada depois, ou um arquivo só com cabeçalho, não substitui mais
+  o retrato do snapshot.
+
+### Segurança
+
+- Exclusão de titular com procedimento documentado: SQL gerado para revisão, com guarda
+  contra parâmetro vazio e comparação por campo inteiro, `REORG ... APPLY (PURGE)` e
+  `VACUUM`.
+- Os avisos de arquivo mostram só o nome do arquivo; o nome nunca pode ter dado pessoal.
+- A `expressao` de `data_referencia` é código executável e deve ser revisada no PR.
+- Pendência: as fontes `incremental` e `cdc` leem a bronze em streaming sem
+  `skipChangeCommits`; a exclusão de titular ainda quebraria a carga delas (ADR 0017).
 
 ## [0.7.0] - 2026-11-03
 

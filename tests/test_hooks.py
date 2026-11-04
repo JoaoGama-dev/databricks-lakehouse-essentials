@@ -180,33 +180,6 @@ def test_documentador_so_edita_documentacao(caminho, esperado):
     assert resultado.returncode == esperado
 
 
-# lint_apos_edicao.py -------------------------------------------------------------
-
-
-def test_lint_avisa_problema_no_arquivo_editado(tmp_path):
-    ruim = tmp_path / "ruim.py"
-    ruim.write_text("import os\n", encoding="utf-8")
-    entrada = {
-        "hook_event_name": "PostToolUse",
-        "tool_name": "Write",
-        "cwd": str(RAIZ),
-        "tool_input": {"file_path": str(ruim)},
-    }
-    resultado = rodar("lint_apos_edicao.py", entrada)
-    assert resultado.returncode == 2
-    assert "F401" in resultado.stderr
-
-
-def test_lint_aceita_arquivo_limpo_e_ignora_nao_python(tmp_path):
-    limpo = tmp_path / "limpo.py"
-    limpo.write_text("VALOR = 1\n", encoding="utf-8")
-    texto = tmp_path / "nota.md"
-    texto.write_text("import os\n", encoding="utf-8")
-    for caminho in (limpo, texto):
-        entrada = {"tool_name": "Edit", "cwd": str(RAIZ), "tool_input": {"file_path": str(caminho)}}
-        assert rodar("lint_apos_edicao.py", entrada).returncode == 0
-
-
 # Registro no settings.json -------------------------------------------------------
 
 

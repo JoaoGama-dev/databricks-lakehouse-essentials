@@ -67,6 +67,14 @@ hook, e o deploy de produção só acontece pelo GitHub Actions
   usa o projeto `<projeto>_ci`, com schemas e estado de deploy próprios, sem tocar no dev.
   As asserções conferem linhas na silver, descartes e alertas por regra, chaves sem nulo
   e sem duplicata, versões no histórico após a v2, fato completa e agregada igual à fato.
+- **Testes por risco:** todo teste protege contra dado errado, vazamento de dado pessoal,
+  custo, deploy quebrado ou falha de segurança. Forma e ordem de ADRs e do CHANGELOG não
+  são testadas (só links quebrados). A matriz está em
+  [`cenarios-reais.md`](cenarios-reais.md).
+- **Cenários de integração:** com `cenarios_de_falha`, o `integracao.yml` envia, depois da
+  v1 e da v2, as agendas v5 (reenvio da v2 com outro nome), v6 (a v1 chegando atrasada),
+  v7 (só cabeçalho), um full refresh (que precisa ser recusado), v8 (a v2 em cp1252), v3 (queda de volume e coluna
+  nova) e v4 (regra que para a carga). Cada cenário parte do estado do anterior.
 - `DATABRICKS_HOST_DEV` (variável do repositório) é a URL do workspace de dev; o
   `databricks.yml` não traz o host.
 - O Free Edition não oferece service principal com OIDC, por isso o CI de dev usa token.

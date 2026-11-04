@@ -4,7 +4,8 @@ Para cada fonte:
   1. lê a bronze, ou a view silver_int_<nome>_preparada quando há src/pipeline/silver_<nome>.sql;
   2. aplica a limpeza padrão (TRIM, tipos, datas em mais de um formato, de-para, máscara)
      e dá às colunas os nomes padronizados do YAML (dt_, nm_, st_...);
-  3. aplica as regras do YAML como expectations (drop descarta, alerta só conta);
+  3. aplica as regras do YAML como expectations (drop descarta, alerta só conta, falhar
+     para a carga), mais as regras padrão da chave (regras_efetivas);
   4. grava conforme o modo de carga:
        incremental -> streaming table silver_<nome>, com as regras, só acrescenta
        snapshot    -> materialized view silver_int_<nome>_retrato, com as regras, e
@@ -40,6 +41,7 @@ from essentials.config_fontes import (  # noqa: E402
     colunas_silver,
     descricao_coluna,
     expectations,
+    expressao_data_referencia,
     expressoes_silver,
     literal_sql,
     propriedades_tabela,
@@ -57,24 +59,33 @@ def limpar(df: DataFrame, fonte: dict) -> DataFrame:
 
 
 def com_expectations(funcao, fonte: dict):
-    descartar, alertar = expectations(fonte)
+    descartar, alertar, falhar = expectations(fonte)
     if descartar:
         funcao = dp.expect_all_or_drop(descartar)(funcao)
     if alertar:
         funcao = dp.expect_all(alertar)(funcao)
+    if falhar:
+        funcao = dp.expect_all_or_fail(falhar)(funcao)
     return funcao
 
 
-def manter_ultimo_arquivo(df: DataFrame) -> DataFrame:
-    """No modo snapshot, cada arquivo é um retrato completo: vale só o mais recente."""
+def manter_ultimo_arquivo(df: DataFrame, fonte: dict) -> DataFrame:
+    """No modo snapshot, cada arquivo é um retrato completo: vale só o mais recente.
+
+    Mais recente pela data de referência do fontes.yml (data_referencia), calculada por
+    arquivo sobre as colunas já padronizadas; nulos por último. Empate, ou fonte sem
+    data_referencia, fica com o último ingerido. Arquivo que não gerou linha nenhuma
+    não entra na disputa (mon_estrutura avisa: arquivo_ignorado).
+    """
     if "_arquivo_origem" not in df.columns:
         return df
-    ultimo = (
-        df.select("_arquivo_origem", "_ingerido_em")
-        .distinct()
-        .orderBy(F.desc("_ingerido_em"), F.desc("_arquivo_origem"))
-        .limit(1)
-    )
+    referencia = expressao_data_referencia(fonte)
+    arquivos = df.select("_arquivo_origem", "_ingerido_em").distinct()
+    ordem = [F.desc("_ingerido_em"), F.desc("_arquivo_origem")]
+    if referencia:
+        arquivos = df.groupBy("_arquivo_origem", "_ingerido_em").agg(F.expr(referencia).alias("_data_referencia"))
+        ordem.insert(0, F.col("_data_referencia").desc_nulls_last())
+    ultimo = arquivos.orderBy(*ordem).limit(1)
     return df.join(ultimo.select("_arquivo_origem"), "_arquivo_origem", "left_semi")
 
 
@@ -108,6 +119,7 @@ def criar_alvos_auto_cdc(fonte: dict) -> None:
         dp.create_streaming_table(
             name=nome,
             comment=f"Silver de {fonte['nome']}, {descricao}: {fonte['descricao']}",
+            # No histórico (SCD 2), propriedades_tabela também bloqueia o reset do full refresh.
             table_properties=propriedades_tabela("silver", tipo_tabela, fonte),
             schema=schema_silver(fonte, inicio_scd2 if tipo_scd == 2 else None),
         )
@@ -178,7 +190,8 @@ def criar_silver(fonte: dict) -> None:
     elif modo == "snapshot":
 
         def retrato_validado() -> DataFrame:
-            df = limpar(manter_ultimo_arquivo(spark.read.table(origem)), fonte)
+            # Limpa antes de escolher o arquivo: a data de referência usa os nomes padronizados.
+            df = manter_ultimo_arquivo(limpar(spark.read.table(origem), fonte), fonte)
             return manter_versao_mais_recente(df, fonte).select(*contrato)
 
         dp.materialized_view(

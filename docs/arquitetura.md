@@ -61,18 +61,29 @@ flowchart TD
 flowchart LR
     api_c{"tem_fonte_api"} -- "true" --> api_t["ingestao_api"]
     bco_c{"tem_fonte_banco"} -- "true" --> bco_t["ingestao_banco"]
-    gov_a["governanca_antes<br/>função de máscara"]
+    gov_a["governanca_antes<br/>função de máscara e mon_falhas"]
     api_t --> lake["atualizar_lakehouse<br/>(pipeline, run_if NONE_FAILED)"]
     bco_t --> lake
     gov_a --> lake
     lake --> gov_d["governanca_depois<br/>tags pii e views mon_*"]
+    gov_d -. "se algo falhou" .-> falha["registrar_falha<br/>(run_if AT_LEAST_ONE_FAILED)<br/>motivo sem dado pessoal"]
 ```
 
 Job `essentials_<projeto>_carga_diaria`, às 6h (America/Sao_Paulo) em prod; pausado em
 dev. As ingestões só rodam quando o `fontes.yml` tem fonte daquele tipo (variáveis
 `ingerir_banco` e `ingerir_api`, conferidas por teste); sem fonte, aparecem como puladas
-e não custam nada (ADR 0004). Avisos: falha e demora (mais de 15 minutos) por e-mail, e
-alerta SQL às 9h quando a última carga concluída passa de 26 horas (ADR 0003).
+e não custam nada (ADR 0004). A tarefa `registrar_falha` depende de todas as outras e só
+roda quando alguma falha: grava o motivo limpo em `mon_falhas` e termina com erro
+(ADR 0015).
+
+| Aviso | Quando | Origem |
+|---|---|---|
+| Falha e demora (mais de 15 minutos) | na hora | e-mail do job, para o cliente e o suporte |
+| `falha_carga` | 7h | alerta SQL sobre `mon_falhas`, com o motivo |
+| `qualidade_carga` | 7h | alerta SQL sobre `mon_volume` e `mon_estrutura` (ADR 0014) |
+| `qualidade_carga` (avisos de arquivo) | 7h | `arquivo_ignorado` (o último arquivo não virou o retrato) e `codificacao_invalida` (acentos trocados), em `mon_estrutura` (ADR 0016); mostram só o nome do arquivo |
+| `custo_teto` | 8h | alerta SQL sobre `mon_custo_mensal`, a partir de 80% do teto |
+| `atraso_carga` | 9h | alerta SQL sobre `mon_atualizacao`, acima de 26 horas (ADR 0003) |
 
 ## Estrutura no Unity Catalog
 
@@ -115,19 +126,24 @@ Cada fonte informa: `nome`, `tipo` (arquivo, tabela, banco ou api), o bloco do t
 `modo_carga` (incremental, snapshot ou cdc), `historico`, `chave_primaria`,
 `coluna_atualizacao`, `colunas` (nome padronizado, `origem`, tipo, formatos de data,
 caixa, de-para, máscara, `sensivel`) e `regras` (nao_nulo, valores_aceitos, expressao,
-unico, com ação drop ou alerta). Os campos estão explicados nos comentários do próprio
-arquivo, e o formato é validado por
+unico, com ação drop, alerta ou falhar). Os campos estão explicados nos comentários do
+próprio arquivo, e o formato é validado por
 [`config/fontes.schema.json`](../config/fontes.schema.json) no pytest e no começo de cada
 execução do pipeline.
 
-| Tipo | Como chega à bronze | Testado em |
+| Tipo | Como chega à bronze | Testado |
 |---|---|---|
-| `arquivo` | Auto Loader lê a pasta da fonte na landing | Free Edition e Azure |
-| `tabela` | lê a tabela do Unity Catalog (MV no snapshot, streaming nos outros modos) | Free Edition e Azure |
-| `banco` | `src/ingestao/banco_para_landing.py` lê pelo Lakehouse Federation, com watermark, e grava parquet na landing | **só Azure** |
-| `api` | `src/ingestao/api_para_landing.py` chama a API com token do secret scope e grava JSON na landing | **só Azure** |
+| `arquivo` | Auto Loader lê a pasta da fonte na landing: CSV, JSON e Parquet (coluna nova vai para `_rescued_data`), texto e Excel (`.xlsx`) | no Free Edition (Excel num pipeline de teste) |
+| `tabela` | lê a tabela do Unity Catalog (MV no snapshot, streaming nos outros modos) | no Free Edition |
+| `banco` | `src/ingestao/banco_para_landing.py` lê pelo Lakehouse Federation, com watermark, e grava parquet na landing | ainda não (o Free Edition restringe acesso externo) |
+| `api` | `src/ingestao/api_para_landing.py` chama a API com token do secret scope e grava JSON na landing | ainda não (o Free Edition restringe acesso externo) |
 
-O Free Edition restringe acesso externo, então `banco` e `api` não foram testados nele.
+**Regras que vêm sozinhas:** cada coluna da `chave_primaria` sem regra `nao_nulo` ganha
+uma com `drop` (`chave_<coluna>_preenchida`), e no modo incremental a chave inteira ganha
+uma regra `unico` (`chave_unica`). Nos modos snapshot e cdc a chave já sai única pelo
+AUTO CDC. A ação **`falhar`** para a carga inteira: é para regras que indicam arquivo
+errado (no exemplo, `data_plausivel`), não linha ruim.
+
 
 ## Fontes do exemplo
 
@@ -156,6 +172,11 @@ O Free Edition restringe acesso externo, então `banco` e `api` não foram testa
 | `mon_qualidade_diaria` | view | monitoramento · qualidade | por dia, tabela e regra: aprovadas, descartadas e alertas |
 | `mon_atualizacao` | view | monitoramento · atualização | última carga do pipeline e último dado novo de cada silver |
 | `mon_custo_diario` | view | monitoramento · custo | DBUs e custo de lista do job e do pipeline |
+| `mon_custo_mensal` | view | monitoramento · custo | custo do mês contra o teto do diagnóstico |
+| `mon_volume` | view | monitoramento · volume | linhas de cada carga; alerta de retrato vazio ou em queda |
+| `mon_estrutura` | view | monitoramento · estrutura | colunas novas na origem, dados resgatados, arquivo ignorado e codificação inválida |
+| `mon_execucoes` | view | monitoramento · execuções | execuções, sucessos, falhas e taxa de sucesso por dia |
+| `mon_falhas` | tabela | monitoramento · falha | falhas da carga com o motivo, sem dado pessoal |
 
 As `mon_*` ficam no schema do projeto e são criadas pela tarefa `governanca_depois`
 ([ADR 0003](adr/0003-monitoramento-fora-do-pipeline.md)).

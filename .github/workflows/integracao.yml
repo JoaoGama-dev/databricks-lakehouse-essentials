@@ -7,6 +7,12 @@ name: Integração
 # token do workspace.
 on:
   workflow_dispatch:
+    inputs:
+      cenarios_de_falha:
+        # Por enquanto só à mão: são mais sete cargas (docs/adr/0014 e 0015).
+        description: Rodar também os cenários de risco (reenvio, atrasado, só cabeçalho, full refresh, cp1252) e de falha (v3 queda de volume e coluna nova; v4 regra que para a carga)
+        type: boolean
+        default: false
   schedule:
     # 1h em Brasília (4h UTC), de segunda a sexta.
     - cron: "0 4 * * 1-5"
@@ -22,7 +28,10 @@ concurrency:
 jobs:
   integracao:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Cada carga leva de 3 a 6 minutos. Com os cenários são 9 cargas (v1, v2, reenvio,
+    # atrasado, só cabeçalho, full refresh, cp1252, v3, v4): até 54 minutos, mais uns 20 de
+    # deploy, preparação, conferências e destroy. 90 minutos dão folga sem esconder travamento.
+    timeout-minutes: 90
     permissions:
       contents: read
     env:
@@ -73,7 +82,7 @@ jobs:
         run: databricks bundle run essentials_carga_diaria -t ci
 
       - name: Conferir os dados da v1
-        run: INTEGRACAO_VERSAO=1 pytest -m integracao tests/integracao -v
+        run: INTEGRACAO_VERSAO=1 pytest -m integracao tests/integracao/test_carga.py -v
 
       - name: Enviar a agenda v2
         run: python scripts/integracao.py enviar --versao 2
@@ -82,7 +91,91 @@ jobs:
         run: databricks bundle run essentials_carga_diaria -t ci
 
       - name: Conferir os dados da v2 e o histórico
-        run: INTEGRACAO_VERSAO=2 pytest -m integracao tests/integracao -v
+        run: INTEGRACAO_VERSAO=2 pytest -m integracao tests/integracao/test_carga.py -v
+
+      # Cenários de risco e de falha: só quando pedidos (inputs.cenarios_de_falha). Os de
+      # risco vêm primeiro e não mudam a silver da v2 (exceto o cp1252); a v3 e a v4, que a
+      # mudam ou param a carga, ficam por último.
+      - name: "Cenário reenvio: a v2 de novo, com outro nome (v5)"
+        if: inputs.cenarios_de_falha
+        run: |
+          python scripts/integracao.py enviar --versao 5
+          databricks bundle run essentials_carga_diaria -t ci
+
+      - name: Conferir o cenário reenvio
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=reenvio pytest -m integracao tests/integracao/test_cenarios.py -v
+
+      - name: "Cenário atrasado: a v1 chega depois da v2 (v6)"
+        if: inputs.cenarios_de_falha
+        run: |
+          python scripts/integracao.py enviar --versao 6
+          databricks bundle run essentials_carga_diaria -t ci
+
+      - name: Conferir o cenário atrasado
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=atrasado pytest -m integracao tests/integracao/test_cenarios.py -v
+
+      - name: "Cenário só cabeçalho: arquivo sem nenhuma entrevista (v7)"
+        if: inputs.cenarios_de_falha
+        run: |
+          python scripts/integracao.py enviar --versao 7
+          databricks bundle run essentials_carga_diaria -t ci
+
+      - name: Conferir o cenário só cabeçalho
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=so_cabecalho pytest -m integracao tests/integracao/test_cenarios.py -v
+
+      # A bronze e o histórico têm pipelines.reset.allowed = false. O Databricks recusa o full
+      # refresh do grafo inteiro antes de apagar qualquer coisa: o histórico depende do retrato,
+      # que seria recriado, e o streaming não aceita dado apagado na origem.
+      - name: "Cenário full refresh: recusado sem apagar a bronze nem o histórico"
+        if: inputs.cenarios_de_falha
+        run: |
+          if databricks bundle run essentials_pipeline -t ci --full-refresh-all; then
+            echo "O full refresh deveria ter sido recusado pela proteção do histórico."
+            exit 1
+          fi
+          echo "O full refresh foi recusado, como esperado."
+
+      - name: Conferir o cenário full refresh
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=full_refresh pytest -m integracao tests/integracao/test_cenarios.py -v
+
+      - name: "Cenário cp1252: a v2 sem ser UTF-8 (v8)"
+        if: inputs.cenarios_de_falha
+        run: |
+          python scripts/integracao.py enviar --versao 8
+          databricks bundle run essentials_carga_diaria -t ci
+
+      - name: Conferir o cenário cp1252
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=cp1252 pytest -m integracao tests/integracao/test_cenarios.py -v
+
+      - name: "Cenário v3: queda de volume e coluna nova na origem"
+        if: inputs.cenarios_de_falha
+        run: |
+          python scripts/integracao.py enviar --versao 3
+          python scripts/integracao.py alterar-origem
+          databricks bundle run essentials_carga_diaria -t ci
+
+      - name: Conferir os avisos do cenário v3
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=v3 pytest -m integracao tests/integracao/test_cenarios.py -v
+
+      - name: "Cenário v4: regra que para a carga (a carga deve falhar)"
+        if: inputs.cenarios_de_falha
+        run: |
+          python scripts/integracao.py enviar --versao 4
+          if databricks bundle run essentials_carga_diaria -t ci; then
+            echo "A carga com a v4 deveria ter falhado pela regra data_plausivel."
+            exit 1
+          fi
+          echo "A carga falhou, como esperado."
+
+      - name: Conferir o motivo registrado no cenário v4
+        if: inputs.cenarios_de_falha
+        run: INTEGRACAO_CENARIO=v4 pytest -m integracao tests/integracao/test_cenarios.py -v
 
       - name: Destruir o target ci
         if: always()

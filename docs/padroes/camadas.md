@@ -35,8 +35,26 @@
   `silver_int_<fonte>_retrato` (MV, snapshot) ou `silver_int_<fonte>_mudancas`
   (streaming, cdc). No modo incremental, ficam na própria `silver_<fonte>`.
 - Modos `snapshot` e `cdc` usam AUTO CDC; `historico: true` cria
-  `silver_<fonte>_historico` (SCD tipo 2). Cada coluna da chave precisa de regra
-  `nao_nulo` com `drop`.
+  `silver_<fonte>_historico` (SCD tipo 2).
+- **A chave é conferida sozinha** (`regras_efetivas`): coluna da chave sem regra
+  `nao_nulo` ganha uma com `drop`; no incremental, a chave inteira ganha `unico`. Nos
+  modos snapshot e cdc, a regra `nao_nulo` da chave não pode ser só alerta.
+- **Ação `falhar`** só para o que indica arquivo errado (a carga inteira para e o aviso de
+  falha dispara com o motivo, ADR 0015); linha ruim é `drop` ou `alerta`.
+- Na bronze de arquivo, o Auto Loader roda em modo `rescue` (CSV, JSON, Parquet): coluna
+  nova na origem não derruba a carga e aparece em `mon_estrutura` (ADR 0014).
+- **Data de referência (snapshot de arquivos):** o retrato é o arquivo com a maior
+  `data_referencia` do `fontes.yml` (`ingestao`, padrão; `conteudo`, com uma expressão SQL
+  agregada; ou `nome_arquivo`, com regex de um grupo e formato), não o último ingerido. A
+  `expressao` é código executável: revise como código no PR. O arquivo recebido que não
+  virou retrato aparece em `mon_estrutura` como `arquivo_ignorado`, e texto que não é UTF-8 válido, como
+  `codificacao_invalida` ([ADR 0016](../adr/0016-data-de-referencia-do-snapshot.md)).
+- **Full refresh não apaga o histórico:** a bronze de arquivo, banco e API e o histórico
+  SCD2 levam `pipelines.reset.allowed = false` ([ADR 0017](../adr/0017-retencao-e-exclusao-de-titular.md)).
+  Com isso, o Databricks recusa o full refresh do grafo inteiro; reprocesse com
+  `--full-refresh` só nas tabelas que podem ser recriadas.
+  **Mudar o schema da bronze é manual:** remova a propriedade com decisão registrada, faça a
+  mudança e a restaure (passo a passo em [`retencao-e-exclusao.md`](retencao-e-exclusao.md)).
 - **Lógica específica de uma fonte** fica em `src/pipeline/silver_<fonte>.sql`, como a
   view temporária `silver_int_<fonte>_preparada`, com `preparacao_sql: true` no YAML. Nela
   vai só o que a limpeza padrão não cobre (ex.: estrutura do arquivo).
@@ -50,8 +68,11 @@
 ## Monitoramento
 
 - O pipeline publica o event log em `mon_log_eventos`. As views `mon_*` (qualidade
-  diária, atualização e custo) são geradas por `src/essentials/monitoramento_sql.py` e
-  criadas pela tarefa `governanca_depois`, fora do pipeline (ADR 0003).
+  diária, atualização, volume, estrutura, execuções e custo) são geradas por
+  `src/essentials/monitoramento_sql.py` e criadas pela tarefa `governanca_depois`, fora
+  do pipeline (ADR 0003). A tabela `mon_falhas` é criada pela `governanca_antes` e
+  preenchida pela `registrar_falha` (ADR 0015).
+- Mensagem de erro nunca sai do ambiente sem passar por `motivo_seguro` (LGPD).
 - Regra nova no `fontes.yml` entra sozinha em `mon_qualidade_diaria`, com a ação do YAML.
 - Fonte `banco` ou `api` nova: troque `ingerir_banco`/`ingerir_api` para `"true"` no
   `databricks.yml` (um teste confere; ADR 0004).

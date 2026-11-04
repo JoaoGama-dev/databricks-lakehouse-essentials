@@ -11,9 +11,22 @@ espaços no nome, telefones inválidos, linha sem nome, linha sem horário e ent
 reagendada no mesmo dia. Nomes e telefones são inventados (telefones no padrão
 41 90000-xxxx).
 
-Gera duas versões da mesma planilha:
+Gera quatro versões da mesma planilha:
   agenda_exemplo_v1.csv  carga inicial, com algumas entrevistas sem status
   agenda_exemplo_v2.csv  a mesma agenda com esses status preenchidos e mais um dia
+  agenda_exemplo_v3.csv  cenário de falha: só o último mês da v2 (queda de volume)
+  agenda_exemplo_v4.csv  cenário de falha: a v2 com uma entrevista em 2019, que viola a
+                         regra data_plausivel (falhar) e para a carga
+A v3 e a v4 são geradas depois da v1 e da v2, sem mudar o conteúdo delas.
+
+E os arquivos dos cenários de risco da integração, montados a partir da v1 e da v2 sem
+consumir o sorteio delas:
+  agenda_exemplo_v5.csv  reenvio: os mesmos bytes da v2, com outro nome
+  agenda_exemplo_v6.csv  atrasado: o conteúdo da v1, enviado depois da v2 (mais antigo)
+  agenda_exemplo_v7.csv  só cabeçalho: a linha de cabeçalho da v2, sem nenhuma entrevista
+  agenda_exemplo_v8.csv  codificação: o conteúdo da v2 gravado em cp1252, sem BOM
+Os nomes seguem agenda_exemplo_v<n>.csv: é o único padrão de data/ que o .gitignore e os
+hooks tratam como fictício.
 
 Uso:
     python data/gerar_dados_exemplo.py           # grava em data/
@@ -29,7 +42,16 @@ from pathlib import Path
 
 ARQUIVO_V1 = "agenda_exemplo_v1.csv"
 ARQUIVO_V2 = "agenda_exemplo_v2.csv"
+ARQUIVO_V3 = "agenda_exemplo_v3.csv"
+ARQUIVO_V4 = "agenda_exemplo_v4.csv"
+ARQUIVO_REENVIO = "agenda_exemplo_v5.csv"
+ARQUIVO_ATRASADO = "agenda_exemplo_v6.csv"
+ARQUIVO_SO_CABECALHO = "agenda_exemplo_v7.csv"
+ARQUIVO_CP1252 = "agenda_exemplo_v8.csv"
+INICIO_DO_ULTIMO_MES = date(2025, 11, 1)
+DIA_FORA_DO_PERIODO = date(2019, 3, 15)
 CODIFICACAO = "utf-8-sig"  # UTF-8 com BOM, como o Excel exporta
+CODIFICACAO_ERRADA = "cp1252"  # o "ANSI" do Excel em português, sem BOM
 QUEBRA_DE_LINHA = "\r\n"
 LINHAS_VAZIAS_NO_FIM = 9
 
@@ -165,8 +187,8 @@ def linhas_da_planilha(entrevistas: list[dict], rng: random.Random) -> list[str]
     return linhas
 
 
-def gravar(caminho: Path, linhas: list[str]) -> None:
-    with caminho.open("w", encoding=CODIFICACAO, newline="") as arquivo:
+def gravar(caminho: Path, linhas: list[str], codificacao: str = CODIFICACAO) -> None:
+    with caminho.open("w", encoding=codificacao, newline="") as arquivo:
         arquivo.write(QUEBRA_DE_LINHA.join(linhas) + QUEBRA_DE_LINHA)
 
 
@@ -186,10 +208,29 @@ def gerar(pasta_saida: Path, semente: int = 42) -> list[Path]:
     ]
     v2 += montar_agenda(dias_uteis(date(2025, 12, 1), date(2025, 12, 1)), nomes, rng, chance_de_agenda=1.0)
 
+    # Cenários de falha, montados só a partir da v2 (a v1 e a v2 não mudam).
+    v3 = [e for e in v2 if e["dia"] >= INICIO_DO_ULTIMO_MES]
+    v4 = [{**v2[0], "dia": DIA_FORA_DO_PERIODO, "horario": "10:00"}, *v2]
+
+    # Cada arquivo sorteia os rótulos dos separadores com o próprio Random(semente).
+    planilhas = {nome: linhas_da_planilha(entrevistas, random.Random(semente))
+                 for nome, entrevistas in ((ARQUIVO_V1, v1), (ARQUIVO_V2, v2), (ARQUIVO_V3, v3), (ARQUIVO_V4, v4))}
+
+    # Cenários de risco: reaproveitam as linhas já montadas da v1 e da v2.
+    arquivos = [(nome, linhas, CODIFICACAO) for nome, linhas in planilhas.items()]
+    arquivos += [
+        (ARQUIVO_REENVIO, planilhas[ARQUIVO_V2], CODIFICACAO),
+        (ARQUIVO_ATRASADO, planilhas[ARQUIVO_V1], CODIFICACAO),
+        (ARQUIVO_SO_CABECALHO, planilhas[ARQUIVO_V2][:1], CODIFICACAO),
+        (ARQUIVO_CP1252, planilhas[ARQUIVO_V2], CODIFICACAO_ERRADA),
+    ]
+
     pasta_saida.mkdir(parents=True, exist_ok=True)
-    caminhos = [pasta_saida / ARQUIVO_V1, pasta_saida / ARQUIVO_V2]
-    for caminho, entrevistas in zip(caminhos, (v1, v2), strict=True):
-        gravar(caminho, linhas_da_planilha(entrevistas, random.Random(semente)))
+    caminhos = []
+    for nome, linhas, codificacao in arquivos:
+        caminho = pasta_saida / nome
+        gravar(caminho, linhas, codificacao)
+        caminhos.append(caminho)
     return caminhos
 
 

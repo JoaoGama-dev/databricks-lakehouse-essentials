@@ -32,16 +32,36 @@
 #   historico          true cria também silver_<nome>_historico (SCD tipo 2, com
 #                      __START_AT e __END_AT). Só para snapshot e cdc.
 #   chave_primaria     colunas que identificam um registro, com os nomes padronizados.
-#                      Em snapshot e cdc, cada uma precisa de uma regra nao_nulo com drop.
+#                      A chave é conferida sozinha: cada coluna sem regra nao_nulo ganha
+#                      uma com drop (chave_<coluna>_preenchida) e, no modo incremental, a
+#                      chave inteira ganha uma regra unico (chave_unica). Nos modos
+#                      snapshot e cdc a chave já sai única, e a regra nao_nulo da chave não
+#                      pode ser só alerta.
 #   coluna_atualizacao coluna que diz qual versão de um registro é a mais recente
 #                      (data de atualização, número de linha etc.)
 #   preparacao_sql     true quando a fonte precisa de lógica própria antes da limpeza
 #                      padrão. Nesse caso existe src/pipeline/silver_<nome>.sql com a view
 #                      temporária silver_int_<nome>_preparada, lida no lugar da bronze.
+#   data_referencia    (só snapshot de arquivos; opcional) como escolher o arquivo que vira
+#                      o retrato, para um arquivo antigo que chega depois não "voltar no
+#                      tempo". Vence a maior data; empate ou data vazia desempata pelo último
+#                      ingerido. O arquivo que não vira retrato aparece em mon_estrutura
+#                      como arquivo_ignorado.
+#                        tipo: ingestao     -> (padrão) o último arquivo ingerido
+#                        tipo: conteudo     -> expressao: SQL agregado sobre as colunas
+#                                              padronizadas do arquivo, ex.: max(dt_entrevista)
+#                        tipo: nome_arquivo -> regex (com um grupo, a data) e formato
+#                                              (ex.: regex "_([0-9]{8})[.]csv$", formato yyyyMMdd)
 #
 # BLOCO DO TIPO (só o do tipo escolhido)
-#   arquivo:  formato (csv | json | parquet | texto), caminho (pasta dentro da landing),
-#             opcoes (opções de leitura do Auto Loader, como header e sep)
+#   arquivo:  formato (csv | json | parquet | texto | excel), caminho (pasta dentro da
+#             landing), opcoes (opções de leitura do Auto Loader, como header e sep; no
+#             excel, dataAddress para escolher a aba ou o intervalo, ex.: "Agenda!A1:F500",
+#             e headerRows, padrão 1). No excel, coluna nova na planilha é ignorada (o
+#             Auto Loader de Excel não evolui schema); nos outros, vai para _rescued_data.
+#             CSV que não vem em UTF-8: encoding nas opcoes (ex.: encoding: windows-1252).
+#             O formato texto lê sempre como UTF-8: arquivo em outra codificação aparece
+#             em mon_estrutura como codificacao_invalida (a carga não para).
 #   tabela:   nome_completo (catalogo.schema.tabela; {catalogo} e {projeto} viram o
 #             catálogo e o projeto do target)
 #   banco:    conexao (conexão do Unity Catalog; o catálogo estrangeiro tem o mesmo nome),
@@ -83,6 +103,8 @@
 #             expressao (expressao SQL) | unico (colunas)
 #   acao      drop   -> descarta a linha
 #             alerta -> a linha segue e a violação é contada
+#             falhar -> para a carga inteira (nada é gravado) e dispara o aviso de falha;
+#                       para regras que indicam arquivo errado, não linha ruim
 #   A regra "unico" só aceita alerta: ela é checada à parte, em
 #   silver_int_<nome>_unico_<colunas>. Para garantir unicidade, use chave_primaria com
 #   modo snapshot ou cdc.
@@ -104,6 +126,11 @@ fontes:
     preparacao_sql: true
     chave_primaria: [dt_entrevista, nm_candidato]
     coluna_atualizacao: _linha
+    # A planilha é do ano inteiro e só cresce: a versão mais nova tem a entrevista mais
+    # recente. Uma planilha antiga reenviada depois não substitui o retrato.
+    data_referencia:
+      tipo: conteudo
+      expressao: max(dt_entrevista)
     colunas:
       dt_entrevista:
         origem: data_entrevista
@@ -174,6 +201,12 @@ fontes:
         tipo: expressao
         expressao: "hr_entrevista RLIKE '^[0-9]{1,2}:[0-9]{2}$'"
         acao: alerta
+      # Data antes de 2020 indica planilha errada (outro arquivo, data mal formatada em
+      # massa): melhor parar a carga do que publicar um painel errado.
+      - nome: data_plausivel
+        tipo: expressao
+        expressao: "dt_entrevista IS NULL OR dt_entrevista >= DATE'2020-01-01'"
+        acao: falhar
 
   # Cadastro de cargos: liga o começo do nome da vaga a uma área da empresa.
   # No Free Edition, a tabela é criada por setup/00_setup_free_edition.sql.

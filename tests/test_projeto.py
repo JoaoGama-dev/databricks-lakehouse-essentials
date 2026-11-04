@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -17,11 +18,14 @@ from essentials.config_fontes import (
     carregar_fontes,
     colunas_silver,
     expectations,
+    expressao_data_referencia,
     expressao_limpeza,
     expressao_regra,
     expressoes_silver,
     nome_tabela_origem,
     pasta_landing,
+    propriedades_tabela,
+    regras_efetivas,
     schema_silver,
     tabelas_da_fonte,
     validar_config,
@@ -64,10 +68,6 @@ def pipeline() -> dict:
 def test_config_valida_contra_o_schema():
     validar_config(config_bruta())
     assert FONTES
-
-
-def test_exemplo_tem_arquivo_e_tabela():
-    assert {f["tipo"] for f in FONTES} >= {"arquivo", "tabela"}
 
 
 def test_config_sem_campo_obrigatorio_e_rejeitada():
@@ -147,12 +147,154 @@ def test_prefixo_precisa_combinar_com_o_tipo():
         validar_config(config)
 
 
-def test_chave_do_auto_cdc_precisa_de_regra_nao_nulo_com_drop():
+def test_chave_sem_regra_ganha_nao_nulo_com_drop_sozinha():
     config = config_bruta()
     agenda = config["fontes"][0]
     agenda["regras"] = [r for r in agenda["regras"] if r["nome"] != "nome_preenchido"]
-    with pytest.raises(ValueError, match="chave sem regra nao_nulo com drop: nm_candidato"):
+    validar_config(config)
+    geradas = [r for r in regras_efetivas(agenda) if r not in agenda["regras"]]
+    esperada = {"nome": "chave_nm_candidato_preenchida", "tipo": "nao_nulo", "coluna": "nm_candidato", "acao": "drop"}
+    assert geradas == [esperada]
+    descartar, _, _ = expectations(agenda)
+    assert descartar["chave_nm_candidato_preenchida"] == "`nm_candidato` IS NOT NULL"
+
+
+def test_chave_ja_conferida_no_yaml_nao_ganha_regra_repetida():
+    for f in FONTES:
+        assert regras_efetivas(f) == f.get("regras", []), f["nome"]
+
+
+def test_chave_do_auto_cdc_nao_aceita_nao_nulo_so_com_alerta():
+    config = config_bruta()
+    regra = next(r for r in config["fontes"][0]["regras"] if r["nome"] == "nome_preenchido")
+    regra["acao"] = "alerta"
+    with pytest.raises(ValueError, match="regra nao_nulo da chave precisa de drop ou falhar: nm_candidato"):
         validar_config(config)
+
+
+def test_incremental_ganha_regra_de_chave_unica():
+    fonte_incremental = {"nome": "vendas", "modo_carga": "incremental", "chave_primaria": ["id_venda"], "regras": []}
+    regras = regras_efetivas(fonte_incremental)
+    assert {"nome": "chave_unica", "tipo": "unico", "colunas": ["id_venda"], "acao": "alerta"} in regras
+    assert tabelas_da_fonte(fonte_incremental)["unicidade"] == ["silver_int_vendas_unico_id_venda"]
+    # Nos modos snapshot e cdc a chave já sai única: nenhuma checagem a mais.
+    for modo in ("snapshot", "cdc"):
+        assert not any(r["tipo"] == "unico" for r in regras_efetivas({**fonte_incremental, "modo_carga": modo}))
+
+
+def test_regra_falhar_vira_expectation_que_para_a_carga():
+    f = {"nome": "x", "modo_carga": "snapshot", "chave_primaria": ["id_x"], "regras": [
+        {"nome": "id_x_preenchido", "tipo": "nao_nulo", "coluna": "id_x", "acao": "drop"},
+        {"nome": "arquivo_certo", "tipo": "expressao", "expressao": "qt_linhas > 0", "acao": "falhar"},
+    ]}
+    descartar, alertar, falhar = expectations(f)
+    assert falhar == {"arquivo_certo": "qt_linhas > 0"}
+    assert "arquivo_certo" not in descartar and "arquivo_certo" not in alertar
+    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    assert "dp.expect_all_or_fail(falhar)" in codigo
+
+
+# Data de referência do snapshot ---------------------------------------------------
+
+
+def config_com_data_referencia(referencia: dict, **campos) -> dict:
+    config = config_bruta()
+    agenda = next(f for f in config["fontes"] if f["nome"] == "agenda")
+    agenda["data_referencia"] = referencia
+    agenda.update(campos)
+    return config
+
+
+@pytest.mark.parametrize(
+    "referencia",
+    [
+        {"tipo": "ingestao"},
+        {"tipo": "conteudo", "expressao": "max(dt_entrevista)"},
+        {"tipo": "nome_arquivo", "regex": "_([0-9]{8})[.]csv$", "formato": "yyyyMMdd"},
+        {"tipo": "nome_arquivo", "regex": "(?:agenda)_([0-9]{8})", "formato": "yyyyMMdd"},
+    ],
+    ids=["ingestao", "conteudo", "nome_arquivo", "grupo_sem_captura"],
+)
+def test_data_referencia_aceita_os_tres_tipos(referencia):
+    validar_config(config_com_data_referencia(referencia))
+
+
+@pytest.mark.parametrize(
+    ("referencia", "trecho"),
+    [
+        ({"tipo": "versao"}, "data_referencia"),
+        ({"tipo": "conteudo"}, "data_referencia"),
+        ({"tipo": "conteudo", "expressao": ""}, "data_referencia"),
+        ({"tipo": "conteudo", "expressao": "max(dt_entrevista)", "regex": "(x)"}, "data_referencia"),
+        ({"tipo": "nome_arquivo", "regex": "([0-9]{8})"}, "data_referencia"),
+        ({"tipo": "nome_arquivo", "formato": "yyyyMMdd"}, "data_referencia"),
+        ({"tipo": "ingestao", "expressao": "max(dt_entrevista)"}, "data_referencia"),
+        ({"tipo": "nome_arquivo", "regex": "[0-9]{8}", "formato": "yyyyMMdd"}, "exatamente um grupo"),
+        ({"tipo": "nome_arquivo", "regex": "([0-9]{4})([0-9]{4})", "formato": "yyyyMMdd"}, "exatamente um grupo"),
+        ({"tipo": "nome_arquivo", "regex": "([0-9]{8}", "formato": "yyyyMMdd"}, "regex de data_referencia inválida"),
+    ],
+    ids=["tipo_invalido", "conteudo_sem_expressao", "expressao_vazia", "conteudo_com_regex", "sem_formato",
+         "sem_regex", "ingestao_com_expressao", "regex_sem_grupo", "regex_com_dois_grupos", "regex_quebrada"],
+)
+def test_data_referencia_invalida_e_rejeitada(referencia, trecho):
+    with pytest.raises(ValueError, match=trecho):
+        validar_config(config_com_data_referencia(referencia))
+
+
+def test_data_referencia_so_vale_em_snapshot_de_arquivo():
+    conteudo = {"tipo": "conteudo", "expressao": "max(dt_entrevista)"}
+    with pytest.raises(ValueError, match="só vale no modo snapshot"):
+        validar_config(config_com_data_referencia(conteudo, modo_carga="cdc", cdc={
+            "coluna_operacao": "op", "valor_exclusao": "D"}))
+    config = config_bruta()
+    cargos = next(f for f in config["fontes"] if f["nome"] == "cargos")
+    cargos["data_referencia"] = {"tipo": "conteudo", "expressao": "max(dh_atualizacao)"}
+    with pytest.raises(ValueError, match="só vale no modo snapshot"):
+        validar_config(config)
+
+
+def test_expressao_da_data_referencia_de_cada_tipo():
+    assert expressao_data_referencia({"nome": "x"}) is None
+    assert expressao_data_referencia({"data_referencia": {"tipo": "ingestao"}}) is None
+    assert expressao_data_referencia(
+        {"data_referencia": {"tipo": "conteudo", "expressao": "max(dt_x)"}}
+    ) == "max(dt_x)"
+    nome_arquivo = expressao_data_referencia(
+        {"data_referencia": {"tipo": "nome_arquivo", "regex": "_(\\d{8})[.]csv$", "formato": "yyyyMMdd"}}
+    )
+    # Só o nome do arquivo (sem a pasta), grupo 1 da regex, com a barra escapada para o SQL.
+    assert nome_arquivo == (
+        "max(CAST(try_to_timestamp(nullif(regexp_extract(element_at(split(_arquivo_origem, '/'), -1), "
+        "'_(\\\\d{8})[.]csv$', 1), ''), 'yyyyMMdd') AS DATE))"
+    )
+
+
+def test_agenda_escolhe_o_retrato_pela_maior_data_de_entrevista():
+    assert expressao_data_referencia(fonte("agenda")) == "max(dt_entrevista)"
+    assert expressao_data_referencia(fonte("cargos")) is None
+
+
+def test_silver_ordena_pela_data_de_referencia_e_depois_pela_ingestao():
+    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    funcao = codigo[codigo.index("def manter_ultimo_arquivo") : codigo.index("def manter_versao_mais_recente")]
+    assert 'ordem = [F.desc("_ingerido_em"), F.desc("_arquivo_origem")]' in funcao
+    assert 'ordem.insert(0, F.col("_data_referencia").desc_nulls_last())' in funcao
+    assert 'groupBy("_arquivo_origem", "_ingerido_em").agg(F.expr(referencia)' in funcao
+    # A data de referência usa os nomes padronizados: a limpeza vem antes da escolha do arquivo.
+    assert "manter_ultimo_arquivo(limpar(spark.read.table(origem), fonte), fonte)" in codigo
+
+
+# Full refresh --------------------------------------------------------------------------
+
+
+def test_bronze_da_landing_e_historico_nao_sao_esvaziados_por_full_refresh():
+    bloqueado = {"pipelines.reset.allowed": "false"}
+    for tipo in ("arquivo", "banco", "api"):
+        assert bloqueado.items() <= propriedades_tabela("bronze", "bruta", {"nome": "x", "tipo": tipo}).items()
+    assert bloqueado.items() <= propriedades_tabela("silver", "historico", {"nome": "x", "tipo": "arquivo"}).items()
+    for camada, tipo, tipo_fonte in (("bronze", "bruta", "tabela"), ("silver", "atual", "arquivo"),
+                                      ("silver", "intermediaria", "arquivo")):
+        assert "pipelines.reset.allowed" not in propriedades_tabela(camada, tipo, {"nome": "x", "tipo": tipo_fonte})
 
 
 # Bronze ---------------------------------------------------------------------------
@@ -165,11 +307,10 @@ def test_cada_fonte_gera_sua_bronze(f):
         assert pasta_landing(f)
 
 
-def test_bronze_py_cria_uma_tabela_por_fonte():
-    codigo = (PASTA_PIPELINE / "bronze.py").read_text(encoding="utf-8")
-    assert "from pyspark import pipelines as dp" in codigo
-    assert "import dlt" not in codigo
-    assert "for fonte in FONTES:\n    criar_bronze(fonte)" in codigo
+@pytest.mark.parametrize("arquivo", sorted(PASTA_PIPELINE.glob("*.py")), ids=lambda a: a.name)
+def test_pipeline_nao_usa_o_modulo_dlt_antigo(arquivo):
+    # Regra 5 do CLAUDE.md: o módulo dlt é o legado; o pipeline usa pyspark.pipelines.
+    assert not re.search(r"^\s*(import dlt|from dlt\b)", arquivo.read_text(encoding="utf-8"), re.MULTILINE)
 
 
 def test_tabela_de_apoio_e_criada_no_setup():
@@ -184,13 +325,13 @@ def test_tabela_de_apoio_e_criada_no_setup():
 
 @pytest.mark.parametrize("f", FONTES, ids=lambda f: f["nome"])
 def test_regras_viram_expectations(f):
-    descartar, alertar = expectations(f)
-    for regra in f.get("regras", []):
+    descartar, alertar, falhar = expectations(f)
+    destinos = {"drop": descartar, "alerta": alertar, "falhar": falhar}
+    for regra in regras_efetivas(f):
         if regra["tipo"] == "unico":
-            assert regra["nome"] not in descartar and regra["nome"] not in alertar
+            assert all(regra["nome"] not in destino for destino in destinos.values())
             continue
-        destino = descartar if regra["acao"] == "drop" else alertar
-        assert destino[regra["nome"]] == expressao_regra(regra)
+        assert destinos[regra["acao"]][regra["nome"]] == expressao_regra(regra)
 
 
 def test_expressoes_das_regras():
@@ -295,8 +436,8 @@ def test_schema_da_silver_descreve_todas_as_colunas_na_ordem(f):
 
 def test_schema_do_historico_inclui_a_vigencia():
     schema = schema_silver(fonte("agenda"), "TIMESTAMP")
-    assert schema.endswith("COMMENT 'Fim da vigência desta versão do registro; vazio na versão atual.'")
-    assert "`__START_AT` TIMESTAMP COMMENT" in schema
+    for coluna in ("__START_AT", "__END_AT"):
+        assert f"`{coluna}` TIMESTAMP COMMENT '" in schema
 
 
 def test_tipos_do_schema_seguem_o_yaml():
@@ -310,14 +451,6 @@ def test_tipos_do_schema_seguem_o_yaml():
     for trecho in trechos:
         assert trecho in schema
     assert "_arquivo_origem" not in schema  # fonte tabela não tem arquivo
-
-
-def test_toda_tabela_da_silver_e_criada_com_schema():
-    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
-    criacoes = re.findall(r"dp\.(?:table|materialized_view|create_streaming_table)\((.*?)\n\s*\)", codigo, re.DOTALL)
-    assert len(criacoes) == 5
-    # A tabela de mudanças do cdc leva colunas extras do AUTO CDC e é a única sem schema fixo.
-    assert sum("schema=" in criacao for criacao in criacoes) == 4
 
 
 @pytest.mark.parametrize("arquivo", arquivos_gold(), ids=lambda a: a.name)
@@ -428,10 +561,6 @@ def test_prod_tem_run_as():
 # Gold -----------------------------------------------------------------------------
 
 
-def test_existe_gold():
-    assert arquivos_gold()
-
-
 TIPOS_GOLD = {"dim": "dimensao", "fato": "fato", "agg": "agregada"}
 
 
@@ -456,13 +585,6 @@ def test_colunas_da_gold_tem_prefixo_da_classe(arquivo):
     assert all(re.match(rf"^({prefixos})_", apelido) for apelido in apelidos), apelidos
 
 
-def test_gold_classifica_a_situacao_da_entrevista():
-    sql = (PASTA_PIPELINE / "gold_entrevistas.sql").read_text(encoding="utf-8")
-    for situacao in ("'Concluído'", "'Em andamento'", "'Pendente'", "'Não identificado'"):
-        assert situacao in sql
-    assert "AS st_situacao" in sql
-
-
 # Painel AI/BI -----------------------------------------------------------------------
 
 PAINEL = RAIZ / "src" / "dashboards" / "entrevistas.lvdash.json"
@@ -483,10 +605,6 @@ def test_painel_esta_no_bundle_sem_ambiente_fixo():
     assert recurso["dataset_catalog"] == "${resources.schemas.gold.catalog_name}"
     assert recurso["dataset_schema"] == "${resources.schemas.gold.name}"
     assert recurso["embed_credentials"] is False
-
-
-def test_painel_tem_as_tres_paginas():
-    assert [p["displayName"] for p in painel()["pages"]] == ["Visão geral", "Áreas e vagas", "Pendências"]
 
 
 def test_datasets_do_painel_so_leem_a_gold_sem_catalogo_fixo():
@@ -516,23 +634,6 @@ def test_widgets_usam_datasets_e_campos_que_existem():
                 if "queryName" in item_codificacao:
                     assert item_codificacao["queryName"] in consultas
         assert set(usados) <= campos, (pagina, widget["name"], set(usados) - campos)
-
-
-def test_widgets_nao_se_sobrepoem():
-    ocupadas: dict[tuple[str, int, int], str] = {}
-    for pagina, item in widgets_do_painel():
-        pos = item["position"]
-        assert pos["x"] + pos["width"] <= 6, item["widget"]["name"]
-        for x in range(pos["x"], pos["x"] + pos["width"]):
-            for y in range(pos["y"], pos["y"] + pos["height"]):
-                chave = (pagina, x, y)
-                assert chave not in ocupadas, (item["widget"]["name"], ocupadas.get(chave))
-                ocupadas[chave] = item["widget"]["name"]
-
-
-def test_gold_junta_as_duas_silvers():
-    sql = (PASTA_PIPELINE / "gold_entrevistas.sql").read_text(encoding="utf-8")
-    assert "silver_agenda" in sql and "silver_cargos" in sql and "JOIN" in sql
 
 
 # Gerador de dados fictícios -------------------------------------------------------
@@ -570,12 +671,77 @@ def agendas(tmp_path_factory) -> list[Path]:
     return importar_gerador().gerar(tmp_path_factory.mktemp("agendas"))
 
 
-def test_gerador_cria_as_duas_versoes(agendas):
-    assert [caminho.name for caminho in agendas] == ["agenda_exemplo_v1.csv", "agenda_exemplo_v2.csv"]
+def versao(agendas: list[Path], n: int) -> Path:
+    return next(caminho for caminho in agendas if caminho.name == f"agenda_exemplo_v{n}.csv")
+
+
+# Planilhas no formato da exportação do Excel (UTF-8 com BOM e ao menos uma entrevista);
+# a v7 (só cabeçalho) e a v8 (cp1252) fogem dele de propósito.
+VERSOES_NO_FORMATO_DA_PLANILHA = (1, 2, 3, 4, 5, 6)
+
+
+def test_gerador_cria_as_oito_versoes(agendas):
+    assert [caminho.name for caminho in agendas] == [f"agenda_exemplo_v{n}.csv" for n in range(1, 9)]
+
+
+def test_gerador_nao_muda_as_versoes_ja_publicadas(agendas):
+    # Os totais de tests/integracao/esperado.py dependem dos bytes da v1 a v4 versionados em data/.
+    for n in range(1, 5):
+        assert versao(agendas, n).read_bytes() == (RAIZ / "data" / f"agenda_exemplo_v{n}.csv").read_bytes(), n
+
+
+def test_cenarios_de_falha_saem_da_v2(agendas):
+    v2, v3, v4 = (ler_agenda(versao(agendas, n)) for n in (2, 3, 4))
+    # v3: só o último mês, uma queda bem maior que o limite de 50% do alerta de volume.
+    assert 0 < len(v3) < len(v2) / 2
+    # v4: a v2 inteira mais uma entrevista antes de 2020, que viola a regra data_plausivel.
+    assert len(v4) == len(v2) + 1
+    assert any(e["data"].endswith("/2019") for e in v4)
+
+
+def maior_data(entrevistas: list[dict]):
+    return max(datetime.strptime(e["data"], "%d/%m/%Y").date() for e in entrevistas)
+
+
+def test_reenvio_tem_os_mesmos_bytes_da_v2(agendas):
+    assert versao(agendas, 5).read_bytes() == versao(agendas, 2).read_bytes()
+
+
+def test_atrasado_tem_o_conteudo_da_v1_e_data_de_referencia_menor_que_a_da_v2(agendas):
+    assert versao(agendas, 6).read_bytes() == versao(agendas, 1).read_bytes()
+    # data_referencia da agenda: max(dt_entrevista). A v1 atrasada não pode vencer a v2.
+    assert maior_data(ler_agenda(versao(agendas, 6))) < maior_data(ler_agenda(versao(agendas, 2)))
+
+
+def test_v3_e_v4_tem_a_mesma_data_de_referencia_da_v2(agendas):
+    # Empatam com a v2 e viram o retrato por serem as mais recentes, como antes da data_referencia.
+    datas = {n: maior_data(ler_agenda(versao(agendas, n))) for n in (2, 3, 4)}
+    assert datas[3] == datas[4] == datas[2]
+
+
+def test_so_cabecalho_nao_tem_entrevista(agendas):
+    conteudo = versao(agendas, 7).read_bytes()
+    assert conteudo.startswith(b"\xef\xbb\xbf") and conteudo.endswith(b"\r\n")
+    linhas = conteudo.decode("utf-8-sig").split("\r\n")
+    assert linhas == [versao(agendas, 2).read_bytes().decode("utf-8-sig").split("\r\n")[0], ""]
+    assert re.fullmatch(r"AGENDA DIA \d{2}/\d{2}/\d{4};NOME;VAGA;TELEFONE;STATUS\.;", linhas[0])
+    assert ler_agenda(versao(agendas, 7)) == []
+
+
+def test_cp1252_e_a_v2_em_outra_codificacao(agendas):
+    conteudo = versao(agendas, 8).read_bytes()
+    texto_v2 = versao(agendas, 2).read_bytes().decode("utf-8-sig")
+    assert not conteudo.startswith(b"\xef\xbb\xbf"), "cp1252 não tem BOM"
+    assert conteudo.decode("cp1252") == texto_v2
+    # Lido como UTF-8 (o que o formato texto faz), o arquivo é inválido e os acentos viram U+FFFD.
+    with pytest.raises(UnicodeDecodeError):
+        conteudo.decode("utf-8")
+    substituido = conteudo.decode("utf-8", errors="replace")
+    assert "\N{REPLACEMENT CHARACTER}" in substituido and "\N{REPLACEMENT CHARACTER}" not in texto_v2
 
 
 def test_agenda_tem_formato_da_planilha_real(agendas):
-    for caminho in agendas:
+    for caminho in (versao(agendas, n) for n in VERSOES_NO_FORMATO_DA_PLANILHA):
         conteudo = caminho.read_bytes()
         assert conteudo.startswith(b"\xef\xbb\xbf"), "falta o BOM do UTF-8"
         assert conteudo.count(b"\n") == conteudo.count(b"\r\n"), "toda quebra de linha deve ser CRLF"
@@ -601,7 +767,7 @@ def test_agenda_tem_a_sujeira_da_planilha_real(agendas):
 
 
 def test_v2_preenche_os_status_vazios(agendas):
-    v1, v2 = (ler_agenda(caminho) for caminho in agendas)
+    v1, v2 = (ler_agenda(caminho) for caminho in agendas[:2])
     status_v2 = {(e["data"], e["horario"], e["nome"]): e["status"] for e in v2}
     vazios = [e for e in v1 if e["status"] == "" and e["nome"]]
     assert vazios

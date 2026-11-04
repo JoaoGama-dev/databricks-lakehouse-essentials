@@ -28,7 +28,7 @@ validação do `config/fontes.yml` recusam o que fugir dele.
 | `gold_fato_<nome>` | `fato` | `gold_fato_entrevista` |
 | `gold_agg_<nome>` | `agregada` | `gold_agg_entrevista_mensal` |
 
-| `mon_<nome>` | `qualidade`, `atualizacao`, `custo` | `mon_qualidade_diaria` |
+| `mon_<nome>` | `qualidade`, `atualizacao`, `custo`, `volume`, `estrutura`, `execucoes`, `falha` | `mon_qualidade_diaria` |
 
 - Fato e dimensão no singular.
 - `mon_*` são as views de monitoramento (camada `monitoramento`), criadas pela tarefa

@@ -51,6 +51,20 @@ Além disso, a tarefa `governanca_depois` aplica a tag `pii` = `true` nas coluna
 sensíveis da silver e da gold, para localizar todo dado pessoal pelo
 `information_schema.column_tags`.
 
+## Nome de arquivo e monitoramento
+
+As views `mon_*` não guardam dado pessoal. Os avisos `arquivo_ignorado` e
+`codificacao_invalida` de `mon_estrutura` mostram **só o nome do arquivo** recebido.
+Por isso o nome do arquivo nunca pode ter nome, CPF, telefone ou outro dado pessoal:
+use datas e códigos (`agenda_2025-12-15.csv`).
+
+## Retenção e exclusão de titular
+
+A landing e a bronze de snapshot guardam o arquivo inteiro, com dado pessoal. A política de
+retenção e o passo a passo para atender o pedido de um titular (com o script
+`scripts/gerar_exclusao_titular.py`) estão em
+[`retencao-e-exclusao.md`](retencao-e-exclusao.md).
+
 ## Quem acessa o quê
 
 O modelo de acesso está no ADR 0001 e em `resources/governanca.yml`: a bronze, a silver e

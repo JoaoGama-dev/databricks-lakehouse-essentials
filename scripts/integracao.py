@@ -7,7 +7,8 @@ dos recursos vêm do resumo do bundle, gravado pelo workflow depois do deploy:
 
 Comandos:
     python scripts/integracao.py preparar           cria <projeto>_origem e esvazia a landing
-    python scripts/integracao.py enviar --versao 1  envia data/agenda_exemplo_v1.csv
+    python scripts/integracao.py enviar --versao 1  envia data/agenda_exemplo_v1.csv (1 a 8)
+    python scripts/integracao.py alterar-origem     cenário: a origem cargos ganha uma coluna
     python scripts/integracao.py limpar             apaga os schemas do CI que sobrarem
 
 Por segurança, nada aqui toca num schema cujo nome não termine em _ci, _ci_gold ou
@@ -30,6 +31,10 @@ SETUP = RAIZ / "setup" / "00_setup_free_edition.sql"
 ARQUIVO_RECURSOS = Path(os.environ.get("INTEGRACAO_RECURSOS", RAIZ / "recursos-ci.json"))
 SUFIXOS_CI = ("_ci", "_ci_gold", "_ci_origem")
 PASTA_AGENDA = "agenda"
+# Versões da agenda fictícia que podem ser enviadas (data/gerar_dados_exemplo.py):
+#   1 e 2 cargas normais; 3 e 4 cenários de falha; 5 reenvio da v2; 6 a v1 chegando
+#   atrasada; 7 só o cabeçalho; 8 a v2 em cp1252.
+VERSOES_AGENDA = tuple(range(1, 9))
 
 
 class SchemaForaDoCI(ValueError):
@@ -154,11 +159,28 @@ def preparar(recursos: dict) -> None:
     print(f"Landing esvaziada: {esvaziar_landing(w, recursos['landing'])} arquivo(s) apagado(s).")
 
 
+def arquivo_da_versao(versao: int) -> Path:
+    """Arquivo da agenda fictícia de uma versão; recusa o que não for da lista fechada."""
+    if type(versao) is not int or versao not in VERSOES_AGENDA:  # True == 1 passaria no "in"
+        raise ValueError(f"versão {versao!r} da agenda não existe (aceitas: {VERSOES_AGENDA})")
+    return RAIZ / "data" / f"agenda_exemplo_v{versao}.csv"
+
+
 def enviar(recursos: dict, versao: int) -> None:
-    arquivo = RAIZ / "data" / f"agenda_exemplo_v{versao}.csv"
+    arquivo = arquivo_da_versao(versao)
     destino = f"{recursos['landing']}/{PASTA_AGENDA}/{arquivo.name}"
     cliente().files.upload(destino, io.BytesIO(arquivo.read_bytes()), overwrite=True)
     print(f"Enviado {arquivo.name} para {destino}.")
+
+
+COLUNA_NOVA_NA_ORIGEM = "cd_centro_custo"
+
+
+def alterar_origem(recursos: dict) -> None:
+    """Cenário de mudança na origem: a tabela de cargos do CI ganha uma coluna nova."""
+    origem = f"`{recursos['catalogo']}`.`{verificar_schema_ci(recursos['schema_origem'])}`.cadastro_cargos"
+    executar_sql(cliente(), recursos["warehouse_id"], f"ALTER TABLE {origem} ADD COLUMN {COLUNA_NOVA_NA_ORIGEM} STRING")
+    print(f"Coluna {COLUNA_NOVA_NA_ORIGEM} acrescentada em {origem}.")
 
 
 def limpar(recursos: dict) -> None:
@@ -171,8 +193,8 @@ def limpar(recursos: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("comando", choices=["preparar", "enviar", "limpar"])
-    parser.add_argument("--versao", type=int, choices=[1, 2], help="versão da agenda fictícia (enviar)")
+    parser.add_argument("comando", choices=["preparar", "enviar", "alterar-origem", "limpar"])
+    parser.add_argument("--versao", type=int, choices=VERSOES_AGENDA, help="versão da agenda fictícia (enviar)")
     args = parser.parse_args()
     if not ARQUIVO_RECURSOS.is_file():
         sys.exit(f"Resumo do bundle não encontrado em {ARQUIVO_RECURSOS}: rode o deploy -t ci antes.")
@@ -183,6 +205,8 @@ def main() -> None:
         if not args.versao:
             parser.error("enviar precisa de --versao")
         enviar(recursos, args.versao)
+    elif args.comando == "alterar-origem":
+        alterar_origem(recursos)
     else:
         limpar(recursos)
 

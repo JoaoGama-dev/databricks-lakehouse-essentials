@@ -64,6 +64,25 @@ variables:
   limite_atraso_horas:
     description: Horas sem atualização do pipeline que disparam o alerta de atraso
     default: 26
+  limite_queda_volume_pct:
+    description: Queda percentual do retrato, de uma carga para a outra, que dispara o alerta de volume
+    default: 50
+  teto_custo_mensal_usd:
+    # Valor do diagnóstico para o Databricks (preço de lista); a nuvem toda tem o Budget do
+    # Azure, configurado no portal.
+    description: Teto mensal de custo do Databricks, em dólares de preço de lista; alerta a partir de 80%
+    default: 150
+  email_suporte:
+    description: E-mail do suporte da Logos, que também recebe o aviso de falha do job (abre o chamado)
+    default: suporte@exemplo.com
+  destino_suporte_id:
+    # Destino de notificação de e-mail criado pelo administrador do workspace com o e-mail do
+    # suporte: os alertas SQL só notificam usuários do workspace ou destinos.
+    description: ID do destino de notificação do suporte da Logos para os alertas SQL (só em prod)
+    default: ""
+  landing_url:
+    description: Endereço da landing externa de produção (abfss://, s3:// ou gs://), sobre uma external location
+    default: ""
 
 # Tags em todos os recursos (job, pipeline), para separar o custo por projeto e cliente
 # nas tabelas de sistema de faturamento.
@@ -100,10 +119,13 @@ targets:
           schedule:
             pause_status: PAUSED
       alerts:
-        # Em dev o alerta de atraso fica pausado: dá para rodá-lo à mão na tela do alerta.
-        atraso_carga:
+        # Em dev os alertas ficam pausados: dá para rodá-los à mão na tela de cada alerta.
+        atraso_carga: &pausado
           schedule:
             pause_status: PAUSED
+        falha_carga: *pausado
+        qualidade_carga: *pausado
+        custo_teto: *pausado
 
   # Testes de integração (.github/workflows/integracao.yml, docs/adr/0005): o mesmo
   # workspace do dev, com estado de deploy próprio e o projeto com sufixo _ci, o que gera
@@ -121,9 +143,12 @@ targets:
           schedule:
             pause_status: PAUSED
       alerts:
-        atraso_carga:
+        atraso_carga: &pausado_ci
           schedule:
             pause_status: PAUSED
+        falha_carga: *pausado_ci
+        qualidade_carga: *pausado_ci
+        custo_teto: *pausado_ci
 
   # Azure Databricks do cliente: landing num volume externo sobre o ADLS Gen2, execução
   # pelo service principal e grupos do cliente.
@@ -138,6 +163,13 @@ targets:
       # Troque pelo nome do cliente e pelo usuário responsável pela carga no workspace dele.
       cliente: cliente
       usuario_alerta: responsavel@cliente.com.br
+      # Teto do Databricks combinado no diagnóstico, o e-mail e o destino de notificação do
+      # suporte da Logos (criado pelo administrador no workspace do cliente).
+      teto_custo_mensal_usd: 150
+      email_suporte: suporte@exemplo.com
+      destino_suporte_id: 00000000-0000-0000-0000-000000000000
+      # Landing externa: abfss:// no Azure (padrão), s3:// na AWS, gs:// no GCP.
+      landing_url: abfss://landing@STORAGEACCOUNT.dfs.core.windows.net/${var.projeto}
       grupo_engenharia: essentials_engenharia
       grupo_leitura_gold: essentials_leitura_gold
       grupo_dados_pessoais: essentials_dados_pessoais
@@ -153,9 +185,20 @@ targets:
         landing:
           volume_type: EXTERNAL
           # Precisa de uma external location do Unity Catalog sobre este caminho.
-          storage_location: abfss://landing@STORAGEACCOUNT.dfs.core.windows.net/${var.projeto}
+          storage_location: ${var.landing_url}
           lifecycle:
             prevent_destroy: true
+      alerts:
+        # Em prod, os alertas também vão para o suporte da Logos (abre o chamado). O target
+        # acrescenta à lista de resources/alertas.yml, que já tem o usuario_alerta.
+        atraso_carga: &avisar_suporte
+          evaluation:
+            notification:
+              subscriptions:
+                - destination_id: ${var.destino_suporte_id}
+        falha_carga: *avisar_suporte
+        qualidade_carga: *avisar_suporte
+        custo_teto: *avisar_suporte
     run_as:
       # Application ID do service principal de produção.
       service_principal_name: 00000000-0000-0000-0000-000000000000

@@ -34,7 +34,7 @@ CATALOGO = spark.conf.get("catalogo")
 PROJETO = spark.conf.get("projeto")
 LANDING = spark.conf.get("landing_path").rstrip("/")
 FONTES = carregar_fontes(spark.conf.get("fontes_config"))
-FORMATOS_AUTO_LOADER = {"csv": "csv", "json": "json", "parquet": "parquet", "texto": "text"}
+FORMATOS_AUTO_LOADER = {"csv": "csv", "json": "json", "parquet": "parquet", "texto": "text", "excel": "excel"}
 
 
 def com_colunas_tecnicas(df: DataFrame, fonte: dict) -> DataFrame:
@@ -50,6 +50,14 @@ def ler_landing(fonte: dict) -> DataFrame:
     if formato in ("csv", "json"):
         # Tudo como texto: tipar é papel da silver.
         leitor = leitor.option("cloudFiles.inferColumnTypes", "false")
+    if formato in ("csv", "json", "parquet"):
+        # Coluna nova na origem não derruba a carga: vai para _rescued_data, e a view
+        # mon_estrutura avisa no mesmo dia (docs/adr/0014).
+        leitor = leitor.option("cloudFiles.schemaEvolutionMode", "rescue")
+    if formato == "excel":
+        # Planilha .xlsx/.xls: o Auto Loader de Excel não evolui schema (exige "none"); a
+        # primeira linha é o cabeçalho, salvo headerRows ou dataAddress nas opções da fonte.
+        leitor = leitor.option("cloudFiles.schemaEvolutionMode", "none").option("headerRows", "1")
     opcoes = fonte.get("arquivo", {}).get("opcoes", {})
     return leitor.options(**opcoes).load(f"{LANDING}/{pasta_landing(fonte)}")
 
@@ -81,6 +89,7 @@ def criar_bronze(fonte: dict) -> None:
         df = ler_tabela_em_streaming(fonte) if fonte["tipo"] == "tabela" else ler_landing(fonte)
         return com_colunas_tecnicas(df, fonte)
 
+    # Na bronze de arquivo, banco e api, propriedades_tabela já bloqueia o reset do full refresh.
     dp.table(name=nome, comment=comentario, table_properties=propriedades)(leitura_incremental)
 
 

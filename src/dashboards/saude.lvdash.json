@@ -25,6 +25,51 @@
         "FROM mon_custo_diario\n",
         "WHERE dt_uso >= current_date() - INTERVAL 90 DAYS"
       ]
+    },
+    {
+      "name": "ds_execucoes",
+      "displayName": "Execuções (30 dias)",
+      "queryLines": [
+        "SELECT round(sum(qt_sucessos) * 100.0 / nullif(sum(qt_execucoes), 0), 1) AS pc_sucesso_30d,\n",
+        "  sum(qt_falhas) AS qt_falhas\n",
+        "FROM mon_execucoes\n",
+        "WHERE dt_execucao >= current_date() - INTERVAL 30 DAYS"
+      ]
+    },
+    {
+      "name": "ds_custo_mensal",
+      "displayName": "Custo do mês e teto",
+      "queryLines": [
+        "SELECT dt_mes, vl_custo_lista, vl_teto, pc_do_teto, sg_moeda\n",
+        "FROM mon_custo_mensal\n",
+        "WHERE dt_mes = date_trunc('MONTH', current_date())"
+      ]
+    },
+    {
+      "name": "ds_falhas",
+      "displayName": "Falhas recentes",
+      "queryLines": [
+        "SELECT dh_falha, nm_tarefa, ds_motivo, ds_link\n",
+        "FROM mon_falhas\n",
+        "WHERE dh_falha >= current_date() - INTERVAL 30 DAYS"
+      ]
+    },
+    {
+      "name": "ds_origem",
+      "displayName": "Volume e estrutura da origem",
+      "queryLines": [
+        "SELECT nm_tabela, ds_modo, dh_carga, qt_linhas, qt_linhas_anterior, pc_variacao, fl_alerta\n",
+        "FROM mon_volume\n",
+        "WHERE dh_carga >= current_date() - INTERVAL 30 DAYS"
+      ]
+    },
+    {
+      "name": "ds_estrutura",
+      "displayName": "Mudanças na origem",
+      "queryLines": [
+        "SELECT nm_tabela, ds_tipo, nm_coluna, qt_linhas\n",
+        "FROM mon_estrutura"
+      ]
     }
   ],
   "pages": [
@@ -193,6 +238,126 @@
         },
         {
           "widget": {
+            "name": "contador_sucesso",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_execucoes",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "MAX(`pc_sucesso_30d`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "% de cargas com sucesso (30 dias)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "% de cargas com sucesso (30 dias)"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 4,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_falhas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_execucoes",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "SUM(`qt_falhas`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "Cargas com falha (30 dias)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Cargas com falha (30 dias)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "contador_teto",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_custo_mensal",
+                  "fields": [
+                    {
+                      "name": "valor",
+                      "expression": "MAX(`pc_do_teto`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "valor",
+                  "displayName": "% do teto de custo no mês"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "% do teto de custo no mês"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 7,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
             "name": "contador_custo",
             "queries": [
               {
@@ -226,9 +391,167 @@
           },
           "position": {
             "x": 4,
-            "y": 4,
+            "y": 7,
             "width": 2,
             "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_falhas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_falhas",
+                  "fields": [
+                    {
+                      "name": "dh_falha",
+                      "expression": "`dh_falha`"
+                    },
+                    {
+                      "name": "nm_tarefa",
+                      "expression": "`nm_tarefa`"
+                    },
+                    {
+                      "name": "ds_motivo",
+                      "expression": "`ds_motivo`"
+                    },
+                    {
+                      "name": "ds_link",
+                      "expression": "`ds_link`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "dh_falha",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Quando",
+                    "displayName": "Quando",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_tarefa",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Tarefa",
+                    "displayName": "Tarefa",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_motivo",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Motivo",
+                    "displayName": "Motivo",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_link",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Execução",
+                    "displayName": "Execução",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Falhas da carga (30 dias)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 6,
+            "height": 4
           }
         },
         {
@@ -415,9 +738,418 @@
           },
           "position": {
             "x": 0,
-            "y": 7,
+            "y": 14,
             "width": 6,
             "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_volume",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_origem",
+                  "fields": [
+                    {
+                      "name": "dh_carga",
+                      "expression": "`dh_carga`"
+                    },
+                    {
+                      "name": "nm_tabela",
+                      "expression": "`nm_tabela`"
+                    },
+                    {
+                      "name": "ds_modo",
+                      "expression": "`ds_modo`"
+                    },
+                    {
+                      "name": "qt_linhas",
+                      "expression": "`qt_linhas`"
+                    },
+                    {
+                      "name": "qt_linhas_anterior",
+                      "expression": "`qt_linhas_anterior`"
+                    },
+                    {
+                      "name": "pc_variacao",
+                      "expression": "`pc_variacao`"
+                    },
+                    {
+                      "name": "fl_alerta",
+                      "expression": "`fl_alerta`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "dh_carga",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Carga",
+                    "displayName": "Carga",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_tabela",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Tabela",
+                    "displayName": "Tabela",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_modo",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Modo",
+                    "displayName": "Modo",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_linhas",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Linhas",
+                    "displayName": "Linhas",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_linhas_anterior",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Antes",
+                    "displayName": "Antes",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "pc_variacao",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "Variação %",
+                    "displayName": "Variação %",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "fl_alerta",
+                    "type": "boolean",
+                    "displayAs": "boolean",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "Alerta",
+                    "displayName": "Alerta",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Volume de cada carga"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_estrutura",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_estrutura",
+                  "fields": [
+                    {
+                      "name": "nm_tabela",
+                      "expression": "`nm_tabela`"
+                    },
+                    {
+                      "name": "ds_tipo",
+                      "expression": "`ds_tipo`"
+                    },
+                    {
+                      "name": "nm_coluna",
+                      "expression": "`nm_coluna`"
+                    },
+                    {
+                      "name": "qt_linhas",
+                      "expression": "`qt_linhas`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "nm_tabela",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Tabela",
+                    "displayName": "Tabela",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_tipo",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Mudança",
+                    "displayName": "Mudança",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_coluna",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Coluna",
+                    "displayName": "Coluna",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_linhas",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Linhas",
+                    "displayName": "Linhas",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Mudanças na estrutura da origem"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 18,
+            "width": 2,
+            "height": 5
           }
         },
         {
@@ -455,7 +1187,7 @@
           },
           "position": {
             "x": 0,
-            "y": 11,
+            "y": 23,
             "width": 3,
             "height": 3
           }
@@ -495,7 +1227,7 @@
           },
           "position": {
             "x": 3,
-            "y": 11,
+            "y": 23,
             "width": 3,
             "height": 3
           }
@@ -560,7 +1292,7 @@
           },
           "position": {
             "x": 0,
-            "y": 14,
+            "y": 26,
             "width": 3,
             "height": 6
           }
@@ -625,7 +1357,7 @@
           },
           "position": {
             "x": 3,
-            "y": 14,
+            "y": 26,
             "width": 3,
             "height": 6
           }
@@ -876,7 +1608,7 @@
           },
           "position": {
             "x": 0,
-            "y": 20,
+            "y": 32,
             "width": 6,
             "height": 6
           }
@@ -941,7 +1673,7 @@
           },
           "position": {
             "x": 0,
-            "y": 26,
+            "y": 38,
             "width": 6,
             "height": 6
           }

@@ -26,17 +26,38 @@ GitHub Actions ([ADR 0011](adr/0011-deploy-de-producao-por-oidc.md)).
    e troque `ingerir_api` para `"true"`.
 6. **Service principal** de produção com acesso ao catálogo, à external location, às
    conexões e ao secret scope.
-7. **No `databricks.yml`**: preencha o `host` de `prod`, `STORAGEACCOUNT`, o
-   `service_principal_name`, o `cliente` (tag de custo) e o `usuario_alerta` (usuário do
-   workspace que recebe o alerta de atraso). Para a view de custo, o service principal
-   precisa de `SELECT` em `system.billing`; para separar o custo serverless por tag, o
-   administrador cria uma política de uso serverless com as tags do projeto
-   ([ADR 0003](adr/0003-monitoramento-fora-do-pipeline.md)).
+7. **No `databricks.yml`** (target `prod`): o `host`, o `service_principal_name`, a
+   `landing_url` (endereço da external location da landing), o `cliente` (tag de custo),
+   o `usuario_alerta` (usuário do workspace que recebe os alertas), o
+   `teto_custo_mensal_usd` (teto do Databricks no diagnóstico), o `email_suporte` e o
+   `destino_suporte_id` (destino de notificação de e-mail do suporte da Logos, criado pelo
+   administrador em **Settings > Notifications**). Para as views de custo e de execuções,
+   o service principal precisa de `SELECT` em `system.billing` e em `system.lakeflow`;
+   para separar o custo serverless por tag, o administrador cria uma política de uso
+   serverless com as tags do projeto
+   ([ADR 0003](adr/0003-monitoramento-fora-do-pipeline.md),
+   [ADR 0015](adr/0015-aviso-de-falha-com-motivo.md)).
 8. **No GitHub**: environment `prod` com revisor obrigatório, variáveis
    `DATABRICKS_HOST_PROD` e `DATABRICKS_CLIENT_ID_PROD` e, no Databricks, a federation
    policy do service principal para o repositório (OIDC).
 9. Rode o workflow **Deploy produção** e configure o **Azure Budgets** com o teto do
    diagnóstico.
+
+## Como o cliente envia os arquivos
+
+A landing é o contêiner `landing` da conta ADLS Gen2, uma pasta por fonte
+(`<projeto>/<fonte>`). O padrão é dar à equipe do cliente um acesso **só de gravação na
+pasta da fonte**: uma SAS de contêiner com permissão de gravação e criação, com
+validade definida, ou um papel de colaborador de dados no escopo da pasta (ACL do ADLS),
+usado pelo **Azure Storage Explorer**. Ninguém do cliente precisa de acesso ao
+Databricks para enviar arquivos.
+
+- **SFTP** do próprio storage é uma opção para sistemas que só exportam por SFTP; é
+  cobrado por hora enquanto está habilitado, então entra só se o diagnóstico pedir.
+- Planilhas Excel (`.xlsx`) são lidas diretamente (formato `excel` no `fontes.yml`).
+- **Outra nuvem** (AWS ou GCP, sob orçamento à parte): o pipeline não muda; troque a
+  `landing_url` (`s3://` ou `gs://`), a external location e o canal de envio
+  equivalente da nuvem.
 
 ## Depois do primeiro deploy
 
@@ -44,5 +65,7 @@ GitHub Actions ([ADR 0011](adr/0011-deploy-de-producao-por-oidc.md)).
   grupo de dados pessoais: ele deve ver `****` no nome e no telefone
   ([ADR 0002](adr/0002-dados-pessoais-no-unity-catalog.md)). No Free Edition isso não dá
   para conferir, porque só há um usuário.
+- Confira que os quatro alertas SQL (falha, volume e estrutura, atraso e custo) estão
+  ativos e inscritos para o usuário do cliente e para o destino do suporte.
 - Entregue o [roteiro de operação](roteiro-de-operacao.md) com os nomes reais do projeto
   (skill `entrega`).
