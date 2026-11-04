@@ -16,9 +16,6 @@ on:
   schedule:
     # 1h em Brasília (4h UTC), de segunda a sexta.
     - cron: "0 4 * * 1-5"
-  # TEMPORÁRIO: validar os cenários na branch antes do merge. Removido no último commit.
-  push:
-    branches: [fase-7]
 
 # Nenhuma permissão por padrão; o job declara só o que usa.
 permissions: {}
@@ -95,18 +92,18 @@ jobs:
 
       # Cenários de falha: só quando pedidos (inputs.cenarios_de_falha).
       - name: "Cenário v3: queda de volume e coluna nova na origem"
-        if: inputs.cenarios_de_falha || github.event_name == 'push'
+        if: inputs.cenarios_de_falha
         run: |
           python scripts/integracao.py enviar --versao 3
           python scripts/integracao.py alterar-origem
           databricks bundle run essentials_carga_diaria -t ci
 
       - name: Conferir os avisos do cenário v3
-        if: inputs.cenarios_de_falha || github.event_name == 'push'
+        if: inputs.cenarios_de_falha
         run: INTEGRACAO_CENARIO=v3 pytest -m integracao tests/integracao/test_cenarios.py -v
 
       - name: "Cenário v4: regra que para a carga (a carga deve falhar)"
-        if: inputs.cenarios_de_falha || github.event_name == 'push'
+        if: inputs.cenarios_de_falha
         run: |
           python scripts/integracao.py enviar --versao 4
           if databricks bundle run essentials_carga_diaria -t ci; then
@@ -116,7 +113,7 @@ jobs:
           echo "A carga falhou, como esperado."
 
       - name: Conferir o motivo registrado no cenário v4
-        if: inputs.cenarios_de_falha || github.event_name == 'push'
+        if: inputs.cenarios_de_falha
         run: INTEGRACAO_CENARIO=v4 pytest -m integracao tests/integracao/test_cenarios.py -v
 
       - name: Destruir o target ci
