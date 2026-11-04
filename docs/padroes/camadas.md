@@ -47,7 +47,7 @@
   `data_referencia` do `fontes.yml` (`ingestao`, padrão; `conteudo`, com uma expressão SQL
   agregada; ou `nome_arquivo`, com regex de um grupo e formato), não o último ingerido. A
   `expressao` é código executável: revise como código no PR. O arquivo recebido que não
-  virou retrato aparece em `mon_estrutura` como `arquivo_ignorado`, e texto com U+FFFD, como
+  virou retrato aparece em `mon_estrutura` como `arquivo_ignorado`, e texto que não é UTF-8 válido, como
   `codificacao_invalida` ([ADR 0016](../adr/0016-data-de-referencia-do-snapshot.md)).
 - **Full refresh não apaga o histórico:** a bronze de arquivo, banco e API e o histórico
   SCD2 levam `pipelines.reset.allowed = false` ([ADR 0017](../adr/0017-retencao-e-exclusao-de-titular.md)).

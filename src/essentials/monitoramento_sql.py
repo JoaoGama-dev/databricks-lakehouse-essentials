@@ -301,11 +301,10 @@ ESTRUTURA_VAZIA = (
 
 # Só o nome do arquivo, sem a pasta da landing; nunca o conteúdo (LGPD).
 NOME_DO_ARQUIVO = "element_at(split(b._arquivo_origem, '/'), -1)"
-# Caractere de substituição U+FFFD, que aparece quando um texto que não é UTF-8 é lido como
-# UTF-8. Escrito como escape da regex Java (o SQL transforma '\\x{FFFD}' em \x{FFFD}), sem o
-# caractere no código. A regex compara caracteres, então acha o U+FFFD tanto se ele já estiver
-# gravado quanto se a bronze guardar os bytes inválidos e a leitura os substituir.
-TEM_CARACTERE_INVALIDO = "b.value RLIKE '\\\\x{FFFD}'"
+# O formato texto guarda os bytes do arquivo como chegaram: um arquivo em cp1252 fica com
+# bytes que não são UTF-8 válido (não viram U+FFFD; nem regex nem instr os acham). Testado no
+# Free Edition em 2026-11-04: is_valid_utf8 dá false na agenda v8 (cp1252) e true na v2.
+TEM_CARACTERE_INVALIDO = "NOT is_valid_utf8(b.value)"
 
 
 def arquivos_do_retrato(catalogo: str, schema: str, fonte: dict) -> str:
@@ -338,7 +337,7 @@ def sql_arquivo_ignorado(catalogo: str, schema: str, fonte: dict) -> str:
 
 
 def sql_codificacao_invalida(catalogo: str, schema: str, fonte: dict) -> str:
-    """Aviso quando o arquivo que virou o retrato (formato texto) tem o caractere U+FFFD."""
+    """Aviso quando o arquivo que virou o retrato (formato texto) não é UTF-8 válido."""
     bronze = tabelas_da_fonte(fonte)["bronze"]
     retrato = arquivos_do_retrato(catalogo, schema, fonte)
     return (

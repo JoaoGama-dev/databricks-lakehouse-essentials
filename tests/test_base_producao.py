@@ -5,7 +5,6 @@ taxa de sucesso, teto de custo e os alertas que avisam o cliente e o suporte.
 from __future__ import annotations
 
 import importlib.util
-import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -116,11 +115,10 @@ def test_codificacao_invalida_olha_so_o_arquivo_do_retrato_da_fonte_texto():
     parte = parte_do_tipo(sql, "codificacao_invalida")
     assert parte.startswith("SELECT DISTINCT 'bronze_agenda' AS nm_tabela, 'codificacao_invalida' AS ds_tipo, ")
     assert "LEFT SEMI JOIN (SELECT DISTINCT _arquivo_origem FROM `essentials`.`portfolio`." in parte
-    # Risco: escape errado faria o aviso nunca disparar. O SQL tira uma barra do literal; o que
-    # chega à regex Java precisa ser \x{FFFD}, sem o caractere escrito no código.
-    literal = re.search(r"RLIKE '([^']*)'", parte).group(1)
-    assert literal.replace("\\\\", "\\") == r"\x{FFFD}"
-    assert "\N{REPLACEMENT CHARACTER}" not in sql
+    # Risco: procurar U+FFFD nunca dispara, porque a bronze guarda os bytes cp1252 como chegaram
+    # (visto na integração de 2026-11-04). Só a validação do UTF-8 acha o arquivo.
+    assert parte.endswith("WHERE NOT is_valid_utf8(b.value)")
+    assert "FFFD" not in parte
 
 
 def test_avisos_de_arquivo_mostram_so_o_nome_do_arquivo():

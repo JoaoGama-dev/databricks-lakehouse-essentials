@@ -21,9 +21,10 @@ no tempo". Também errava com um arquivo só com cabeçalho, que virava um retra
    gerou linha nenhuma não entra na disputa.
 3. A agenda usa `conteudo` com `max(dt_entrevista)`: a planilha do ano só cresce.
 4. O arquivo recebido por último que não virou retrato aparece em `mon_estrutura` como
-   **`arquivo_ignorado`**, coberto pelo alerta `qualidade_carga`. Texto com o caractere
-   U+FFFD no retrato aparece como **`codificacao_invalida`** (típico de planilha salva em
-   cp1252): a orientação é salvar em UTF-8; o CSV aceita a opção `encoding` do Auto Loader.
+   **`arquivo_ignorado`**, coberto pelo alerta `qualidade_carga`. Texto do retrato que
+   não é UTF-8 válido (`is_valid_utf8`) aparece como **`codificacao_invalida`** (típico de
+   planilha salva em cp1252; o formato texto guarda os bytes como chegaram, sem trocar por
+   U+FFFD, conferido no Free Edition em 2026-11-04): a orientação é salvar em UTF-8; o CSV aceita a opção `encoding` do Auto Loader.
 5. Os avisos mostram **só o nome do arquivo**. Por isso o nome do arquivo nunca pode
    conter dado pessoal.
 
@@ -44,6 +45,7 @@ no tempo". Também errava com um arquivo só com cabeçalho, que virava um retra
   código no PR, como qualquer SQL.
 - Se duas planilhas têm a mesma data máxima mas conteúdo diferente, vale a última
   ingerida. A escolha de `data_referencia` deve ser confirmada com o cliente.
-- `codificacao_invalida` só detecta o que vira U+FFFD; outra troca de acentos pode passar.
+- `codificacao_invalida` só detecta bytes que não formam UTF-8 válido; um texto que já
+  chegou com os acentos trocados, mas em UTF-8 válido, passa.
 - Cobertos pelos cenários v5 a v8 da integração (ver
   [`docs/cenarios-reais.md`](../cenarios-reais.md)).
