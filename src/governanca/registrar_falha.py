@@ -36,7 +36,9 @@ def argumentos() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--codigo", required=True, help="pasta src/ do bundle")
     parser.add_argument("--catalogo", required=True)
-    parser.add_argument("--schema", required=True, help="schema do projeto (onde fica mon_falhas)")
+    parser.add_argument(
+        "--schema-monitoramento", required=True, help="schema de monitoramento (event log e mon_falhas)"
+    )
     parser.add_argument("--run-id", required=True, help="execução do job ({{job.run_id}})")
     return parser.parse_args()
 
@@ -72,7 +74,7 @@ def main() -> None:
     for tarefa in tarefas_com_falha(execucao.tasks):
         mensagem = tarefa.state.state_message
         if tarefa.pipeline_task:
-            mensagem = erro_do_pipeline(spark, args.catalogo, args.schema) or mensagem
+            mensagem = erro_do_pipeline(spark, args.catalogo, args.schema_monitoramento) or mensagem
         else:
             saida = w.jobs.get_run_output(tarefa.run_id)
             mensagem = saida.error or mensagem
@@ -80,7 +82,7 @@ def main() -> None:
     if not falhas:
         falhas.append(("desconhecida", motivo_seguro(None)))
 
-    spark.sql(sql_registrar_falhas(args.catalogo, args.schema, str(execucao.run_id), falhas, link))
+    spark.sql(sql_registrar_falhas(args.catalogo, args.schema_monitoramento, str(execucao.run_id), falhas, link))
     resumo = "; ".join(f"{tarefa}: {motivo}" for tarefa, motivo in falhas)
     print(f"Falha registrada em {TABELA_FALHAS}: {resumo}")
     sys.exit(f"Carga com falha (registrada em {TABELA_FALHAS}): {resumo}")

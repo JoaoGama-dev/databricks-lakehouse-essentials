@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from essentials.config_fontes import carregar_fontes, colunas_sensiveis, tabelas_da_fonte
+from fontes_ficticias import CADASTRO
 
 RAIZ = Path(__file__).resolve().parents[1]
 SCRIPT = RAIZ / "scripts" / "gerar_exclusao_titular.py"
@@ -50,12 +51,17 @@ CLIENTES = {
 }
 
 
+SCHEMAS = ("portfolio_bronze", "portfolio_silver", "portfolio_gold")
+BRONZE = "`essentials`.`portfolio_bronze`"
+SILVER = "`essentials`.`portfolio_silver`"
+
+
 def sql_agenda() -> str:
-    return EXCLUSAO.gerar_sql(FONTES["agenda"], "essentials", "portfolio", "portfolio_gold")
+    return EXCLUSAO.gerar_sql(FONTES["agenda"], "essentials", *SCHEMAS)
 
 
 def sql_clientes() -> str:
-    return EXCLUSAO.gerar_sql(CLIENTES, "essentials", "portfolio", "portfolio_gold")
+    return EXCLUSAO.gerar_sql(CLIENTES, "essentials", *SCHEMAS)
 
 
 def comandos(sql: str) -> list[str]:
@@ -94,12 +100,12 @@ def test_cada_coluna_que_identifica_a_pessoa_vira_um_parametro():
     assert ":titular_nm_cliente" in sql and ":titular_nr_documento" in sql
     # A coluna mascarada não guarda o valor completo: não serve para achar a pessoa.
     assert ":titular_nr_telefone" not in sql
-    delete = next(c for c in comandos(sql) if c.startswith("DELETE FROM `essentials`.`portfolio`.`silver_clientes`"))
+    delete = next(c for c in comandos(sql) if c.startswith(f"DELETE FROM {SILVER}.`silver_clientes`"))
     assert "`nm_cliente` = initcap(" in delete and " AND `nr_documento` = " in delete
 
 
 def test_parametro_recebe_a_mesma_limpeza_da_silver():
-    silver = "DELETE FROM `essentials`.`portfolio`.`silver_agenda` "
+    silver = f"DELETE FROM {SILVER}.`silver_agenda` "
     delete = next(c for c in comandos(sql_agenda()) if c.startswith(silver))
     # caixa titulo e remover_ponto_final do fontes.yml, aplicados ao valor digitado.
     assert "`nm_candidato` = initcap(" in delete and "'[.]+$'" in delete
@@ -108,29 +114,32 @@ def test_parametro_recebe_a_mesma_limpeza_da_silver():
 
 def test_fonte_sem_coluna_que_identifica_a_pessoa_e_recusada():
     with pytest.raises(ValueError, match="sensivel: true sem mascarar"):
-        EXCLUSAO.gerar_sql(FONTES["cargos"], "essentials", "portfolio", "portfolio_gold")
+        EXCLUSAO.gerar_sql(CADASTRO, "essentials", *SCHEMAS)
 
 
 @pytest.mark.parametrize(
-    ("catalogo", "schema", "gold"),
+    ("catalogo", "bronze", "silver", "gold"),
     [
-        ("essentials; DROP CATALOG x", "portfolio", "portfolio_gold"),
-        ("essentials", "Portfolio", "portfolio_gold"),
-        ("essentials", "portfolio`.`x", "portfolio_gold"),
-        ("essentials", "portfolio", "portfolio-gold"),
-        ("essentials", "portfolio", ""),
+        ("essentials; DROP CATALOG x", "portfolio_bronze", "portfolio_silver", "portfolio_gold"),
+        ("essentials", "Portfolio_bronze", "portfolio_silver", "portfolio_gold"),
+        ("essentials", "portfolio_bronze", "portfolio`.`x", "portfolio_gold"),
+        ("essentials", "portfolio_bronze", "portfolio_silver", "portfolio-gold"),
+        ("essentials", "", "portfolio_silver", "portfolio_gold"),
     ],
 )
-def test_identificador_invalido_e_recusado(catalogo, schema, gold):
+def test_identificador_invalido_e_recusado(catalogo, bronze, silver, gold):
     with pytest.raises(EXCLUSAO.IdentificadorInvalido):
-        EXCLUSAO.gerar_sql(FONTES["agenda"], catalogo, schema, gold)
+        EXCLUSAO.gerar_sql(FONTES["agenda"], catalogo, bronze, silver, gold)
+
+
+SCHEMAS_CLI = ["--schema-bronze", "b", "--schema-silver", "s", "--schema-gold", "g"]
 
 
 def test_fonte_com_nome_invalido_e_recusada():
     with pytest.raises(EXCLUSAO.IdentificadorInvalido):
-        EXCLUSAO.main(["--fonte", "agenda;x", "--catalogo", "c", "--schema", "s", "--schema-gold", "g"])
+        EXCLUSAO.main(["--fonte", "agenda;x", "--catalogo", "c", *SCHEMAS_CLI])
     with pytest.raises(SystemExit, match="não está no config/fontes.yml"):
-        EXCLUSAO.main(["--fonte", "nao_existe", "--catalogo", "c", "--schema", "s", "--schema-gold", "g"])
+        EXCLUSAO.main(["--fonte", "nao_existe", "--catalogo", "c", *SCHEMAS_CLI])
 
 
 # Tabelas e ordem dos passos -----------------------------------------------------------------
@@ -142,13 +151,13 @@ def test_agenda_cobre_todas_as_tabelas_com_dado_pessoal():
     assert colunas_sensiveis(FONTES["agenda"]) == ["nm_candidato", "nr_telefone"]
     executados = comandos(sql)
     # Bronze: texto inteiro em value; o UPDATE tira só as linhas do titular.
-    bronze = "`essentials`.`portfolio`.`bronze_agenda`"
+    bronze = f"{BRONZE}.`bronze_agenda`"
     assert any(c.startswith(f"UPDATE {bronze} SET value = array_join(filter(split(value, '\\n')") for c in executados)
     assert not any(c.startswith(f"DELETE FROM {bronze}") for c in executados), "apagaria o arquivo inteiro"
-    for tabela in (tabelas["silver"], tabelas["historico"]):
-        assert f"DELETE FROM `essentials`.`portfolio`.`{tabela}` WHERE" in "\n".join(executados), tabela
-    # O retrato e a gold são materialized views: recalculadas pelo pipeline, nunca com DELETE.
-    for mv in (tabelas["validada"], "gold_fato_entrevista", "gold_agg_entrevista_mensal"):
+    # A silver SCD2 guarda todas as versões do titular: o DELETE nela apaga todas.
+    assert f"DELETE FROM {SILVER}.`{tabelas['silver']}` WHERE" in "\n".join(executados)
+    # O retrato (privado) e a gold são materialized views: recalculadas pelo pipeline, nunca com DELETE.
+    for mv in (tabelas["validada"], "gold_fato_entrevista"):
         assert mv in sql, mv
         assert not any(mv in c and c.startswith(("DELETE", "UPDATE")) for c in executados), mv
 
@@ -175,20 +184,21 @@ def test_bronze_de_texto_compara_o_campo_inteiro_e_nao_pedaco_do_nome():
 
 def test_fonte_csv_apaga_na_bronze_pelas_colunas_da_origem():
     executados = comandos(sql_clientes())
-    delete = next(c for c in executados if c.startswith("DELETE FROM `essentials`.`portfolio`.`bronze_clientes`"))
+    delete = next(c for c in executados if c.startswith(f"DELETE FROM {BRONZE}.`bronze_clientes`"))
     assert "CAST(`nome` AS STRING)" in delete and "CAST(`cpf` AS STRING)" in delete
 
 
 def test_reorg_e_vacuum_em_cada_tabela_alterada():
     for sql, alteradas in (
-        (sql_agenda(), ["bronze_agenda", "silver_agenda", "silver_agenda_historico"]),
-        (sql_clientes(), ["bronze_clientes", "silver_clientes"]),
+        (sql_agenda(), [f"{BRONZE}.`bronze_agenda`", f"{SILVER}.`silver_agenda`"]),
+        (sql_clientes(), [f"{BRONZE}.`bronze_clientes`", f"{SILVER}.`silver_clientes`"]),
     ):
         executados = comandos(sql)
         reorg = [c for c in executados if c.startswith("REORG TABLE")]
         vacuum = [c for c in executados if c.startswith("VACUUM") and not c.endswith("DRY RUN")]
-        assert reorg == [f"REORG TABLE `essentials`.`portfolio`.`{t}` APPLY (PURGE)" for t in alteradas]
-        assert vacuum == [f"VACUUM `essentials`.`portfolio`.`{t}`" for t in alteradas]
+        # Cada tabela no schema da sua camada: no schema errado o REORG não acharia a tabela.
+        assert reorg == [f"REORG TABLE {t} APPLY (PURGE)" for t in alteradas]
+        assert vacuum == [f"VACUUM {t}" for t in alteradas]
 
 
 def test_passos_na_ordem():
@@ -202,7 +212,7 @@ def test_passos_na_ordem():
 
 def test_landing_nunca_apaga_a_pasta_inteira():
     landing = sql_agenda().split("-- PASSO 2.")[0]
-    assert "/Volumes/essentials/portfolio/landing/agenda/" in landing
+    assert "/Volumes/essentials/portfolio_bronze/landing/agenda/" in landing
     assert "Nunca apague a pasta inteira" in landing
     passo_1 = landing[landing.index("-- PASSO 1.") :]
     assert not comandos(passo_1), "o passo 1 é só orientação"
@@ -216,9 +226,9 @@ def test_aviso_de_streaming_e_pendencia_do_skip_change_commits():
     assert "ATENÇÃO: src/pipeline/silver.py lê bronze_clientes em streaming" in clientes
     cdc = copy.deepcopy(CLIENTES)
     cdc.update(modo_carga="cdc", cdc={"coluna_operacao": "op", "valor_exclusao": "D"})
-    sql_cdc = EXCLUSAO.gerar_sql(cdc, "essentials", "portfolio", "portfolio_gold")
+    sql_cdc = EXCLUSAO.gerar_sql(cdc, "essentials", *SCHEMAS)
     assert "O AUTO CDC também lê silver_int_clientes_mudancas em streaming" in sql_cdc
-    assert "DELETE FROM `essentials`.`portfolio`.`silver_int_clientes_mudancas`" in sql_cdc
+    assert f"DELETE FROM {SILVER}.`silver_int_clientes_mudancas`" in sql_cdc
 
 
 def test_vacuum_explica_o_prazo_e_nao_reduz_a_retencao():
@@ -245,8 +255,8 @@ def test_script_nao_importa_databricks_nem_rede():
 
 def test_saida_em_arquivo_ou_na_tela(tmp_path, capsys):
     destino = tmp_path / "exclusao.sql"
-    argumentos = ["--fonte", "agenda", "--catalogo", "essentials", "--schema", "portfolio",
-                  "--schema-gold", "portfolio_gold"]
+    argumentos = ["--fonte", "agenda", "--catalogo", "essentials", "--schema-bronze", "portfolio_bronze",
+                  "--schema-silver", "portfolio_silver", "--schema-gold", "portfolio_gold"]
     EXCLUSAO.main([*argumentos, "--saida", str(destino)])
     assert destino.read_text(encoding="utf-8") == sql_agenda()
     assert "Nada foi executado" in capsys.readouterr().out

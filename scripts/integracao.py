@@ -6,13 +6,12 @@ dos recursos vêm do resumo do bundle, gravado pelo workflow depois do deploy:
     databricks bundle summary -t ci -o json > recursos-ci.json
 
 Comandos:
-    python scripts/integracao.py preparar           cria <projeto>_origem e esvazia a landing
+    python scripts/integracao.py preparar           esvazia a landing do CI
     python scripts/integracao.py enviar --versao 1  envia data/agenda_exemplo_v1.csv (1 a 8)
-    python scripts/integracao.py alterar-origem     cenário: a origem cargos ganha uma coluna
     python scripts/integracao.py limpar             apaga os schemas do CI que sobrarem
 
-Por segurança, nada aqui toca num schema cujo nome não termine em _ci, _ci_gold ou
-_ci_origem: o dev de quem roda fica intacto.
+Por segurança, nada aqui toca num schema cujo nome não termine em _ci_bronze, _ci_silver,
+_ci_gold ou _ci_monitoramento: o dev de quem roda fica intacto.
 """
 
 from __future__ import annotations
@@ -27,9 +26,10 @@ import time
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
-SETUP = RAIZ / "setup" / "00_setup_free_edition.sql"
 ARQUIVO_RECURSOS = Path(os.environ.get("INTEGRACAO_RECURSOS", RAIZ / "recursos-ci.json"))
-SUFIXOS_CI = ("_ci", "_ci_gold", "_ci_origem")
+# Um schema por camada (resources/governanca.yml), na ordem em que o limpar os apaga.
+CAMADAS = ("bronze", "silver", "gold", "monitoramento")
+SUFIXOS_CI = tuple(f"_ci_{camada}" for camada in CAMADAS)
 PASTA_AGENDA = "agenda"
 # Versões da agenda fictícia que podem ser enviadas (data/gerar_dados_exemplo.py):
 #   1 e 2 cargas normais; 3 e 4 cenários de falha; 5 reenvio da v2; 6 a v1 chegando
@@ -57,40 +57,16 @@ def carregar_recursos(caminho: Path = ARQUIVO_RECURSOS) -> dict:
     variaveis = {nome: valor.get("value") for nome, valor in resumo.get("variables", {}).items()}
     schemas = resumo["resources"]["schemas"]
     recursos = {
-        "catalogo": schemas["projeto"]["catalog_name"],
-        "schema": verificar_schema_ci(schemas["projeto"]["name"]),
-        "schema_gold": verificar_schema_ci(schemas["gold"]["name"]),
+        "catalogo": schemas["silver"]["catalog_name"],
+        **{f"schema_{camada}": verificar_schema_ci(schemas[camada]["name"]) for camada in CAMADAS},
         "projeto": variaveis["projeto"],
         "warehouse_id": variaveis["warehouse_id"],
         "job_id": resumo["resources"]["jobs"]["essentials_carga_diaria"].get("id"),
         "pipeline_id": resumo["resources"]["pipelines"]["essentials_pipeline"].get("id"),
     }
-    recursos["schema_origem"] = verificar_schema_ci(f"{recursos['projeto']}_origem")
-    recursos["landing"] = f"/Volumes/{recursos['catalogo']}/{recursos['schema']}/landing"
+    # O volume landing fica no schema da bronze (resources/governanca.yml).
+    recursos["landing"] = f"/Volumes/{recursos['catalogo']}/{recursos['schema_bronze']}/landing"
     return recursos
-
-
-def projeto_do_bundle() -> str:
-    """Valor padrão da variável projeto no databricks.yml (o projeto de dev)."""
-    import yaml
-
-    bundle = yaml.safe_load((RAIZ / "databricks.yml").read_text(encoding="utf-8"))
-    return bundle["variables"]["projeto"]["default"]
-
-
-def comandos_origem(catalogo: str, projeto_ci: str) -> list[str]:
-    """Comandos do setup que criam a origem simulada, apontados para <projeto_ci>_origem.
-
-    Usa o próprio setup/00_setup_free_edition.sql, para o CI e o dev lerem a mesma origem.
-    """
-    verificar_schema_ci(f"{projeto_ci}_origem")
-    projeto = projeto_do_bundle()
-    sql = SETUP.read_text(encoding="utf-8")
-    sql = "\n".join(linha for linha in sql.splitlines() if not linha.lstrip().startswith("--"))
-    origem_dev = f"essentials.{projeto}_origem"
-    # Cada comando termina com ";" no fim da linha (há ";" dentro de textos de COMMENT).
-    comandos = [comando.strip() for comando in re.split(r";[ \t]*(?:\n|$)", sql) if origem_dev in comando]
-    return [comando.replace(origem_dev, f"`{catalogo}`.`{projeto_ci}_origem`") for comando in comandos]
 
 
 # Databricks ------------------------------------------------------------------------
@@ -123,7 +99,8 @@ def executar_sql(w, warehouse_id: str, comando: str) -> list[dict]:
 
 def esvaziar_landing(w, landing: str) -> int:
     """Apaga todos os arquivos da landing do CI (pastas inclusive)."""
-    if not landing.startswith("/Volumes/") or not landing.split("/")[3].endswith("_ci"):
+    partes = landing.split("/")
+    if not landing.startswith("/Volumes/") or len(partes) < 5 or not partes[3].endswith("_ci_bronze"):
         raise SchemaForaDoCI(f"landing {landing!r} não é do CI")
     from databricks.sdk.errors import NotFound
 
@@ -152,11 +129,7 @@ def esvaziar_landing(w, landing: str) -> int:
 
 
 def preparar(recursos: dict) -> None:
-    w = cliente()
-    for comando in comandos_origem(recursos["catalogo"], recursos["projeto"]):
-        executar_sql(w, recursos["warehouse_id"], comando)
-    print(f"Origem simulada criada em {recursos['catalogo']}.{recursos['schema_origem']}.")
-    print(f"Landing esvaziada: {esvaziar_landing(w, recursos['landing'])} arquivo(s) apagado(s).")
+    print(f"Landing esvaziada: {esvaziar_landing(cliente(), recursos['landing'])} arquivo(s) apagado(s).")
 
 
 def arquivo_da_versao(versao: int) -> Path:
@@ -173,19 +146,10 @@ def enviar(recursos: dict, versao: int) -> None:
     print(f"Enviado {arquivo.name} para {destino}.")
 
 
-COLUNA_NOVA_NA_ORIGEM = "cd_centro_custo"
-
-
-def alterar_origem(recursos: dict) -> None:
-    """Cenário de mudança na origem: a tabela de cargos do CI ganha uma coluna nova."""
-    origem = f"`{recursos['catalogo']}`.`{verificar_schema_ci(recursos['schema_origem'])}`.cadastro_cargos"
-    executar_sql(cliente(), recursos["warehouse_id"], f"ALTER TABLE {origem} ADD COLUMN {COLUNA_NOVA_NA_ORIGEM} STRING")
-    print(f"Coluna {COLUNA_NOVA_NA_ORIGEM} acrescentada em {origem}.")
-
-
 def limpar(recursos: dict) -> None:
     w = cliente()
-    for schema in (recursos["schema"], recursos["schema_gold"], recursos["schema_origem"]):
+    for camada in CAMADAS:
+        schema = recursos[f"schema_{camada}"]
         nome = f"`{recursos['catalogo']}`.`{verificar_schema_ci(schema)}`"
         executar_sql(w, recursos["warehouse_id"], f"DROP SCHEMA IF EXISTS {nome} CASCADE")
         print(f"Schema {recursos['catalogo']}.{schema} apagado (se existia).")
@@ -193,7 +157,7 @@ def limpar(recursos: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("comando", choices=["preparar", "enviar", "alterar-origem", "limpar"])
+    parser.add_argument("comando", choices=["preparar", "enviar", "limpar"])
     parser.add_argument("--versao", type=int, choices=VERSOES_AGENDA, help="versão da agenda fictícia (enviar)")
     args = parser.parse_args()
     if not ARQUIVO_RECURSOS.is_file():
@@ -205,8 +169,6 @@ def main() -> None:
         if not args.versao:
             parser.error("enviar precisa de --versao")
         enviar(recursos, args.versao)
-    elif args.comando == "alterar-origem":
-        alterar_origem(recursos)
     else:
         limpar(recursos)
 

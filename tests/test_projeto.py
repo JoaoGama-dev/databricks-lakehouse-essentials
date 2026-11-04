@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 from essentials.config_fontes import (
+    ORDEM_DO_RETRATO,
     PREFIXOS_POR_TIPO,
     carregar_fontes,
     colunas_silver,
@@ -28,15 +29,19 @@ from essentials.config_fontes import (
     regras_efetivas,
     schema_silver,
     tabelas_da_fonte,
+    tipo_da_silver,
+    validada_publicada,
     validar_config,
 )
+from fontes_ficticias import CADASTRO, cadastro
 
 RAIZ = Path(__file__).resolve().parents[1]
 CONFIG = RAIZ / "config" / "fontes.yml"
 PASTA_PIPELINE = RAIZ / "src" / "pipeline"
 SETUP = RAIZ / "setup" / "00_setup_free_edition.sql"
+PASTA_VIEWS = RAIZ / "src" / "views"
 PADRAO_TABELA_SQL = re.compile(
-    r"CREATE OR REFRESH (?:STREAMING TABLE|MATERIALIZED VIEW)\s+(?:\$\{\w+\}\.)?(\w+)", re.IGNORECASE
+    r"CREATE OR REFRESH (?:STREAMING TABLE|MATERIALIZED VIEW)\s+(?:\$\{\w+\}\.)*(\w+)", re.IGNORECASE
 )
 
 FONTES = carregar_fontes(CONFIG)
@@ -86,8 +91,9 @@ def test_tipo_sem_seu_bloco_e_rejeitado():
 
 def test_regra_unico_so_aceita_alerta():
     config = config_bruta()
-    regra = next(r for f in config["fontes"] for r in f.get("regras", []) if r["tipo"] == "unico")
-    regra["acao"] = "drop"
+    config["fontes"].append(cadastro())
+    validar_config(config)
+    next(r for r in config["fontes"][-1]["regras"] if r["tipo"] == "unico")["acao"] = "drop"
     with pytest.raises(ValueError):
         validar_config(config)
 
@@ -246,9 +252,9 @@ def test_data_referencia_so_vale_em_snapshot_de_arquivo():
     with pytest.raises(ValueError, match="só vale no modo snapshot"):
         validar_config(config_com_data_referencia(conteudo, modo_carga="cdc", cdc={
             "coluna_operacao": "op", "valor_exclusao": "D"}))
+    # Fonte tabela não tem arquivo para escolher: data_referencia não faz sentido.
     config = config_bruta()
-    cargos = next(f for f in config["fontes"] if f["nome"] == "cargos")
-    cargos["data_referencia"] = {"tipo": "conteudo", "expressao": "max(dh_atualizacao)"}
+    config["fontes"].append(cadastro(data_referencia={"tipo": "conteudo", "expressao": "max(dh_atualizacao)"}))
     with pytest.raises(ValueError, match="só vale no modo snapshot"):
         validar_config(config)
 
@@ -271,15 +277,19 @@ def test_expressao_da_data_referencia_de_cada_tipo():
 
 def test_agenda_escolhe_o_retrato_pela_maior_data_de_entrevista():
     assert expressao_data_referencia(fonte("agenda")) == "max(dt_entrevista)"
-    assert expressao_data_referencia(fonte("cargos")) is None
+    assert expressao_data_referencia(CADASTRO) is None
 
 
-def test_silver_ordena_pela_data_de_referencia_e_depois_pela_ingestao():
+def test_silver_ordena_pela_data_de_referencia_e_desempata_sem_depender_da_ordem_de_chegada():
+    # Dois arquivos no mesmo micro-batch têm o mesmo _ingerido_em: sem _modificado_em e o nome
+    # do arquivo no desempate, o retrato poderia trocar de arquivo a cada atualização.
+    assert ORDEM_DO_RETRATO == ("_ingerido_em", "_modificado_em", "_arquivo_origem")
     codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
     funcao = codigo[codigo.index("def manter_ultimo_arquivo") : codigo.index("def manter_versao_mais_recente")]
-    assert 'ordem = [F.desc("_ingerido_em"), F.desc("_arquivo_origem")]' in funcao
+    assert "por_arquivo = list(ORDEM_DO_RETRATO)" in funcao
+    assert "ordem = [F.desc(coluna) for coluna in por_arquivo]" in funcao
     assert 'ordem.insert(0, F.col("_data_referencia").desc_nulls_last())' in funcao
-    assert 'groupBy("_arquivo_origem", "_ingerido_em").agg(F.expr(referencia)' in funcao
+    assert "groupBy(*por_arquivo).agg(F.expr(referencia)" in funcao
     # A data de referência usa os nomes padronizados: a limpeza vem antes da escolha do arquivo.
     assert "manter_ultimo_arquivo(limpar(spark.read.table(origem), fonte), fonte)" in codigo
 
@@ -313,13 +323,6 @@ def test_pipeline_nao_usa_o_modulo_dlt_antigo(arquivo):
     assert not re.search(r"^\s*(import dlt|from dlt\b)", arquivo.read_text(encoding="utf-8"), re.MULTILINE)
 
 
-def test_tabela_de_apoio_e_criada_no_setup():
-    setup = SETUP.read_text(encoding="utf-8")
-    for f in FONTES:
-        if f["tipo"] == "tabela":
-            assert nome_tabela_origem(f, "essentials", "portfolio") in setup
-
-
 # Silver e regras ------------------------------------------------------------------
 
 
@@ -342,12 +345,30 @@ def test_expressoes_das_regras():
 
 
 def test_regra_unico_vira_checagem():
-    assert tabelas_da_fonte(fonte("cargos"))["unicidade"] == ["silver_int_cargos_unico_ds_prefixo_vaga"]
+    assert tabelas_da_fonte(CADASTRO)["unicidade"] == ["silver_int_cadastro_unico_ds_prefixo"]
 
 
-def test_historico_cria_tabela_scd2():
-    assert tabelas_da_fonte(fonte("agenda"))["historico"] == "silver_agenda_historico"
-    assert tabelas_da_fonte(fonte("cargos"))["historico"] is None
+def test_historico_faz_da_silver_uma_scd2_sem_tabela_separada():
+    # Uma tabela só por fonte na silver: com historico, ela é a SCD tipo 2 e não aceita reset.
+    assert "historico" not in tabelas_da_fonte(fonte("agenda"))
+    assert tipo_da_silver(fonte("agenda")) == "historico"
+    assert propriedades_tabela("silver", tipo_da_silver(fonte("agenda")), fonte("agenda"))[
+        "pipelines.reset.allowed"
+    ] == "false"
+    assert tipo_da_silver(CADASTRO) == "atual"
+    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    assert "tipo_scd = 2 if tem_historico(fonte) else 1" in codigo
+    assert codigo.count("dp.create_streaming_table(") == 1
+
+
+def test_retrato_do_snapshot_e_privado_e_o_cdc_e_publicado():
+    # O retrato não aparece no catálogo; as mudanças do cdc, sim (alvo de streaming do AUTO CDC).
+    assert not validada_publicada(fonte("agenda"))
+    assert validada_publicada({"modo_carga": "cdc"})
+    assert not validada_publicada({"modo_carga": "incremental"})
+    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    trecho = codigo[codigo.index("def retrato_validado") : codigo.index("criar_alvo_auto_cdc(fonte)")]
+    assert "private=not validada_publicada(fonte)," in trecho
 
 
 @pytest.mark.parametrize(
@@ -368,9 +389,9 @@ def test_silver_py_aplica_regras_em_tabela_e_nao_em_view():
 @pytest.mark.parametrize("f", FONTES, ids=lambda f: f["nome"])
 def test_tabelas_seguem_camada_tipo_nome(f):
     tabelas = tabelas_da_fonte(f)
-    nomes = [tabelas["bronze"], tabelas["silver"], tabelas["preparada"], tabelas["validada"], tabelas["historico"]]
+    nomes = [tabelas["bronze"], tabelas["silver"], tabelas["preparada"], tabelas["validada"]]
     nomes += tabelas["unicidade"]
-    padrao = re.compile(rf"^(bronze_{f['nome']}|silver_{f['nome']}(_historico)?|silver_int_{f['nome']}_\w+)$")
+    padrao = re.compile(rf"^(bronze_{f['nome']}|silver_{f['nome']}|silver_int_{f['nome']}_\w+)$")
     assert all(padrao.match(nome) for nome in nomes if nome)
 
 
@@ -441,22 +462,24 @@ def test_schema_do_historico_inclui_a_vigencia():
 
 
 def test_tipos_do_schema_seguem_o_yaml():
-    schema = schema_silver(fonte("cargos"))
+    schema = schema_silver(CADASTRO)
     trechos = (
-        "`id_cargo` BIGINT",
-        "`ds_prefixo_vaga` STRING",
+        "`id_item` BIGINT",
+        "`ds_prefixo` STRING",
         "`dh_atualizacao` TIMESTAMP",
         "`_ingerido_em` TIMESTAMP",
     )
     for trecho in trechos:
         assert trecho in schema
-    assert "_arquivo_origem" not in schema  # fonte tabela não tem arquivo
+    # Fonte tabela não tem arquivo: nem caminho nem data de modificação.
+    assert "_arquivo_origem" not in schema and "_modificado_em" not in schema
+    assert "`_modificado_em` TIMESTAMP" in schema_silver(fonte("agenda"))
 
 
 @pytest.mark.parametrize("arquivo", arquivos_gold(), ids=lambda a: a.name)
 def test_colunas_da_gold_tem_tipo_e_descricao(arquivo):
     sql = arquivo.read_text(encoding="utf-8")
-    blocos = re.findall(r"MATERIALIZED VIEW (?:\$\{\w+\}\.)?\w+ \((.*?)\n\)\nCOMMENT", sql, re.DOTALL)
+    blocos = re.findall(r"MATERIALIZED VIEW (?:\$\{\w+\}\.)*\w+ \((.*?)\n\)\nCOMMENT", sql, re.DOTALL)
     assert len(blocos) == len(PADRAO_TABELA_SQL.findall(sql)), "toda view da gold declara as colunas"
     prefixos = "|".join(PREFIXOS_POR_TIPO)
     for bloco in blocos:
@@ -501,9 +524,10 @@ def test_pipeline_serverless_com_configuracao():
     configuracao = pipeline()
     assert configuracao["serverless"] is True
     assert configuracao["continuous"] is False
-    assert {"catalogo", "projeto", "schema_gold", "landing_path", "fontes_config", "diretorio_codigo"} <= set(
-        configuracao["configuration"]
-    )
+    assert {
+        "catalogo", "projeto", "schema_bronze", "schema_silver", "schema_gold", "schema_monitoramento",
+        "landing_path", "fontes_config", "diretorio_codigo",
+    } <= set(configuracao["configuration"])
 
 
 def test_estrutura_do_pacote_essentials():
@@ -513,19 +537,41 @@ def test_estrutura_do_pacote_essentials():
     projeto = variaveis["projeto"]["default"]
     assert bundle["bundle"]["name"] == f"essentials_{projeto}"
     assert variaveis["catalog"]["default"] == "essentials"
-    assert "${var.projeto}" in pipeline()["name"]
-    assert pipeline()["schema"] == "${resources.schemas.projeto.name}"
-    assert pipeline()["configuration"]["schema_gold"] == "${resources.schemas.gold.name}"
+    assert pipeline()["name"] == "${var.projeto}_pipeline_medalhao"
+    job = carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]["essentials_carga_diaria"]
+    assert job["name"] == "${var.projeto}_job_carga_diaria"
+    # Silver é o schema padrão; bronze e gold vêm da configuration com o nome qualificado.
+    assert pipeline()["schema"] == "${resources.schemas.silver.name}"
+    for camada in ("bronze", "silver", "gold", "monitoramento"):
+        assert pipeline()["configuration"][f"schema_{camada}"] == f"${{resources.schemas.{camada}.name}}"
     assert pipeline()["configuration"]["landing_path"].startswith("/Volumes/${resources.volumes.landing.")
 
 
+def test_chaves_do_pipeline_e_do_job_nao_mudam():
+    # Trocar a chave faria o bundle apagar o pipeline (e as tabelas dele) e o job.
+    assert set(carregar_yaml(RAIZ / "resources" / "pipeline.yml")["resources"]["pipelines"]) == {"essentials_pipeline"}
+    assert set(carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]) == {"essentials_carga_diaria"}
+
+
+def test_bronze_e_gold_sao_publicadas_com_nome_qualificado():
+    bronze = (PASTA_PIPELINE / "bronze.py").read_text(encoding="utf-8")
+    assert 'nome = f"{CATALOGO}.{SCHEMA_BRONZE}.{tabelas_da_fonte(fonte)[\'bronze\']}"' in bronze
+    assert bronze.count("cluster_by_auto=True") == 2
+    silver = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    assert 'f"{CATALOGO}.{SCHEMA_BRONZE}.{tabelas[\'bronze\']}"' in silver
+    assert "FROM ${catalogo}.${schema_bronze}.bronze_agenda" in (PASTA_PIPELINE / "silver_agenda.sql").read_text(
+        encoding="utf-8"
+    )
+    for arquivo in arquivos_gold():
+        criadas = re.findall(r"CREATE OR REFRESH MATERIALIZED VIEW (\S+)", arquivo.read_text(encoding="utf-8"))
+        assert criadas and all(nome.startswith("${catalogo}.${schema_gold}.gold_") for nome in criadas), criadas
+
+
 def test_setup_cria_so_o_que_nao_pertence_ao_bundle():
+    # Os schemas e o volume são do bundle; o setup só cria o catálogo (sem origem simulada).
     setup = SETUP.read_text(encoding="utf-8")
-    projeto = carregar_yaml(RAIZ / "databricks.yml")["variables"]["projeto"]["default"]
     assert "CREATE CATALOG IF NOT EXISTS essentials\n" in setup
-    assert f"CREATE SCHEMA IF NOT EXISTS essentials.{projeto}_origem\n" in setup
-    assert f"CREATE SCHEMA IF NOT EXISTS essentials.{projeto}\n" not in setup
-    assert "CREATE VOLUME" not in setup
+    assert "CREATE SCHEMA" not in setup and "CREATE VOLUME" not in setup and "CREATE TABLE" not in setup
 
 
 def test_nome_da_tabela_de_origem_usa_catalogo_e_projeto():
@@ -585,6 +631,87 @@ def test_colunas_da_gold_tem_prefixo_da_classe(arquivo):
     assert all(re.match(rf"^({prefixos})_", apelido) for apelido in apelidos), apelidos
 
 
+GOLD_FATO = PASTA_PIPELINE / "gold_entrevistas.sql"
+# Funções que mudam de valor sem o dado mudar: fora do WHERE, impedem o refresh incremental.
+NAO_DETERMINISTICAS = r"\b(current_date|current_timestamp|now|curdate|rand|randn|uuid|unix_timestamp)\s*\("
+
+
+def sem_comentarios(sql: str) -> str:
+    return "\n".join(linha.split("--")[0] for linha in sql.splitlines())
+
+
+def test_fato_le_so_a_versao_vigente_e_e_incremental():
+    sql = sem_comentarios(GOLD_FATO.read_text(encoding="utf-8"))
+    # A silver é SCD tipo 2: sem o filtro, cada entrevista apareceria uma vez por versão.
+    assert "FROM silver_agenda AS e" in sql and "WHERE e.__END_AT IS NULL" in sql
+    assert not re.search(NAO_DETERMINISTICAS, sql, re.IGNORECASE)
+    assert "\nCLUSTER BY AUTO\n" in sql
+
+
+def de_para_da_fato() -> list[tuple[str, str]]:
+    sql = GOLD_FATO.read_text(encoding="utf-8")
+    bloco = sql[sql.index("de_para_area (ds_prefixo_vaga, nm_area) AS (") : sql.index("\n)\nSELECT")]
+    return re.findall(r"\('([^']+)', '([^']+)'\)", bloco)
+
+
+def test_de_para_de_area_compara_em_minusculas_sem_prefixo_repetido():
+    # A junção é lower(nm_vaga) LIKE prefixo || '%': um prefixo com maiúscula nunca combinaria,
+    # e um prefixo repetido com duas áreas deixaria a área ao acaso.
+    de_para = de_para_da_fato()
+    assert len(de_para) == 38
+    prefixos = [prefixo for prefixo, _ in de_para]
+    assert all(prefixo == prefixo.lower() for prefixo in prefixos), prefixos
+    assert len(prefixos) == len(set(prefixos))
+    sql = GOLD_FATO.read_text(encoding="utf-8")
+    assert "ON lower(e.nm_vaga) LIKE a.ds_prefixo_vaga || '%'" in sql
+    assert "ORDER BY length(a.ds_prefixo_vaga) DESC NULLS LAST, a.ds_prefixo_vaga" in sql
+    assert "coalesce(a.nm_area, 'Não classificada') AS nm_area" in sql
+
+
+# Views da gold (src/views/), criadas pela governanca_depois ----------------------------
+
+
+def arquivos_views() -> list[Path]:
+    return sorted(PASTA_VIEWS.glob("gold_vw_*.sql"))
+
+
+def colunas_da_view(sql: str) -> list[str]:
+    lista = sql[sql.index("(\n") + 2 : sql.index("\n)\nCOMMENT")]
+    return [re.match(r"\s*(\w+) COMMENT '[^']{10,}',?$", linha).group(1) for linha in lista.splitlines()]
+
+
+def test_existe_view_da_gold_para_o_painel():
+    assert [arquivo.name for arquivo in arquivos_views()] == ["gold_vw_entrevistas.sql"]
+
+
+@pytest.mark.parametrize("arquivo", arquivos_views(), ids=lambda a: a.name)
+def test_view_da_gold_tem_dicionario_e_propriedades(arquivo):
+    sql = arquivo.read_text(encoding="utf-8")
+    nome = re.search(r"CREATE OR REPLACE VIEW \$\{catalogo\}\.\$\{schema_gold\}\.(\w+) \(", sql).group(1)
+    assert nome == arquivo.stem and re.fullmatch(r"gold_vw_[a-z0-9_]+", nome)
+    colunas = colunas_da_view(sql)
+    prefixos = "|".join(PREFIXOS_POR_TIPO)
+    assert all(re.match(rf"^({prefixos})_", coluna) for coluna in colunas), colunas
+    # Na ordem do SELECT: o COMMENT de cada coluna cai na coluna certa.
+    selecao = sem_comentarios(sql[sql.index("AS SELECT") :])
+    selecionadas = [linha.strip().rstrip(",").split(" AS ")[-1].split(".")[-1]
+                    for linha in selecao.splitlines()[1:] if linha.strip() and not linha.lstrip().startswith("FROM")]
+    assert selecionadas == colunas
+    assert "\nCOMMENT '" in sql
+    assert "TBLPROPERTIES ('camada' = 'gold', 'tipo' = 'view')" in sql
+    # A view só lê a gold.
+    lidas = re.findall(r"\bFROM\s+(\S+)", sem_comentarios(sql))
+    assert lidas and all(t.startswith("${catalogo}.${schema_gold}.gold_") for t in lidas), lidas
+
+
+def test_view_tem_as_colunas_da_fato_e_o_que_depende_de_hoje():
+    fato = GOLD_FATO.read_text(encoding="utf-8")
+    bloco = re.search(r"gold_fato_entrevista \((.*?)\n\)\nCOMMENT", fato, re.DOTALL).group(1)
+    colunas_fato = re.findall(r"^\s*(\w+) [A-Z]+ COMMENT", bloco, re.MULTILINE)
+    colunas = colunas_da_view((PASTA_VIEWS / "gold_vw_entrevistas.sql").read_text(encoding="utf-8"))
+    assert colunas == [*colunas_fato, "fl_sem_retorno"]
+
+
 # Painel AI/BI -----------------------------------------------------------------------
 
 PAINEL = RAIZ / "src" / "dashboards" / "entrevistas.lvdash.json"
@@ -607,14 +734,25 @@ def test_painel_esta_no_bundle_sem_ambiente_fixo():
     assert recurso["embed_credentials"] is False
 
 
-def test_datasets_do_painel_so_leem_a_gold_sem_catalogo_fixo():
+def test_datasets_do_painel_so_leem_a_view_da_gold_sem_catalogo_fixo():
+    # A fato não tem o que depende de hoje (fl_sem_retorno): o painel lê só a view.
     for dataset in painel()["datasets"]:
         sql = "".join(dataset["queryLines"])
         tabelas = re.findall(r"\b(?:FROM|JOIN)\s+([\w.]+)", sql, flags=re.IGNORECASE)
         tabelas = [t for t in tabelas if t != "entrevistas"]  # CTE interna
         assert tabelas, dataset["name"]
-        assert all(re.fullmatch(r"gold_\w+", t) for t in tabelas), (dataset["name"], tabelas)
+        assert all(re.fullmatch(r"gold_vw_\w+", t) for t in tabelas), (dataset["name"], tabelas)
         assert "essentials" not in sql and "portfolio" not in sql
+
+
+def test_datasets_do_painel_so_usam_colunas_da_view():
+    colunas = set(colunas_da_view((PASTA_VIEWS / "gold_vw_entrevistas.sql").read_text(encoding="utf-8")))
+    prefixos = "|".join(PREFIXOS_POR_TIPO)
+    for dataset in painel()["datasets"]:
+        sql = "".join(dataset["queryLines"])
+        apelidos = set(re.findall(r"\bAS ([a-z]\w*)", sql))
+        usadas = set(re.findall(rf"\b(?:{prefixos})_\w+", sql)) - apelidos
+        assert usadas <= colunas, (dataset["name"], usadas - colunas)
 
 
 def test_widgets_usam_datasets_e_campos_que_existem():

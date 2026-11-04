@@ -6,7 +6,8 @@
 resources:
   jobs:
     essentials_carga_diaria:
-      name: essentials_${var.projeto}_carga_diaria
+      # A chave essentials_carga_diaria não muda (o bundle recriaria o job); o nome visível, sim.
+      name: ${var.projeto}_job_carga_diaria
       max_concurrent_runs: 1
       schedule:
         quartz_cron_expression: "0 0 6 * * ?"
@@ -87,11 +88,15 @@ resources:
               - --codigo
               - ${workspace.file_path}/src
               - --catalogo
-              - ${resources.schemas.projeto.catalog_name}
-              - --schema
-              - ${resources.schemas.projeto.name}
+              - ${resources.schemas.silver.catalog_name}
+              - --schema-bronze
+              - ${resources.schemas.bronze.name}
+              - --schema-silver
+              - ${resources.schemas.silver.name}
               - --schema-gold
               - ${resources.schemas.gold.name}
+              - --schema-monitoramento
+              - ${resources.schemas.monitoramento.name}
               - --grupo-dados-pessoais
               - ${var.grupo_dados_pessoais}
 
@@ -122,11 +127,15 @@ resources:
               - --codigo
               - ${workspace.file_path}/src
               - --catalogo
-              - ${resources.schemas.projeto.catalog_name}
-              - --schema
-              - ${resources.schemas.projeto.name}
+              - ${resources.schemas.silver.catalog_name}
+              - --schema-bronze
+              - ${resources.schemas.bronze.name}
+              - --schema-silver
+              - ${resources.schemas.silver.name}
               - --schema-gold
               - ${resources.schemas.gold.name}
+              - --schema-monitoramento
+              - ${resources.schemas.monitoramento.name}
               - --grupo-dados-pessoais
               - ${var.grupo_dados_pessoais}
               - --job-id
@@ -159,8 +168,8 @@ resources:
               - --codigo
               - ${workspace.file_path}/src
               - --catalogo
-              - ${resources.schemas.projeto.catalog_name}
-              - --schema
-              - ${resources.schemas.projeto.name}
+              - ${resources.schemas.silver.catalog_name}
+              - --schema-monitoramento
+              - ${resources.schemas.monitoramento.name}
               - --run-id
               - "{{job.run_id}}"

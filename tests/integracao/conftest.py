@@ -35,12 +35,16 @@ def recursos(integracao) -> dict:
 
 @pytest.fixture(scope="session")
 def consultar(integracao, recursos):
-    """consultar(sql) -> lista de dicionários. {silver} e {gold} viram os schemas do CI."""
+    """consultar(sql) -> lista de dicionários. {bronze}, {silver}, {gold} e {monitoramento}
+    viram os schemas do CI; {catalogo}, o catálogo; {nome_<camada>}, o nome do schema como
+    texto SQL, para filtrar o information_schema (o catálogo é o mesmo do dev)."""
     w = integracao.cliente()
     prefixos = {
-        "silver": f"`{recursos['catalogo']}`.`{recursos['schema']}`",
-        "gold": f"`{recursos['catalogo']}`.`{recursos['schema_gold']}`",
+        camada: f"`{recursos['catalogo']}`.`{recursos[f'schema_{camada}']}`" for camada in integracao.CAMADAS
     }
+    # Os nomes já passaram por verificar_schema_ci ([a-z0-9_]+): seguros dentro das aspas.
+    prefixos |= {f"nome_{camada}": f"'{recursos[f'schema_{camada}']}'" for camada in integracao.CAMADAS}
+    prefixos["catalogo"] = f"`{recursos['catalogo']}`"
 
     def executar(sql: str) -> list[dict]:
         return integracao.executar_sql(w, recursos["warehouse_id"], sql.format(**prefixos))

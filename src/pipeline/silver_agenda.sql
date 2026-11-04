@@ -22,6 +22,7 @@ AS SELECT
   _linha,
   _fonte,
   _arquivo_origem,
+  _modificado_em,
   _ingerido_em
 FROM (
   SELECT
@@ -39,6 +40,7 @@ FROM (
     _linha,
     _fonte,
     _arquivo_origem,
+    _modificado_em,
     _ingerido_em
   FROM (
     SELECT
@@ -48,6 +50,7 @@ FROM (
       nullif(regexp_extract(linha, '(?i)^ *AGENDA DIA +([0-9]{2}/[0-9]{2}/[0-9]{4})', 1), '') AS data_separador,
       _fonte,
       _arquivo_origem,
+      _modificado_em,
       _ingerido_em
     FROM (
       SELECT
@@ -56,8 +59,9 @@ FROM (
         trim(LEADING decode(unhex('EFBBBF'), 'UTF-8') FROM value) AS texto,
         _fonte,
         _arquivo_origem,
+        _modificado_em,
         _ingerido_em
-      FROM bronze_agenda
+      FROM ${catalogo}.${schema_bronze}.bronze_agenda
     )
     LATERAL VIEW posexplode(split(texto, '\r?\n')) linhas AS posicao, linha
     -- Ignora linhas vazias (";;;;;") do fim da planilha.

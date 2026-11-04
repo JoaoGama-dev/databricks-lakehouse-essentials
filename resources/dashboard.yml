@@ -1,4 +1,5 @@
-# Painel AI/BI do projeto: 3 páginas (visão geral, áreas e vagas, pendências) sobre a gold.
+# Painel AI/BI do projeto: 3 páginas (visão geral, áreas e vagas, pendências) sobre a view
+# gold_vw_entrevistas da gold.
 # As consultas do painel não citam catálogo nem schema: dataset_catalog e dataset_schema
 # apontam para o ambiente do target, então o mesmo painel serve em dev e em prod.
 # Para trazer ajustes feitos na tela de volta ao repositório:
@@ -15,12 +16,12 @@ resources:
       # sem acesso à gold, não vê os dados.
       embed_credentials: false
 
-    # Saúde da plataforma: atraso, qualidade e custo, a partir das views mon_* do schema do
-    # projeto. Painel separado porque o schema do projeto é só da engenharia (docs/adr/0001).
+    # Saúde da plataforma: atraso, qualidade e custo, a partir das views mon_* do schema de
+    # monitoramento. Painel separado porque esse schema é só da engenharia (docs/adr/0001).
     painel_saude:
       display_name: Essentials · ${var.projeto} · Saúde da plataforma
       file_path: ../src/dashboards/saude.lvdash.json
       warehouse_id: ${var.warehouse_id}
-      dataset_catalog: ${resources.schemas.projeto.catalog_name}
-      dataset_schema: ${resources.schemas.projeto.name}
+      dataset_catalog: ${resources.schemas.monitoramento.catalog_name}
+      dataset_schema: ${resources.schemas.monitoramento.name}
       embed_credentials: false

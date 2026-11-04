@@ -1,17 +1,27 @@
 # Governança no Unity Catalog como código: schemas, volume e permissões do projeto.
-# Modelo de acesso (docs/adr/0001-modelo-de-acesso-no-unity-catalog.md):
-#   <projeto>       bronze e silver, com dado bruto e intermediário: só engenharia
-#   <projeto>_gold  gold, pronta para o negócio: engenharia e leitura
-#   landing         arquivos recebidos das fontes: só engenharia
+# Um schema por camada, no mesmo catálogo (docs/adr/0001-modelo-de-acesso-no-unity-catalog.md):
+#   <projeto>_bronze         dado bruto e o volume landing: só engenharia
+#   <projeto>_silver         dado limpo e a função de máscara: só engenharia
+#   <projeto>_gold           gold, pronta para o negócio: engenharia e leitura
+#   <projeto>_monitoramento  event log, views mon_* e mon_falhas: só engenharia
 # A proteção contra destroy (lifecycle.prevent_destroy) fica nos targets dev e prod do
 # databricks.yml, não aqui: o target ci precisa poder ser destruído, e a CLI antes da
 # v1.22 ignora um override para false (docs/adr/0005). Um teste exige a proteção.
 resources:
   schemas:
-    projeto:
+    bronze:
       catalog_name: ${var.catalog}
-      name: ${var.projeto}
-      comment: Projeto do pacote Essentials, camadas bronze e silver. Acesso só da engenharia.
+      name: ${var.projeto}_bronze
+      comment: Projeto do pacote Essentials, camada bronze (dado como chegou) e landing. Acesso só da engenharia.
+      grants:
+        - principal: ${var.grupo_engenharia}
+          privileges:
+            - ALL_PRIVILEGES
+
+    silver:
+      catalog_name: ${var.catalog}
+      name: ${var.projeto}_silver
+      comment: Projeto do pacote Essentials, camada silver (dado limpo e histórico). Acesso só da engenharia.
       grants:
         - principal: ${var.grupo_engenharia}
           privileges:
@@ -20,7 +30,7 @@ resources:
     gold:
       catalog_name: ${var.catalog}
       name: ${var.projeto}_gold
-      comment: Projeto do pacote Essentials, camada gold (dimensões, fatos e agregadas) para o negócio.
+      comment: Projeto do pacote Essentials, camada gold (fatos e views) para o negócio.
       grants:
         - principal: ${var.grupo_engenharia}
           privileges:
@@ -30,10 +40,19 @@ resources:
             - USE_SCHEMA
             - SELECT
 
+    monitoramento:
+      catalog_name: ${var.catalog}
+      name: ${var.projeto}_monitoramento
+      comment: Projeto do pacote Essentials, monitoramento (event log, views mon_* e falhas). Acesso só da engenharia.
+      grants:
+        - principal: ${var.grupo_engenharia}
+          privileges:
+            - ALL_PRIVILEGES
+
   volumes:
     landing:
       catalog_name: ${var.catalog}
-      schema_name: ${resources.schemas.projeto.name}
+      schema_name: ${resources.schemas.bronze.name}
       name: landing
       volume_type: MANAGED
       comment: Landing zone do projeto, uma pasta por fonte (config/fontes.yml).

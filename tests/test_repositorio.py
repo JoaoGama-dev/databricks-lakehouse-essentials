@@ -127,6 +127,43 @@ def test_arquivos_de_seguranca_do_repositorio_existem(arquivo):
     assert (RAIZ / arquivo).is_file()
 
 
+# Sem UDF Python ---------------------------------------------------------------------
+
+# UDF Python tira o código do motor (Photon), roda linha a linha fora da JVM e impede o
+# refresh incremental das materialized views; a lógica do pacote é toda em SQL e funções
+# nativas do Spark. A máscara de dado pessoal é uma função SQL (CREATE FUNCTION ... RETURN).
+PADROES_UDF = {
+    "udf": re.compile(r"(?<![\w$])(?:F\.|functions\.)?udf\s*[(@]|@udf\b|\bimport\s+udf\b|\budf\s*,"),
+    "pandas_udf": re.compile(r"\bpandas_udf\b"),
+    "LANGUAGE PYTHON": re.compile(r"\bLANGUAGE\s+PYTHON\b", re.IGNORECASE),
+    "applyInPandas": re.compile(r"\bapplyInPandas\b"),
+}
+CODIGO_FONTE = sorted(p for p in (RAIZ / "src").rglob("*") if p.suffix in (".py", ".sql"))
+
+
+@pytest.mark.parametrize("arquivo", CODIGO_FONTE, ids=lambda p: str(p.relative_to(RAIZ)))
+def test_codigo_nao_usa_udf_python(arquivo):
+    texto = arquivo.read_text(encoding="utf-8")
+    encontrados = [nome for nome, padrao in PADROES_UDF.items() if padrao.search(texto)]
+    assert not encontrados, f"{arquivo.name} usa {', '.join(encontrados)}"
+
+
+@pytest.mark.parametrize(
+    "trecho",
+    [
+        "@F.udf(returnType='string')",
+        "from pyspark.sql.functions import udf\n",
+        "limpar = udf(lambda x: x)",
+        "@pandas_udf('double')",
+        "CREATE FUNCTION f(x STRING) RETURNS STRING LANGUAGE PYTHON AS $$ return x $$",
+        "df.groupBy('a').applyInPandas(f, schema)",
+    ],
+)
+def test_detector_de_udf_acha_cada_forma(trecho):
+    # Sem isto, um padrão errado deixaria o teste acima sempre verde.
+    assert any(padrao.search(trecho) for padrao in PADROES_UDF.values()), trecho
+
+
 # 2.7 Permissões mínimas -----------------------------------------------------------
 
 

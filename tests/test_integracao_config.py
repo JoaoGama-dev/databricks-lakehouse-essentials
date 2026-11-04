@@ -66,21 +66,38 @@ def test_dev_nao_tem_agendamento_ativo():
 # Travas do scripts/integracao.py ----------------------------------------------------
 
 
-@pytest.mark.parametrize("schema", ["dev_joao_portfolio_ci", "dev_joao_portfolio_ci_gold", "portfolio_ci_origem"])
+@pytest.mark.parametrize(
+    "schema",
+    [
+        "dev_joao_portfolio_ci_bronze",
+        "dev_joao_portfolio_ci_silver",
+        "dev_joao_portfolio_ci_gold",
+        "dev_joao_portfolio_ci_monitoramento",
+    ],
+)
 def test_aceita_schemas_do_ci(schema):
     assert INTEGRACAO.verificar_schema_ci(schema) == schema
+
+
+def test_sufixos_aceitos_sao_os_quatro_schemas_do_ci():
+    governanca = yaml.safe_load((RAIZ / "resources" / "governanca.yml").read_text(encoding="utf-8"))["resources"]
+    assert {f"_ci_{camada}" for camada in governanca["schemas"]} == set(INTEGRACAO.SUFIXOS_CI)
 
 
 @pytest.mark.parametrize(
     "schema",
     [
-        "dev_joao_portfolio",
+        "dev_joao_portfolio_bronze",
+        "dev_joao_portfolio_silver",
         "dev_joao_portfolio_gold",
-        "portfolio_origem",
+        "dev_joao_portfolio_monitoramento",
+        # Sufixos antigos: o schema do projeto inteiro e a origem simulada não existem mais.
+        "dev_joao_portfolio_ci",
+        "portfolio_ci_origem",
         "portfolio",
-        "ci_portfolio",
-        "dev_joao_portfolio_ci; DROP CATALOG essentials",
-        "dev_joao_portfolio_ci`.`x",
+        "ci_portfolio_bronze",
+        "dev_joao_portfolio_ci_bronze; DROP CATALOG essentials",
+        "dev_joao_portfolio_ci_bronze`.`x",
     ],
 )
 def test_recusa_qualquer_schema_fora_do_ci(schema):
@@ -88,19 +105,31 @@ def test_recusa_qualquer_schema_fora_do_ci(schema):
         INTEGRACAO.verificar_schema_ci(schema)
 
 
-def test_recusa_landing_fora_do_ci():
+@pytest.mark.parametrize(
+    "landing",
+    [
+        "/Volumes/essentials/dev_joao_portfolio_bronze/landing",
+        "/Volumes/essentials/dev_joao_portfolio_ci/landing",
+        "/Volumes/essentials/dev_joao_portfolio_ci_gold/landing",
+        "/Volumes/essentials",
+    ],
+)
+def test_recusa_landing_fora_do_ci(landing):
     with pytest.raises(INTEGRACAO.SchemaForaDoCI):
-        INTEGRACAO.esvaziar_landing(None, "/Volumes/essentials/dev_joao_portfolio/landing")
+        INTEGRACAO.esvaziar_landing(None, landing)
 
 
-def resumo(schema: str, gold: str, projeto: str = "portfolio_ci") -> dict:
+CAMADAS = ("bronze", "silver", "gold", "monitoramento")
+
+
+def resumo(prefixo: str, projeto: str = "portfolio_ci", trocar: dict | None = None) -> dict:
+    schemas = {camada: {"catalog_name": "essentials", "name": f"{prefixo}_{camada}"} for camada in CAMADAS}
+    for camada, nome in (trocar or {}).items():
+        schemas[camada]["name"] = nome
     return {
         "variables": {"projeto": {"value": projeto}, "warehouse_id": {"value": "abc"}},
         "resources": {
-            "schemas": {
-                "projeto": {"catalog_name": "essentials", "name": schema},
-                "gold": {"catalog_name": "essentials", "name": gold},
-            },
+            "schemas": schemas,
             "jobs": {"essentials_carga_diaria": {"id": "1"}},
             "pipelines": {"essentials_pipeline": {"id": "p"}},
         },
@@ -109,26 +138,27 @@ def resumo(schema: str, gold: str, projeto: str = "portfolio_ci") -> dict:
 
 def test_recursos_do_resumo_do_bundle(tmp_path):
     arquivo = tmp_path / "recursos.json"
-    arquivo.write_text(json.dumps(resumo("dev_joao_portfolio_ci", "dev_joao_portfolio_ci_gold")), encoding="utf-8")
+    arquivo.write_text(json.dumps(resumo("dev_joao_portfolio_ci")), encoding="utf-8")
     recursos = INTEGRACAO.carregar_recursos(arquivo)
-    assert recursos["schema_origem"] == "portfolio_ci_origem"
-    assert recursos["landing"] == "/Volumes/essentials/dev_joao_portfolio_ci/landing"
+    assert {recursos[f"schema_{camada}"] for camada in CAMADAS} == {f"dev_joao_portfolio_ci_{c}" for c in CAMADAS}
+    # A landing fica no schema da bronze.
+    assert recursos["landing"] == "/Volumes/essentials/dev_joao_portfolio_ci_bronze/landing"
 
 
-def test_resumo_de_outro_target_e_recusado(tmp_path):
+@pytest.mark.parametrize(
+    "outro_target",
+    [
+        resumo("dev_joao_portfolio", "portfolio"),
+        # Um schema só fora do CI já basta para recusar o resumo inteiro.
+        resumo("dev_joao_portfolio_ci", trocar={"gold": "dev_joao_portfolio_gold"}),
+    ],
+    ids=["dev", "um_schema_do_dev"],
+)
+def test_resumo_de_outro_target_e_recusado(tmp_path, outro_target):
     arquivo = tmp_path / "recursos.json"
-    outro_target = resumo("dev_joao_portfolio", "dev_joao_portfolio_gold", "portfolio")
     arquivo.write_text(json.dumps(outro_target), encoding="utf-8")
     with pytest.raises(INTEGRACAO.SchemaForaDoCI):
         INTEGRACAO.carregar_recursos(arquivo)
-
-
-def test_origem_do_ci_vem_do_setup():
-    comandos = INTEGRACAO.comandos_origem("essentials", "portfolio_ci")
-    assert len(comandos) == 3
-    assert all("`essentials`.`portfolio_ci_origem`" in comando for comando in comandos)
-    assert not any("essentials.portfolio_origem" in comando for comando in comandos)
-    assert comandos[2].count("current_timestamp()") == 38
 
 
 # Workflow ----------------------------------------------------------------------------

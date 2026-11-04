@@ -2,27 +2,32 @@
 # bronze.py e silver.py criam as tabelas de cada fonte a partir do config/fontes.yml.
 # Os caminhos das libraries são relativos a este arquivo. Ao criar um
 # src/pipeline/silver_<nome>.sql ou gold_*.sql, inclua-o na lista abaixo.
+# A chave essentials_pipeline não muda: trocá-la faria o bundle apagar o pipeline e as
+# tabelas dele. O nome visível é o "name".
 resources:
   pipelines:
     essentials_pipeline:
-      name: essentials_${var.projeto}
-      # Schema padrão: bronze e silver. A gold é publicada no schema gold (schema_gold).
-      catalog: ${resources.schemas.projeto.catalog_name}
-      schema: ${resources.schemas.projeto.name}
+      name: ${var.projeto}_pipeline_medalhao
+      # Schema padrão: silver. A bronze e a gold são publicadas com o nome totalmente
+      # qualificado, nos schemas de cada camada (schema_bronze e schema_gold).
+      catalog: ${resources.schemas.silver.catalog_name}
+      schema: ${resources.schemas.silver.name}
       serverless: true
       continuous: false
       channel: CURRENT
-      # Event log publicado no schema do projeto (só a engenharia lê): fonte das views
-      # mon_* de monitoramento (docs/adr/0003).
+      # Event log publicado no schema de monitoramento (só a engenharia lê): fonte das views
+      # mon_* (docs/adr/0003).
       event_log:
-        catalog: ${resources.schemas.projeto.catalog_name}
-        schema: ${resources.schemas.projeto.name}
+        catalog: ${resources.schemas.monitoramento.catalog_name}
+        schema: ${resources.schemas.monitoramento.name}
         name: mon_log_eventos
       configuration:
         catalogo: ${var.catalog}
         projeto: ${var.projeto}
-        schema_projeto: ${resources.schemas.projeto.name}
+        schema_bronze: ${resources.schemas.bronze.name}
+        schema_silver: ${resources.schemas.silver.name}
         schema_gold: ${resources.schemas.gold.name}
+        schema_monitoramento: ${resources.schemas.monitoramento.name}
         landing_path: /Volumes/${resources.volumes.landing.catalog_name}/${resources.volumes.landing.schema_name}/${resources.volumes.landing.name}
         fontes_config: ${workspace.file_path}/config/fontes.yml
         diretorio_codigo: ${workspace.file_path}/src

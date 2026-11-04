@@ -26,6 +26,7 @@ from essentials.monitoramento_sql import (
     sql_qualidade_diaria,
     sql_volume,
 )
+from fontes_ficticias import CADASTRO
 
 RAIZ = Path(__file__).resolve().parents[1]
 FONTES = carregar_fontes(RAIZ / "config" / "fontes.yml")
@@ -48,31 +49,32 @@ def tarefas() -> dict[str, dict]:
     return {tarefa["task_key"]: tarefa for tarefa in job()["tasks"]}
 
 
-COLUNAS_BRONZE_EXEMPLO = {
-    "bronze_cargos": ["id_cargo", "prefixo_vaga", "area", "atualizado_em", "_fonte", "_ingerido_em", "cd_novo"],
-}
+COLUNAS_BRONZE_EXEMPLO = {"bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"]}
+MON = "portfolio_monitoramento"
 
 
 def views() -> dict[str, str]:
     return {
-        "mon_qualidade_diaria": sql_qualidade_diaria("essentials", "portfolio", FONTES),
-        "mon_atualizacao": sql_atualizacao("essentials", "portfolio", FONTES, 26),
-        "mon_custo_diario": sql_custo_diario("essentials", "portfolio", "123", "abc-def"),
-        "mon_volume": sql_volume("essentials", "portfolio", FONTES, 50),
-        "mon_estrutura": sql_estrutura("essentials", "portfolio", FONTES, COLUNAS_BRONZE_EXEMPLO),
-        "mon_execucoes": sql_execucoes("essentials", "portfolio", "123"),
-        "mon_custo_mensal": sql_custo_mensal("essentials", "portfolio", 150),
+        "mon_qualidade_diaria": sql_qualidade_diaria("essentials", MON, FONTES),
+        "mon_atualizacao": sql_atualizacao("essentials", MON, "portfolio_silver", FONTES, 26),
+        "mon_custo_diario": sql_custo_diario("essentials", MON, "123", "abc-def"),
+        "mon_volume": sql_volume("essentials", MON, FONTES, 50),
+        "mon_estrutura": sql_estrutura(
+            "essentials", MON, "portfolio_bronze", "portfolio_silver", FONTES, COLUNAS_BRONZE_EXEMPLO
+        ),
+        "mon_execucoes": sql_execucoes("essentials", MON, "123"),
+        "mon_custo_mensal": sql_custo_mensal("essentials", MON, 150),
     }
 
 
 # 4.1 Event log --------------------------------------------------------------------
 
 
-def test_event_log_publicado_no_schema_do_projeto():
+def test_event_log_publicado_no_schema_de_monitoramento():
     pipeline = carregar_yaml(RAIZ / "resources" / "pipeline.yml")["resources"]["pipelines"]["essentials_pipeline"]
     assert pipeline["event_log"] == {
-        "catalog": "${resources.schemas.projeto.catalog_name}",
-        "schema": "${resources.schemas.projeto.name}",
+        "catalog": "${resources.schemas.monitoramento.catalog_name}",
+        "schema": "${resources.schemas.monitoramento.name}",
         "name": EVENT_LOG,
     }
 
@@ -88,7 +90,7 @@ def colunas_da_view(sql: str) -> list[str]:
 def test_views_seguem_o_padrao_de_nomes_e_o_dicionario():
     prefixos = "|".join(PREFIXOS_POR_TIPO)
     for nome, sql in views().items():
-        assert sql.startswith(f"CREATE OR REPLACE VIEW `essentials`.`portfolio`.`{nome}` (")
+        assert sql.startswith(f"CREATE OR REPLACE VIEW `essentials`.`{MON}`.`{nome}` (")
         colunas = colunas_da_view(sql)
         assert colunas, nome
         assert all(re.match(rf"^({prefixos})_", coluna) for coluna in colunas), (nome, colunas)
@@ -105,7 +107,7 @@ def test_select_das_views_devolve_as_colunas_declaradas():
 
 def test_qualidade_le_as_expectations_do_event_log():
     sql = views()["mon_qualidade_diaria"]
-    assert "FROM `essentials`.`portfolio`.`mon_log_eventos`" in sql
+    assert f"FROM `essentials`.`{MON}`.`mon_log_eventos`" in sql
     assert "event_type = 'flow_progress'" in sql
     assert "details:flow_progress:data_quality:expectations" in sql
 
@@ -113,11 +115,17 @@ def test_qualidade_le_as_expectations_do_event_log():
 def test_toda_regra_do_fontes_yml_tem_tabela_e_acao():
     regras = regras_monitoradas(FONTES)
     assert len(regras) == sum(len(fonte.get("regras", [])) for fonte in FONTES)
+    # O retrato é privado, mas as expectations dele seguem no event log com o nome da tabela.
     assert ("silver_int_agenda_retrato", "nome_preenchido", "drop") in regras
     assert ("silver_int_agenda_retrato", "telefone_valido", "alerta") in regras
-    assert ("silver_int_cargos_unico_ds_prefixo_vaga", "prefixo_unico", "alerta") in regras
+    assert ("silver_int_agenda_retrato", "data_plausivel", "falhar") in regras
     sql = views()["mon_qualidade_diaria"]
     assert all(f"('{tabela}', '{regra}', '{acao}')" in sql for tabela, regra, acao in regras)
+
+
+def test_regra_unico_e_monitorada_na_tabela_da_checagem():
+    regras = regras_monitoradas([CADASTRO])
+    assert ("silver_int_cadastro_unico_ds_prefixo", "prefixo_unico", "alerta") in regras
 
 
 def test_regra_de_incremental_fica_na_propria_silver():
@@ -130,7 +138,8 @@ def test_atualizacao_usa_o_pipeline_e_a_ingestao_de_cada_silver():
     sql = views()["mon_atualizacao"]
     assert "details:update_progress:state = 'COMPLETED'" in sql
     for fonte in FONTES:
-        assert f"max(_ingerido_em) AS dh_ultima_ingestao FROM `essentials`.`portfolio`.`silver_{fonte['nome']}`" in sql
+        silver = f"`essentials`.`portfolio_silver`.`silver_{fonte['nome']}`"
+        assert f"max(_ingerido_em) AS dh_ultima_ingestao FROM {silver}" in sql
     assert "coalesce(qt_horas_sem_atualizacao > 26, true) AS fl_atrasada" in sql
 
 
@@ -155,7 +164,7 @@ def test_views_sao_criadas_depois_do_pipeline_com_os_parametros():
 def test_alerta_de_atraso_le_a_view_e_avisa_por_email():
     alerta = carregar_yaml(RAIZ / "resources" / "alertas.yml")["resources"]["alerts"]["atraso_carga"]
     assert "mon_atualizacao" in alerta["query_text"]
-    assert "${resources.schemas.projeto.name}" in alerta["query_text"]
+    assert "${resources.schemas.monitoramento.name}" in alerta["query_text"]
     avaliacao = alerta["evaluation"]
     assert avaliacao["source"]["name"] in alerta["query_text"]
     assert avaliacao["comparison_operator"] == "GREATER_THAN"
@@ -219,11 +228,19 @@ def painel_saude() -> dict:
     return json.loads(PAINEL_SAUDE.read_text(encoding="utf-8"))
 
 
-def test_painel_de_saude_le_o_schema_do_projeto():
+def test_todos_os_alertas_leem_o_schema_de_monitoramento():
+    for nome, alerta in carregar_yaml(RAIZ / "resources" / "alertas.yml")["resources"]["alerts"].items():
+        tabelas = re.findall(r"\bFROM\s+(\S+)", alerta["query_text"])
+        tabelas = [t for t in tabelas if t != "("]
+        prefixo = "${resources.schemas.monitoramento.catalog_name}.${resources.schemas.monitoramento.name}.mon_"
+        assert tabelas and all(t.startswith(prefixo) for t in tabelas), (nome, tabelas)
+
+
+def test_painel_de_saude_le_o_schema_de_monitoramento():
     recurso = carregar_yaml(RAIZ / "resources" / "dashboard.yml")["resources"]["dashboards"]["painel_saude"]
     assert (RAIZ / "resources" / recurso["file_path"]).resolve() == PAINEL_SAUDE.resolve()
-    assert recurso["dataset_catalog"] == "${resources.schemas.projeto.catalog_name}"
-    assert recurso["dataset_schema"] == "${resources.schemas.projeto.name}"
+    assert recurso["dataset_catalog"] == "${resources.schemas.monitoramento.catalog_name}"
+    assert recurso["dataset_schema"] == "${resources.schemas.monitoramento.name}"
     assert recurso["embed_credentials"] is False
 
 

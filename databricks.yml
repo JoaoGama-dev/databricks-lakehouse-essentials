@@ -5,10 +5,12 @@
 #
 # Convenção do pacote Essentials (detalhes em docs/padroes/nomes.md):
 #   catálogo  essentials (dev) ou o catálogo do cliente (prod)
-#   schema    <projeto>          bronze e silver e o volume landing (só engenharia)
-#   schema    <projeto>_gold     gold (leitura para o negócio)
-#   schema    <projeto>_origem   sistemas de origem simulados (só no Free Edition, setup)
+#   schema    <projeto>_bronze         bronze e o volume landing (só engenharia)
+#   schema    <projeto>_silver         silver e a função de máscara (só engenharia)
+#   schema    <projeto>_gold           gold (leitura para o negócio)
+#   schema    <projeto>_monitoramento  event log, views mon_* e mon_falhas (só engenharia)
 #   bundle    essentials_<projeto>, para cada projeto ter sua pasta no workspace
+#   job       <projeto>_job_carga_diaria; pipeline <projeto>_pipeline_medalhao
 # Os schemas e o volume são criados pelo bundle (resources/governanca.yml). Em dev, o
 # modo development os prefixa com dev_<usuário>_, isolando cada desenvolvedor.
 # Para um projeto novo, troque o nome do bundle e a variável "projeto".
@@ -102,16 +104,14 @@ targets:
     resources:
       # Os dados do projeto nunca são apagados por um destroy (também em prod).
       schemas:
-        projeto:
+        bronze: &protegido
           lifecycle:
             prevent_destroy: true
-        gold:
-          lifecycle:
-            prevent_destroy: true
+        silver: *protegido
+        gold: *protegido
+        monitoramento: *protegido
       volumes:
-        landing:
-          lifecycle:
-            prevent_destroy: true
+        landing: *protegido
       jobs:
         # O modo development não pausa um agendamento com pause_status explícito: em dev a
         # carga roda só quando alguém manda (o workflow de integração roda toda noite).
@@ -129,7 +129,8 @@ targets:
 
   # Testes de integração (.github/workflows/integracao.yml, docs/adr/0005): o mesmo
   # workspace do dev, com estado de deploy próprio e o projeto com sufixo _ci, o que gera
-  # dev_<usuário>_<projeto>_ci e dev_<usuário>_<projeto>_ci_gold, sem tocar no dev.
+  # dev_<usuário>_<projeto>_ci_bronze, _ci_silver, _ci_gold e _ci_monitoramento, sem tocar
+  # no dev.
   # O workflow apaga tudo ao fim, por isso aqui os schemas e o volume ficam sem
   # prevent_destroy (a proteção é declarada só no dev e no prod).
   ci:
@@ -175,12 +176,12 @@ targets:
       grupo_dados_pessoais: essentials_dados_pessoais
     resources:
       schemas:
-        projeto:
+        bronze: &protegido_prod
           lifecycle:
             prevent_destroy: true
-        gold:
-          lifecycle:
-            prevent_destroy: true
+        silver: *protegido_prod
+        gold: *protegido_prod
+        monitoramento: *protegido_prod
       volumes:
         landing:
           volume_type: EXTERNAL
