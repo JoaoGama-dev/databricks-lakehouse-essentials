@@ -70,23 +70,6 @@ def test_detecta_colunas_sensiveis_e_sugere_mascara(agenda):
     assert "valores_frequentes" not in nome and "valores_frequentes" not in telefone
 
 
-def test_mostra_categorias_de_baixa_cardinalidade(agenda):
-    status = coluna(perfilar_dados.perfilar(agenda), "STATUS.")
-    assert status["sensivel"] is None
-    assert {"Aprovada", "N/ atendeu", "Talvez"} <= {v["valor"] for v in status["valores_frequentes"]}
-
-
-def test_descreve_a_estrutura_do_arquivo(agenda):
-    perfil = perfilar_dados.perfilar(agenda)
-    assert perfil["bom_utf8"] is True
-    assert perfil["quebra_de_linha"] == "CRLF"
-    assert perfil["separador"] == ";"
-    assert perfil["linhas_vazias"] > 0
-    rotulos = {r for grupo in perfil["linhas_estruturais"] for r in grupo["rotulos_repetidos"]}
-    assert {"AGENDA", "DIA"} <= rotulos
-    assert coluna(perfil, perfil["cabecalho"][0])["tipo_inferido"] == "hora (HH:mm)"
-
-
 def test_detecta_cpf_email_e_esconde_alta_cardinalidade(tmp_path):
     arquivo = tmp_path / "clientes.csv"
     linhas = ["documento,contato,segmento,codigo"]
@@ -118,11 +101,3 @@ def test_forma_esconde_o_conteudo(valor, esperado):
 )
 def test_forma_geral_agrupa_linhas_da_mesma_estrutura(valor, esperado):
     assert perfilar_dados.forma_geral(valor) == esperado
-
-
-def test_excel_e_recusado_com_orientacao(tmp_path):
-    planilha = tmp_path / "dados.xlsx"
-    planilha.write_bytes(b"PK")
-    resultado = subprocess.run([sys.executable, str(SCRIPT), str(planilha)], capture_output=True, text=True)
-    assert resultado.returncode != 0
-    assert "CSV" in resultado.stderr

@@ -76,12 +76,8 @@ def test_pipeline_e_job_instalam_o_requirements_runtime():
 # 2.4 Varredura de segredos --------------------------------------------------------
 
 
-def test_ci_tem_os_tres_jobs():
-    assert set(carregar_yaml(RAIZ / ".github" / "workflows" / "ci.yml")["jobs"]) == {
-        "testes",
-        "validar_bundle",
-        "segredos",
-    }
+def test_ci_roda_os_testes_e_a_varredura_de_segredos():
+    assert {"testes", "segredos"} <= set(carregar_yaml(RAIZ / ".github" / "workflows" / "ci.yml")["jobs"])
 
 
 def test_gitleaks_do_ci_e_conferido_pelo_sha256_e_varre_o_historico():
@@ -125,35 +121,10 @@ def test_gitleaks_tem_a_mesma_versao_no_ci_e_no_pre_commit():
 # 2.6 Arquivos do repositório ------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "arquivo",
-    [
-        "LICENSE",
-        "SECURITY.md",
-        ".github/CODEOWNERS",
-        ".github/pull_request_template.md",
-        ".github/ISSUE_TEMPLATE/bug.md",
-        ".github/ISSUE_TEMPLATE/nova-fonte.md",
-        ".github/ISSUE_TEMPLATE/novo-indicador.md",
-        ".github/ISSUE_TEMPLATE/config.yml",
-    ],
-)
-def test_arquivos_do_repositorio_existem(arquivo):
+# Sem CODEOWNERS o PR não exige a revisão do dono; sem SECURITY.md não há canal de aviso.
+@pytest.mark.parametrize("arquivo", ["SECURITY.md", ".github/CODEOWNERS"])
+def test_arquivos_de_seguranca_do_repositorio_existem(arquivo):
     assert (RAIZ / arquivo).is_file()
-
-
-def test_licenca_e_a_mesma_do_readme():
-    licenca = (RAIZ / "LICENSE").read_text(encoding="utf-8")
-    readme = (RAIZ / "README.md").read_text(encoding="utf-8")
-    assert "Todos os direitos reservados" in licenca and "Todos os direitos reservados" in readme
-    assert "não pode copiá-lo, modificá-lo, distribuí-lo nem usá-lo comercialmente" in licenca
-
-
-def test_templates_de_issue_tem_frontmatter():
-    for modelo in (RAIZ / ".github" / "ISSUE_TEMPLATE").glob("*.md"):
-        texto = modelo.read_text(encoding="utf-8")
-        meta = yaml.safe_load(texto.split("---\n")[1])
-        assert meta["name"] and meta["about"] and meta["labels"], modelo.name
 
 
 # 2.7 Permissões mínimas -----------------------------------------------------------

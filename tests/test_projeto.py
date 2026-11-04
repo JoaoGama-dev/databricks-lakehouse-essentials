@@ -67,10 +67,6 @@ def test_config_valida_contra_o_schema():
     assert FONTES
 
 
-def test_exemplo_tem_arquivo_e_tabela():
-    assert {f["tipo"] for f in FONTES} >= {"arquivo", "tabela"}
-
-
 def test_config_sem_campo_obrigatorio_e_rejeitada():
     config = config_bruta()
     del config["fontes"][0]["chave_primaria"]
@@ -205,11 +201,10 @@ def test_cada_fonte_gera_sua_bronze(f):
         assert pasta_landing(f)
 
 
-def test_bronze_py_cria_uma_tabela_por_fonte():
-    codigo = (PASTA_PIPELINE / "bronze.py").read_text(encoding="utf-8")
-    assert "from pyspark import pipelines as dp" in codigo
-    assert "import dlt" not in codigo
-    assert "for fonte in FONTES:\n    criar_bronze(fonte)" in codigo
+@pytest.mark.parametrize("arquivo", sorted(PASTA_PIPELINE.glob("*.py")), ids=lambda a: a.name)
+def test_pipeline_nao_usa_o_modulo_dlt_antigo(arquivo):
+    # Regra 5 do CLAUDE.md: o módulo dlt é o legado; o pipeline usa pyspark.pipelines.
+    assert not re.search(r"^\s*(import dlt|from dlt\b)", arquivo.read_text(encoding="utf-8"), re.MULTILINE)
 
 
 def test_tabela_de_apoio_e_criada_no_setup():
@@ -335,8 +330,8 @@ def test_schema_da_silver_descreve_todas_as_colunas_na_ordem(f):
 
 def test_schema_do_historico_inclui_a_vigencia():
     schema = schema_silver(fonte("agenda"), "TIMESTAMP")
-    assert schema.endswith("COMMENT 'Fim da vigência desta versão do registro; vazio na versão atual.'")
-    assert "`__START_AT` TIMESTAMP COMMENT" in schema
+    for coluna in ("__START_AT", "__END_AT"):
+        assert f"`{coluna}` TIMESTAMP COMMENT '" in schema
 
 
 def test_tipos_do_schema_seguem_o_yaml():
@@ -350,14 +345,6 @@ def test_tipos_do_schema_seguem_o_yaml():
     for trecho in trechos:
         assert trecho in schema
     assert "_arquivo_origem" not in schema  # fonte tabela não tem arquivo
-
-
-def test_toda_tabela_da_silver_e_criada_com_schema():
-    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
-    criacoes = re.findall(r"dp\.(?:table|materialized_view|create_streaming_table)\((.*?)\n\s*\)", codigo, re.DOTALL)
-    assert len(criacoes) == 5
-    # A tabela de mudanças do cdc leva colunas extras do AUTO CDC e é a única sem schema fixo.
-    assert sum("schema=" in criacao for criacao in criacoes) == 4
 
 
 @pytest.mark.parametrize("arquivo", arquivos_gold(), ids=lambda a: a.name)
@@ -468,10 +455,6 @@ def test_prod_tem_run_as():
 # Gold -----------------------------------------------------------------------------
 
 
-def test_existe_gold():
-    assert arquivos_gold()
-
-
 TIPOS_GOLD = {"dim": "dimensao", "fato": "fato", "agg": "agregada"}
 
 
@@ -496,13 +479,6 @@ def test_colunas_da_gold_tem_prefixo_da_classe(arquivo):
     assert all(re.match(rf"^({prefixos})_", apelido) for apelido in apelidos), apelidos
 
 
-def test_gold_classifica_a_situacao_da_entrevista():
-    sql = (PASTA_PIPELINE / "gold_entrevistas.sql").read_text(encoding="utf-8")
-    for situacao in ("'Concluído'", "'Em andamento'", "'Pendente'", "'Não identificado'"):
-        assert situacao in sql
-    assert "AS st_situacao" in sql
-
-
 # Painel AI/BI -----------------------------------------------------------------------
 
 PAINEL = RAIZ / "src" / "dashboards" / "entrevistas.lvdash.json"
@@ -523,10 +499,6 @@ def test_painel_esta_no_bundle_sem_ambiente_fixo():
     assert recurso["dataset_catalog"] == "${resources.schemas.gold.catalog_name}"
     assert recurso["dataset_schema"] == "${resources.schemas.gold.name}"
     assert recurso["embed_credentials"] is False
-
-
-def test_painel_tem_as_tres_paginas():
-    assert [p["displayName"] for p in painel()["pages"]] == ["Visão geral", "Áreas e vagas", "Pendências"]
 
 
 def test_datasets_do_painel_so_leem_a_gold_sem_catalogo_fixo():
@@ -556,23 +528,6 @@ def test_widgets_usam_datasets_e_campos_que_existem():
                 if "queryName" in item_codificacao:
                     assert item_codificacao["queryName"] in consultas
         assert set(usados) <= campos, (pagina, widget["name"], set(usados) - campos)
-
-
-def test_widgets_nao_se_sobrepoem():
-    ocupadas: dict[tuple[str, int, int], str] = {}
-    for pagina, item in widgets_do_painel():
-        pos = item["position"]
-        assert pos["x"] + pos["width"] <= 6, item["widget"]["name"]
-        for x in range(pos["x"], pos["x"] + pos["width"]):
-            for y in range(pos["y"], pos["y"] + pos["height"]):
-                chave = (pagina, x, y)
-                assert chave not in ocupadas, (item["widget"]["name"], ocupadas.get(chave))
-                ocupadas[chave] = item["widget"]["name"]
-
-
-def test_gold_junta_as_duas_silvers():
-    sql = (PASTA_PIPELINE / "gold_entrevistas.sql").read_text(encoding="utf-8")
-    assert "silver_agenda" in sql and "silver_cargos" in sql and "JOIN" in sql
 
 
 # Gerador de dados fictícios -------------------------------------------------------

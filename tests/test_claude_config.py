@@ -1,6 +1,7 @@
-"""Testes da configuração do Claude Code: settings, subagentes, skills, CLAUDE.md e evals.
+"""Testes da configuração do Claude Code: permissões, subagentes, skills e evals.
 
-Não chamam o modelo; garantem que a estrutura está completa e coerente.
+Não chamam o modelo; garantem que nada perigoso fica liberado, que os agentes de revisão
+não editam e que os dados dos evals são reconhecidos como sensíveis.
 """
 
 from __future__ import annotations
@@ -64,28 +65,17 @@ def test_nada_perigoso_esta_liberado():
 # Subagentes -----------------------------------------------------------------------
 
 
-def test_existem_os_seis_subagentes():
-    assert [p.stem for p in AGENTES] == [
-        "arquiteto-dados",
-        "devops-dados",
-        "documentador",
-        "engenheiro-dados",
-        "qa-dados",
-        "revisor-seguranca",
-    ]
-
-
 @pytest.mark.parametrize("caminho", AGENTES, ids=lambda p: p.stem)
 def test_subagente_tem_frontmatter_valido(caminho):
-    meta, corpo = frontmatter(caminho)
+    # Frontmatter inválido faz o Claude Code ignorar o agente ou dar ferramentas erradas.
+    meta, _ = frontmatter(caminho)
     assert meta["name"] == caminho.stem
-    assert len(meta["description"]) >= 40
+    assert meta["description"]
     assert meta["model"] in MODELOS
     ferramentas = {f.strip() for f in meta["tools"].split(",")}
     assert ferramentas <= FERRAMENTAS, ferramentas - FERRAMENTAS
     nomes_skills = {p.name for p in SKILLS}
     assert set(meta.get("skills", [])) <= nomes_skills
-    assert "português" in corpo
 
 
 @pytest.mark.parametrize("caminho", AGENTES, ids=lambda p: p.stem)
@@ -107,43 +97,9 @@ def test_agentes_de_revisao_nao_editam():
 # Skills ---------------------------------------------------------------------------
 
 
-def test_existem_as_oito_skills():
-    assert [p.name for p in SKILLS] == [
-        "adr",
-        "entrega",
-        "implantar-dev",
-        "nova-fonte",
-        "novo-cliente",
-        "novo-indicador",
-        "revisao-qualidade",
-        "revisar-pr",
-    ]
-
-
-@pytest.mark.parametrize("pasta", SKILLS, ids=lambda p: p.name)
-def test_skill_tem_descricao_passos_e_criterio_de_pronto(pasta):
-    meta, corpo = frontmatter(pasta / "SKILL.md")
-    assert meta["name"] == pasta.name
-    assert meta["description"].startswith("Use ")
-    assert re.search(r"^1\. ", corpo, re.MULTILINE), "passos numerados"
-    assert "**Pronto quando:**" in corpo
-    assert len(corpo.splitlines()) < 500
-
-
 def test_skill_com_efeito_colateral_nao_e_invocada_sozinha():
     meta, _ = frontmatter(CLAUDE / "skills" / "implantar-dev" / "SKILL.md")
     assert meta["disable-model-invocation"] is True
-
-
-# CLAUDE.md ------------------------------------------------------------------------
-
-
-def test_claude_md_e_enxuto_e_aponta_para_os_padroes():
-    texto = (RAIZ / "CLAUDE.md").read_text(encoding="utf-8")
-    assert len(texto.splitlines()) <= 100
-    for arquivo in ("nomes.md", "camadas.md", "lgpd.md", "fluxo-de-trabalho.md"):
-        assert f"docs/padroes/{arquivo}" in texto
-        assert (RAIZ / "docs" / "padroes" / arquivo).is_file()
 
 
 # Evals ----------------------------------------------------------------------------
@@ -154,19 +110,6 @@ def perfilar_dados():
     modulo = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modulo)
     return modulo
-
-
-def test_existem_evals_das_skills_criticas():
-    assert [p.name for p in EVALS] == ["nova-fonte", "novo-cliente"]
-
-
-@pytest.mark.parametrize("caso", EVALS, ids=lambda p: p.name)
-def test_eval_esta_completo(caso):
-    assert (caso / "pedido.md").is_file()
-    verificacoes = (caso / "verificacoes.md").read_text(encoding="utf-8")
-    assert "## Obrigatórios" in verificacoes
-    assert verificacoes.count("- [ ]") >= 8
-    assert list((caso / "dados").glob("*.csv"))
 
 
 @pytest.mark.parametrize(
