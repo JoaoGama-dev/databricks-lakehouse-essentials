@@ -73,7 +73,7 @@ hook, e o deploy de produção só acontece pelo GitHub Actions
   [`cenarios-reais.md`](cenarios-reais.md).
 - **Cenários de integração:** com `cenarios_de_falha`, o `integracao.yml` envia, depois da
   v1 e da v2, as agendas v5 (reenvio da v2 com outro nome), v6 (a v1 chegando atrasada),
-  v7 (só cabeçalho), um full refresh, v8 (a v2 em cp1252), v3 (queda de volume e coluna
+  v7 (só cabeçalho), um full refresh (que precisa ser recusado), v8 (a v2 em cp1252), v3 (queda de volume e coluna
   nova) e v4 (regra que para a carga). Cada cenário parte do estado do anterior.
 - `DATABRICKS_HOST_DEV` (variável do repositório) é a URL do workspace de dev; o
   `databricks.yml` não traz o host.

@@ -14,7 +14,9 @@ time travel mantêm o dado legível). Excluir à mão, de memória, é arriscado
 ## Decisão
 
 1. **`pipelines.reset.allowed = false`** na bronze de arquivo, banco e API e no histórico
-   SCD2. O full refresh não apaga nem reingere nada.
+   SCD2. O full refresh do grafo inteiro é recusado pelo Databricks antes de apagar qualquer
+   coisa (o histórico depende do retrato, que seria recriado; confirmado na integração em
+   2026-11-04). Para reprocessar, use `--full-refresh` só nas tabelas que podem ser recriadas.
 2. **`scripts/gerar_exclusao_titular.py`** gera o SQL de exclusão para **revisão humana**.
    Não executa nada, não usa rede e recebe o titular só como parâmetro nomeado
    (`:titular_<coluna>`), com guarda contra parâmetro vazio e comparação por campo inteiro.

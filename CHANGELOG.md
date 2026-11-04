@@ -35,7 +35,8 @@ só a versão menor.
 - Testes enxugados por risco (327 para 272 e, com os novos, 336): cada teste protege contra
   dado errado, vazamento de dado pessoal, custo, deploy quebrado ou falha de segurança.
 - `pipelines.reset.allowed = false` na bronze de arquivo, banco e API e no histórico SCD2:
-  o full refresh não apaga o histórico nem reingere a landing. Mudar o schema da bronze
+  o full refresh do grafo inteiro é recusado sem apagar o histórico nem reingerir a
+  landing. Mudar o schema da bronze
   passa a ser um procedimento manual, com decisão registrada.
 - Roteiro de operação, `lgpd.md`, `camadas.md`, `arquitetura.md` e `desenvolvimento.md`
   com os avisos novos, a regra de testes por risco e os cenários de integração.

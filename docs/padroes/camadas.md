@@ -51,6 +51,8 @@
   `codificacao_invalida` ([ADR 0016](../adr/0016-data-de-referencia-do-snapshot.md)).
 - **Full refresh não apaga o histórico:** a bronze de arquivo, banco e API e o histórico
   SCD2 levam `pipelines.reset.allowed = false` ([ADR 0017](../adr/0017-retencao-e-exclusao-de-titular.md)).
+  Com isso, o Databricks recusa o full refresh do grafo inteiro; reprocesse com
+  `--full-refresh` só nas tabelas que podem ser recriadas.
   **Mudar o schema da bronze é manual:** remova a propriedade com decisão registrada, faça a
   mudança e a restaure (passo a passo em [`retencao-e-exclusao.md`](retencao-e-exclusao.md)).
 - **Lógica específica de uma fonte** fica em `src/pipeline/silver_<fonte>.sql`, como a

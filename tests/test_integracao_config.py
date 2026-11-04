@@ -231,13 +231,11 @@ def test_todo_cenario_do_workflow_existe_em_test_cenarios():
     assert tuple(re.findall(r'"(\w+)"', declarados)) == CENARIOS_DE_TESTE
 
 
-def test_full_refresh_recalcula_o_pipeline_e_recria_as_views():
+def test_full_refresh_do_grafo_inteiro_precisa_ser_recusado():
+    # Se o full refresh passasse, o histórico SCD2 teria sido apagado: o passo falha nesse caso.
     passo = next(p for p in passos() if "--full-refresh-all" in p.get("run", ""))
-    linhas = passo["run"].strip().splitlines()
-    assert linhas == [
-        "databricks bundle run essentials_pipeline -t ci --full-refresh-all",
-        "databricks bundle run essentials_carga_diaria -t ci --only governanca_depois",
-    ]
+    assert passo["run"].startswith("if databricks bundle run essentials_pipeline -t ci --full-refresh-all; then")
+    assert "exit 1" in passo["run"]
 
 
 def test_timeout_do_workflow_cabe_as_cargas_dos_cenarios():

@@ -114,11 +114,10 @@ def test_full_refresh_preserva_a_bronze(valor):
 
 
 @so_no("full_refresh")
-def test_full_refresh_recalcula_a_gold_igual(consultar, valor):
+def test_full_refresh_recusado_nao_apaga_a_silver_nem_a_gold(consultar, valor):
     assert arquivos_do_retrato(consultar) == {REENVIO}
     fato = valor("SELECT count(*) FROM {gold}.gold_fato_entrevista")
-    assert fato == valor("SELECT count(*) FROM {silver}.silver_agenda")
-    assert valor("SELECT sum(qt_entrevistas) FROM {gold}.gold_agg_entrevista_mensal") == fato
+    assert fato == valor("SELECT count(*) FROM {silver}.silver_agenda") > 0
 
 
 @so_no("cp1252")

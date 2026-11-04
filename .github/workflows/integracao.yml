@@ -126,14 +126,17 @@ jobs:
         if: inputs.cenarios_de_falha
         run: INTEGRACAO_CENARIO=so_cabecalho pytest -m integracao tests/integracao/test_cenarios.py -v
 
-      # O full refresh recria as tabelas que podem ser recriadas; a bronze e o histórico têm
-      # pipelines.reset.allowed = false. Depois, a governanca_depois reaplica as tags pii e
-      # recria as views mon_* sobre as tabelas recalculadas.
-      - name: "Cenário full refresh: recalcular tudo sem perder a bronze nem o histórico"
+      # A bronze e o histórico têm pipelines.reset.allowed = false. O Databricks recusa o full
+      # refresh do grafo inteiro antes de apagar qualquer coisa: o histórico depende do retrato,
+      # que seria recriado, e o streaming não aceita dado apagado na origem.
+      - name: "Cenário full refresh: recusado sem apagar a bronze nem o histórico"
         if: inputs.cenarios_de_falha
         run: |
-          databricks bundle run essentials_pipeline -t ci --full-refresh-all
-          databricks bundle run essentials_carga_diaria -t ci --only governanca_depois
+          if databricks bundle run essentials_pipeline -t ci --full-refresh-all; then
+            echo "O full refresh deveria ter sido recusado pela proteção do histórico."
+            exit 1
+          fi
+          echo "O full refresh foi recusado, como esperado."
 
       - name: Conferir o cenário full refresh
         if: inputs.cenarios_de_falha
