@@ -81,6 +81,7 @@ roda quando alguma falha: grava o motivo limpo em `mon_falhas` e termina com err
 | Falha e demora (mais de 15 minutos) | na hora | e-mail do job, para o cliente e o suporte |
 | `falha_carga` | 7h | alerta SQL sobre `mon_falhas`, com o motivo |
 | `qualidade_carga` | 7h | alerta SQL sobre `mon_volume` e `mon_estrutura` (ADR 0014) |
+| `qualidade_carga` (avisos de arquivo) | 7h | `arquivo_ignorado` (o último arquivo não virou o retrato) e `codificacao_invalida` (acentos trocados), em `mon_estrutura` (ADR 0016); mostram só o nome do arquivo |
 | `custo_teto` | 8h | alerta SQL sobre `mon_custo_mensal`, a partir de 80% do teto |
 | `atraso_carga` | 9h | alerta SQL sobre `mon_atualizacao`, acima de 26 horas (ADR 0003) |
 
@@ -173,7 +174,7 @@ errado (no exemplo, `data_plausivel`), não linha ruim.
 | `mon_custo_diario` | view | monitoramento · custo | DBUs e custo de lista do job e do pipeline |
 | `mon_custo_mensal` | view | monitoramento · custo | custo do mês contra o teto do diagnóstico |
 | `mon_volume` | view | monitoramento · volume | linhas de cada carga; alerta de retrato vazio ou em queda |
-| `mon_estrutura` | view | monitoramento · estrutura | colunas novas na origem e dados resgatados |
+| `mon_estrutura` | view | monitoramento · estrutura | colunas novas na origem, dados resgatados, arquivo ignorado e codificação inválida |
 | `mon_execucoes` | view | monitoramento · execuções | execuções, sucessos, falhas e taxa de sucesso por dia |
 | `mon_falhas` | tabela | monitoramento · falha | falhas da carga com o motivo, sem dado pessoal |
 

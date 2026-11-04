@@ -43,6 +43,16 @@
   falha dispara com o motivo, ADR 0015); linha ruim é `drop` ou `alerta`.
 - Na bronze de arquivo, o Auto Loader roda em modo `rescue` (CSV, JSON, Parquet): coluna
   nova na origem não derruba a carga e aparece em `mon_estrutura` (ADR 0014).
+- **Data de referência (snapshot de arquivos):** o retrato é o arquivo com a maior
+  `data_referencia` do `fontes.yml` (`ingestao`, padrão; `conteudo`, com uma expressão SQL
+  agregada; ou `nome_arquivo`, com regex de um grupo e formato), não o último ingerido. A
+  `expressao` é código executável: revise como código no PR. O arquivo recebido que não
+  virou retrato aparece em `mon_estrutura` como `arquivo_ignorado`, e texto com U+FFFD, como
+  `codificacao_invalida` ([ADR 0016](../adr/0016-data-de-referencia-do-snapshot.md)).
+- **Full refresh não apaga o histórico:** a bronze de arquivo, banco e API e o histórico
+  SCD2 levam `pipelines.reset.allowed = false` ([ADR 0017](../adr/0017-retencao-e-exclusao-de-titular.md)).
+  **Mudar o schema da bronze é manual:** remova a propriedade com decisão registrada, faça a
+  mudança e a restaure (passo a passo em [`retencao-e-exclusao.md`](retencao-e-exclusao.md)).
 - **Lógica específica de uma fonte** fica em `src/pipeline/silver_<fonte>.sql`, como a
   view temporária `silver_int_<fonte>_preparada`, com `preparacao_sql: true` no YAML. Nela
   vai só o que a limpeza padrão não cobre (ex.: estrutura do arquivo).

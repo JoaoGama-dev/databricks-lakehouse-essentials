@@ -134,6 +134,12 @@ Nos dois casos:
   arquivo com nome repetido não é lido de novo.
 - Envie a **planilha inteira**: uma planilha pela metade aparece no aviso de volume e
   tira do painel o que faltou, até a próxima carga com o arquivo completo.
+- Nunca ponha nome de pessoa, CPF ou telefone no **nome do arquivo**: os avisos mostram
+  esse nome.
+- Salve a planilha em **UTF-8**. Se os acentos aparecerem trocados no aviso
+  "codificação inválida", salve de novo em UTF-8 e envie com outro nome.
+- Se chegar o aviso "arquivo ignorado", o último arquivo enviado não virou o painel
+  (era mais antigo que o anterior ou estava vazio). Confira se foi o arquivo certo.
 - O painel é atualizado na próxima carga das 6h.
 
 ## 7. Como acompanhar o custo no Azure
