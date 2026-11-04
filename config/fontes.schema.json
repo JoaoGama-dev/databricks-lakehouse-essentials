@@ -34,6 +34,7 @@
           "items": { "type": "string" }
         },
         "coluna_atualizacao": { "type": "string" },
+        "data_referencia": { "$ref": "#/$defs/data_referencia" },
         "arquivo": { "$ref": "#/$defs/arquivo" },
         "tabela": { "$ref": "#/$defs/tabela" },
         "banco": { "$ref": "#/$defs/banco" },
@@ -70,10 +71,34 @@
         "formato": { "enum": ["csv", "json", "parquet", "texto", "excel"] },
         "caminho": { "type": "string", "minLength": 1 },
         "opcoes": {
+          "description": "Opções livres de leitura do Auto Loader, repassadas como estão. Num CSV que não vem em UTF-8, informe a codificação pela opção encoding do leitor de CSV (ex.: \"encoding\": \"windows-1252\"). O formato texto não tem essa opção: arquivo em outra codificação aparece como codificacao_invalida em mon_estrutura.",
           "type": "object",
           "additionalProperties": { "type": "string" }
         }
       }
+    },
+    "data_referencia": {
+      "description": "Snapshot: como escolher o arquivo que vira o retrato. ingestao (padrão) = o último ingerido; conteudo = expressão SQL agregada sobre as colunas padronizadas; nome_arquivo = data extraída do nome do arquivo.",
+      "type": "object",
+      "required": ["tipo"],
+      "additionalProperties": false,
+      "properties": {
+        "tipo": { "enum": ["ingestao", "conteudo", "nome_arquivo"] },
+        "expressao": { "type": "string", "minLength": 1 },
+        "regex": { "type": "string", "minLength": 1 },
+        "formato": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        { "if": { "properties": { "tipo": { "const": "ingestao" } } }, "then": { "maxProperties": 1 } },
+        {
+          "if": { "properties": { "tipo": { "const": "conteudo" } } },
+          "then": { "required": ["expressao"], "not": { "anyOf": [{ "required": ["regex"] }, { "required": ["formato"] }] } }
+        },
+        {
+          "if": { "properties": { "tipo": { "const": "nome_arquivo" } } },
+          "then": { "required": ["regex", "formato"], "not": { "required": ["expressao"] } }
+        }
+      ]
     },
     "tabela": {
       "type": "object",

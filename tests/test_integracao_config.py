@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -154,6 +155,26 @@ def passos() -> list[dict]:
     return workflow()["jobs"]["integracao"]["steps"]
 
 
+# Cenários depois da v2: primeiro os de risco, que partem do estado da v2; a v3 e a v4 por último.
+CENARIOS_DE_TESTE = ("reenvio", "atrasado", "so_cabecalho", "full_refresh", "cp1252", "v3", "v4")
+CENARIOS_EM_ORDEM = (
+    "integracao.py enviar --versao 5",
+    "INTEGRACAO_CENARIO=reenvio",
+    "integracao.py enviar --versao 6",
+    "INTEGRACAO_CENARIO=atrasado",
+    "integracao.py enviar --versao 7",
+    "INTEGRACAO_CENARIO=so_cabecalho",
+    "--full-refresh-all",
+    "INTEGRACAO_CENARIO=full_refresh",
+    "integracao.py enviar --versao 8",
+    "INTEGRACAO_CENARIO=cp1252",
+    "integracao.py enviar --versao 3",
+    "INTEGRACAO_CENARIO=v3",
+    "integracao.py enviar --versao 4",
+    "INTEGRACAO_CENARIO=v4",
+)
+
+
 def test_workflow_comeca_limpo():
     comandos = [passo.get("run", "") for passo in passos()]
     deploy = next(i for i, comando in enumerate(comandos) if "bundle deploy -t ci" in comando)
@@ -176,6 +197,7 @@ def test_workflow_segue_a_ordem_e_sempre_limpa():
         "INTEGRACAO_VERSAO=1",
         "integracao.py enviar --versao 2",
         "INTEGRACAO_VERSAO=2",
+        *CENARIOS_EM_ORDEM,
         "bundle destroy -t ci",
         "integracao.py limpar",
     ]
@@ -185,6 +207,67 @@ def test_workflow_segue_a_ordem_e_sempre_limpa():
     for passo in passos()[deploy:]:
         if "bundle destroy" in passo.get("run", "") or "integracao.py limpar" in passo.get("run", ""):
             assert passo["if"] == "always()", passo["name"]
+
+
+def test_cenarios_so_rodam_quando_pedidos_e_cada_um_tem_conferencia():
+    comandos = [passo.get("run", "") for passo in passos()]
+    v2 = next(i for i, comando in enumerate(comandos) if "INTEGRACAO_VERSAO=2" in comando)
+    destroy = next(i for i, comando in enumerate(comandos) if "bundle destroy -t ci" in comando and i > v2)
+    cenarios = passos()[v2 + 1 : destroy]
+    assert cenarios and all(passo["if"] == "inputs.cenarios_de_falha" for passo in cenarios)
+    # Um passo de carga e um de conferência por cenário, alternados.
+    conferencias = [passo["run"] for passo in cenarios[1::2]]
+    assert all(run.startswith("INTEGRACAO_CENARIO=") and "tests/integracao/test_cenarios.py" in run
+               for run in conferencias), conferencias
+    assert len(cenarios) == 2 * len(CENARIOS_DE_TESTE)
+
+
+def test_todo_cenario_do_workflow_existe_em_test_cenarios():
+    texto = WORKFLOW.read_text(encoding="utf-8")
+    nomes = re.findall(r"INTEGRACAO_CENARIO=(\w+)", texto)
+    assert tuple(nomes) == CENARIOS_DE_TESTE
+    codigo = (RAIZ / "tests" / "integracao" / "test_cenarios.py").read_text(encoding="utf-8")
+    declarados = re.search(r"^CENARIOS = \((.*)\)$", codigo, re.MULTILINE).group(1)
+    assert tuple(re.findall(r'"(\w+)"', declarados)) == CENARIOS_DE_TESTE
+
+
+def test_full_refresh_recalcula_o_pipeline_e_recria_as_views():
+    passo = next(p for p in passos() if "--full-refresh-all" in p.get("run", ""))
+    linhas = passo["run"].strip().splitlines()
+    assert linhas == [
+        "databricks bundle run essentials_pipeline -t ci --full-refresh-all",
+        "databricks bundle run essentials_carga_diaria -t ci --only governanca_depois",
+    ]
+
+
+def test_timeout_do_workflow_cabe_as_cargas_dos_cenarios():
+    # Nove cargas de até 6 minutos, mais deploy, conferências e destroy.
+    assert workflow()["jobs"]["integracao"]["timeout-minutes"] >= 9 * 6 + 20
+
+
+def test_workflow_envia_so_versoes_da_lista_fechada():
+    texto = WORKFLOW.read_text(encoding="utf-8")
+    enviadas = [int(n) for n in re.findall(r"integracao\.py enviar --versao (\d+)", texto)]
+    assert enviadas == [1, 2, 5, 6, 7, 8, 3, 4]
+    assert set(enviadas) <= set(INTEGRACAO.VERSOES_AGENDA)
+
+
+def test_enviar_aceita_so_as_versoes_do_gerador():
+    gerador = importlib.util.spec_from_file_location("gerador", RAIZ / "data" / "gerar_dados_exemplo.py")
+    modulo = importlib.util.module_from_spec(gerador)
+    gerador.loader.exec_module(modulo)
+    nomes = [
+        modulo.ARQUIVO_V1, modulo.ARQUIVO_V2, modulo.ARQUIVO_V3, modulo.ARQUIVO_V4,
+        modulo.ARQUIVO_REENVIO, modulo.ARQUIVO_ATRASADO, modulo.ARQUIVO_SO_CABECALHO, modulo.ARQUIVO_CP1252,
+    ]
+    assert [INTEGRACAO.arquivo_da_versao(n).name for n in INTEGRACAO.VERSOES_AGENDA] == nomes
+    assert all(INTEGRACAO.arquivo_da_versao(n).is_file() for n in INTEGRACAO.VERSOES_AGENDA)
+
+
+@pytest.mark.parametrize("versao", [0, 9, -1, "1", "../privado/x"])
+def test_enviar_recusa_versao_fora_da_lista(versao):
+    with pytest.raises(ValueError, match="não existe"):
+        INTEGRACAO.arquivo_da_versao(versao)
 
 
 def test_workflow_nunca_toca_em_prod():

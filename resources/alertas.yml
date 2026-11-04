@@ -1,7 +1,8 @@
 # Alertas SQL da carga diária, todos sobre as views mon_* do schema do projeto. Em dev e no
 # ci ficam pausados; em prod também avisam o suporte da Logos (databricks.yml).
 #   falha_carga      7h: falhas das últimas 24 horas, com o motivo (docs/adr/0015)
-#   qualidade_carga  7h: queda de volume e mudança de estrutura na origem (docs/adr/0014)
+#   qualidade_carga  7h: queda de volume e mudança na origem, inclusive arquivo ignorado e
+#                    codificação inválida (todas as linhas de mon_estrutura; docs/adr/0014)
 #   atraso_carga     9h: última atualização do pipeline acima de limite_atraso_horas
 #   custo_teto       8h: custo do Databricks no mês a partir de 80% do teto do diagnóstico
 resources:
@@ -57,7 +58,9 @@ resources:
         A última carga trouxe uma mudança que precisa de atenção:
         {{QUERY_RESULT_TABLE}}
         volume: o retrato veio vazio ou caiu muito; coluna_nova: a origem ganhou uma coluna;
-        dado_resgatado: linhas com valores fora do formato esperado.
+        dado_resgatado: linhas com valores fora do formato esperado; arquivo_ignorado: o
+        último arquivo recebido não virou o retrato (mais antigo que o atual ou sem linhas);
+        codificacao_invalida: o arquivo do retrato não estava em UTF-8 (acentos trocados).
       evaluation:
         source:
           name: ds_aviso

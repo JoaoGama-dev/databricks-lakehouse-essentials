@@ -286,9 +286,12 @@ def colunas_novas_na_origem(fontes: list[dict], colunas_bronze: dict[str, list[s
 
 COLUNAS_ESTRUTURA = {
     "nm_tabela": "Tabela da bronze onde a mudança na origem apareceu.",
-    "ds_tipo": "coluna_nova (a origem ganhou uma coluna) ou dado_resgatado (linhas com _rescued_data).",
-    "nm_coluna": "Coluna nova da origem; vazio quando o tipo é dado_resgatado.",
-    "qt_linhas": "Linhas com dado resgatado na última carga; vazio quando o tipo é coluna_nova.",
+    "ds_tipo": "coluna_nova (a origem ganhou uma coluna), dado_resgatado (linhas com _rescued_data), "
+    "arquivo_ignorado (o último arquivo recebido não virou o retrato) ou codificacao_invalida "
+    "(o arquivo do retrato não estava em UTF-8).",
+    "nm_coluna": "Coluna nova da origem (coluna_nova) ou só o nome do arquivo, sem a pasta (arquivo_ignorado e "
+    "codificacao_invalida); vazio quando o tipo é dado_resgatado.",
+    "qt_linhas": "Linhas com dado resgatado na última carga; vazio nos outros tipos.",
 }
 
 ESTRUTURA_VAZIA = (
@@ -296,9 +299,60 @@ ESTRUTURA_VAZIA = (
     "CAST(NULL AS STRING) AS nm_coluna, CAST(NULL AS BIGINT) AS qt_linhas WHERE false"
 )
 
+# Só o nome do arquivo, sem a pasta da landing; nunca o conteúdo (LGPD).
+NOME_DO_ARQUIVO = "element_at(split(b._arquivo_origem, '/'), -1)"
+# Caractere de substituição U+FFFD, que aparece quando um texto que não é UTF-8 é lido como
+# UTF-8. Escrito como escape da regex Java (o SQL transforma '\\x{FFFD}' em \x{FFFD}), sem o
+# caractere no código. A regex compara caracteres, então acha o U+FFFD tanto se ele já estiver
+# gravado quanto se a bronze guardar os bytes inválidos e a leitura os substituir.
+TEM_CARACTERE_INVALIDO = "b.value RLIKE '\\\\x{FFFD}'"
+
+
+def arquivos_do_retrato(catalogo: str, schema: str, fonte: dict) -> str:
+    """Arquivos que estão no retrato (snapshot) ou, nos outros modos, os da última carga."""
+    tabelas = tabelas_da_fonte(fonte)
+    if fonte["modo_carga"] == "snapshot":
+        return f"SELECT DISTINCT _arquivo_origem FROM {nome_completo(catalogo, schema, tabelas['validada'])}"
+    bronze = nome_completo(catalogo, schema, tabelas["bronze"])
+    return (
+        f"SELECT DISTINCT _arquivo_origem FROM {bronze} "
+        f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {bronze})"
+    )
+
+
+def sql_arquivo_ignorado(catalogo: str, schema: str, fonte: dict) -> str:
+    """Aviso quando o último arquivo recebido de um snapshot não virou o retrato.
+
+    Ele perdeu para um arquivo com data de referência maior (data_referencia) ou não gerou
+    nenhuma linha (ex.: só o cabeçalho).
+    """
+    bronze = tabelas_da_fonte(fonte)["bronze"]
+    tabela = nome_completo(catalogo, schema, bronze)
+    return (
+        f"SELECT {literal_sql(bronze)} AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, "
+        f"{NOME_DO_ARQUIVO} AS nm_coluna, CAST(NULL AS BIGINT) AS qt_linhas "
+        f"FROM (SELECT DISTINCT _arquivo_origem FROM {tabela} "
+        f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {tabela})) AS b "
+        f"LEFT ANTI JOIN ({arquivos_do_retrato(catalogo, schema, fonte)}) AS r ON b._arquivo_origem = r._arquivo_origem"
+    )
+
+
+def sql_codificacao_invalida(catalogo: str, schema: str, fonte: dict) -> str:
+    """Aviso quando o arquivo que virou o retrato (formato texto) tem o caractere U+FFFD."""
+    bronze = tabelas_da_fonte(fonte)["bronze"]
+    retrato = arquivos_do_retrato(catalogo, schema, fonte)
+    return (
+        f"SELECT DISTINCT {literal_sql(bronze)} AS nm_tabela, 'codificacao_invalida' AS ds_tipo, "
+        f"{NOME_DO_ARQUIVO} AS nm_coluna, CAST(NULL AS BIGINT) AS qt_linhas "
+        f"FROM {nome_completo(catalogo, schema, bronze)} AS b "
+        f"LEFT SEMI JOIN ({retrato}) AS r ON b._arquivo_origem = r._arquivo_origem "
+        f"WHERE {TEM_CARACTERE_INVALIDO}"
+    )
+
 
 def sql_estrutura(catalogo: str, schema: str, fontes: list[dict], colunas_bronze: dict[str, list[str]]) -> str:
-    """Mudanças de estrutura na origem: colunas novas e linhas com _rescued_data.
+    """Mudanças na origem: colunas novas, linhas com _rescued_data, arquivo ignorado e
+    codificação inválida.
 
     colunas_bronze: {tabela: [colunas]} da bronze, lido do information_schema quando a view é
     criada (a cada carga). Cada linha da view é um aviso; vazia, está tudo como esperado.
@@ -310,7 +364,8 @@ def sql_estrutura(catalogo: str, schema: str, fontes: list[dict], colunas_bronze
     ]
     for fonte in fontes:
         bronze = tabelas_da_fonte(fonte)["bronze"]
-        if "_rescued_data" in colunas_bronze.get(bronze, []):
+        colunas = colunas_bronze.get(bronze, [])
+        if "_rescued_data" in colunas:
             tabela = nome_completo(catalogo, schema, bronze)
             partes.append(
                 f"SELECT {literal_sql(bronze)} AS nm_tabela, 'dado_resgatado' AS ds_tipo, "
@@ -318,12 +373,19 @@ def sql_estrutura(catalogo: str, schema: str, fontes: list[dict], colunas_bronze
                 f"WHERE _rescued_data IS NOT NULL AND _ingerido_em >= (SELECT max(_ingerido_em) FROM {tabela}) "
                 "HAVING count(*) > 0"
             )
+        if "_arquivo_origem" not in colunas:
+            continue
+        if fonte["modo_carga"] == "snapshot":
+            partes.append(sql_arquivo_ignorado(catalogo, schema, fonte))
+        if fonte.get("arquivo", {}).get("formato") == "texto" and "value" in colunas:
+            partes.append(sql_codificacao_invalida(catalogo, schema, fonte))
     return definicao_view(
         catalogo,
         schema,
         "mon_estrutura",
         "estrutura",
-        "Mudanças de estrutura na origem (colunas novas e dados resgatados); cada linha é um aviso.",
+        "Mudanças na origem (colunas novas, dados resgatados, arquivo ignorado e codificação inválida); "
+        "cada linha é um aviso.",
         COLUNAS_ESTRUTURA,
         "\nUNION ALL\n".join(partes) or ESTRUTURA_VAZIA,
     )

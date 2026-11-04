@@ -5,6 +5,7 @@ taxa de sucesso, teto de custo e os alertas que avisam o cliente e o suporte.
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -85,6 +86,77 @@ def test_estrutura_conta_dado_resgatado_e_e_valida_sem_aviso():
     assert "'dado_resgatado' AS ds_tipo" in sql and "WHERE _rescued_data IS NOT NULL" in sql
     vazia = sql_estrutura("essentials", "portfolio", FONTES, {})
     assert vazia.rstrip().endswith("WHERE false")
+
+
+COLUNAS_BRONZE_AGENDA = {"bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_ingerido_em"]}
+
+
+def partes_da_estrutura(sql: str) -> list[str]:
+    return sql.split("\nAS\n", 1)[1].split("\nUNION ALL\n")
+
+
+def parte_do_tipo(sql: str, tipo: str) -> str:
+    return next(parte for parte in partes_da_estrutura(sql) if f"'{tipo}' AS ds_tipo" in parte)
+
+
+def test_arquivo_ignorado_compara_o_ultimo_arquivo_da_bronze_com_o_retrato():
+    sql = sql_estrutura("essentials", "portfolio", FONTES, COLUNAS_BRONZE_AGENDA)
+    parte = parte_do_tipo(sql, "arquivo_ignorado")
+    assert parte.startswith("SELECT 'bronze_agenda' AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, ")
+    bronze = "`essentials`.`portfolio`.`bronze_agenda`"
+    assert f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {bronze})) AS b" in parte
+    assert (
+        "LEFT ANTI JOIN (SELECT DISTINCT _arquivo_origem FROM `essentials`.`portfolio`.`silver_int_agenda_retrato`) "
+        "AS r ON b._arquivo_origem = r._arquivo_origem"
+    ) in parte
+
+
+def test_codificacao_invalida_olha_so_o_arquivo_do_retrato_da_fonte_texto():
+    sql = sql_estrutura("essentials", "portfolio", FONTES, COLUNAS_BRONZE_AGENDA)
+    parte = parte_do_tipo(sql, "codificacao_invalida")
+    assert parte.startswith("SELECT DISTINCT 'bronze_agenda' AS nm_tabela, 'codificacao_invalida' AS ds_tipo, ")
+    assert "LEFT SEMI JOIN (SELECT DISTINCT _arquivo_origem FROM `essentials`.`portfolio`." in parte
+    # Risco: escape errado faria o aviso nunca disparar. O SQL tira uma barra do literal; o que
+    # chega à regex Java precisa ser \x{FFFD}, sem o caractere escrito no código.
+    literal = re.search(r"RLIKE '([^']*)'", parte).group(1)
+    assert literal.replace("\\\\", "\\") == r"\x{FFFD}"
+    assert "\N{REPLACEMENT CHARACTER}" not in sql
+
+
+def test_avisos_de_arquivo_mostram_so_o_nome_do_arquivo():
+    # LGPD: nunca o conteúdo (value) nem a pasta da landing, só o nome do arquivo.
+    sql = sql_estrutura("essentials", "portfolio", FONTES, COLUNAS_BRONZE_AGENDA)
+    for tipo in ("arquivo_ignorado", "codificacao_invalida"):
+        selecao = parte_do_tipo(sql, tipo).split(" FROM ", 1)[0]
+        assert "element_at(split(b._arquivo_origem, '/'), -1) AS nm_coluna" in selecao, tipo
+        assert "value" not in selecao, tipo
+
+
+def test_avisos_de_arquivo_so_onde_fazem_sentido():
+    # Sem a bronze no information_schema, nenhum aviso (a view não pode citar tabela que não existe).
+    assert sql_estrutura("essentials", "portfolio", FONTES, {}).rstrip().endswith("WHERE false")
+    # A fonte tabela (cargos) não tem arquivo: nenhum dos dois avisos.
+    sem_arquivo = sql_estrutura("essentials", "portfolio", FONTES, {"bronze_cargos": ["id_cargo", "_ingerido_em"]})
+    assert "arquivo_ignorado" not in sem_arquivo.split("\nAS\n", 1)[1]
+    # CSV em snapshot: arquivo ignorado sim; codificação não (o CSV tem a opção encoding).
+    csv = {"nome": "metas", "tipo": "arquivo", "modo_carga": "snapshot", "colunas": {"nm_meta": {"origem": "meta"}},
+           "arquivo": {"formato": "csv", "caminho": "metas"}}
+    consulta = sql_estrutura("c", "s", [csv], {"bronze_metas": ["meta", "_arquivo_origem", "_ingerido_em"]})
+    tipos = [parte.split("'")[3] for parte in partes_da_estrutura(consulta)]
+    assert tipos == ["arquivo_ignorado"]
+    # Texto em modo incremental: sem retrato, a codificação é vista no arquivo da última carga.
+    texto = {**csv, "modo_carga": "incremental", "arquivo": {"formato": "texto", "caminho": "metas"}}
+    consulta = sql_estrutura("c", "s", [texto], {"bronze_metas": ["value", "_arquivo_origem", "_ingerido_em"]})
+    assert [parte.split("'")[3] for parte in partes_da_estrutura(consulta)] == ["codificacao_invalida"]
+    assert "LEFT SEMI JOIN (SELECT DISTINCT _arquivo_origem FROM `c`.`s`.`bronze_metas` WHERE _ingerido_em" in consulta
+
+
+def test_alerta_de_qualidade_le_todos_os_avisos_de_mon_estrutura():
+    alerta = alertas()["qualidade_carga"]
+    consulta = alerta["query_text"]
+    trecho = consulta[consulta.index("SELECT ds_tipo, nm_tabela") :]
+    # Sem WHERE no trecho de mon_estrutura: todo tipo de aviso, inclusive os novos, dispara o alerta.
+    assert "WHERE" not in trecho
 
 
 def test_bronze_de_arquivo_nao_falha_com_coluna_nova():

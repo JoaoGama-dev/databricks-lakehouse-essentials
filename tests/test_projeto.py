@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -17,11 +18,13 @@ from essentials.config_fontes import (
     carregar_fontes,
     colunas_silver,
     expectations,
+    expressao_data_referencia,
     expressao_limpeza,
     expressao_regra,
     expressoes_silver,
     nome_tabela_origem,
     pasta_landing,
+    propriedades_tabela,
     regras_efetivas,
     schema_silver,
     tabelas_da_fonte,
@@ -189,6 +192,109 @@ def test_regra_falhar_vira_expectation_que_para_a_carga():
     assert "arquivo_certo" not in descartar and "arquivo_certo" not in alertar
     codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
     assert "dp.expect_all_or_fail(falhar)" in codigo
+
+
+# Data de referência do snapshot ---------------------------------------------------
+
+
+def config_com_data_referencia(referencia: dict, **campos) -> dict:
+    config = config_bruta()
+    agenda = next(f for f in config["fontes"] if f["nome"] == "agenda")
+    agenda["data_referencia"] = referencia
+    agenda.update(campos)
+    return config
+
+
+@pytest.mark.parametrize(
+    "referencia",
+    [
+        {"tipo": "ingestao"},
+        {"tipo": "conteudo", "expressao": "max(dt_entrevista)"},
+        {"tipo": "nome_arquivo", "regex": "_([0-9]{8})[.]csv$", "formato": "yyyyMMdd"},
+        {"tipo": "nome_arquivo", "regex": "(?:agenda)_([0-9]{8})", "formato": "yyyyMMdd"},
+    ],
+    ids=["ingestao", "conteudo", "nome_arquivo", "grupo_sem_captura"],
+)
+def test_data_referencia_aceita_os_tres_tipos(referencia):
+    validar_config(config_com_data_referencia(referencia))
+
+
+@pytest.mark.parametrize(
+    ("referencia", "trecho"),
+    [
+        ({"tipo": "versao"}, "data_referencia"),
+        ({"tipo": "conteudo"}, "data_referencia"),
+        ({"tipo": "conteudo", "expressao": ""}, "data_referencia"),
+        ({"tipo": "conteudo", "expressao": "max(dt_entrevista)", "regex": "(x)"}, "data_referencia"),
+        ({"tipo": "nome_arquivo", "regex": "([0-9]{8})"}, "data_referencia"),
+        ({"tipo": "nome_arquivo", "formato": "yyyyMMdd"}, "data_referencia"),
+        ({"tipo": "ingestao", "expressao": "max(dt_entrevista)"}, "data_referencia"),
+        ({"tipo": "nome_arquivo", "regex": "[0-9]{8}", "formato": "yyyyMMdd"}, "exatamente um grupo"),
+        ({"tipo": "nome_arquivo", "regex": "([0-9]{4})([0-9]{4})", "formato": "yyyyMMdd"}, "exatamente um grupo"),
+        ({"tipo": "nome_arquivo", "regex": "([0-9]{8}", "formato": "yyyyMMdd"}, "regex de data_referencia inválida"),
+    ],
+    ids=["tipo_invalido", "conteudo_sem_expressao", "expressao_vazia", "conteudo_com_regex", "sem_formato",
+         "sem_regex", "ingestao_com_expressao", "regex_sem_grupo", "regex_com_dois_grupos", "regex_quebrada"],
+)
+def test_data_referencia_invalida_e_rejeitada(referencia, trecho):
+    with pytest.raises(ValueError, match=trecho):
+        validar_config(config_com_data_referencia(referencia))
+
+
+def test_data_referencia_so_vale_em_snapshot_de_arquivo():
+    conteudo = {"tipo": "conteudo", "expressao": "max(dt_entrevista)"}
+    with pytest.raises(ValueError, match="só vale no modo snapshot"):
+        validar_config(config_com_data_referencia(conteudo, modo_carga="cdc", cdc={
+            "coluna_operacao": "op", "valor_exclusao": "D"}))
+    config = config_bruta()
+    cargos = next(f for f in config["fontes"] if f["nome"] == "cargos")
+    cargos["data_referencia"] = {"tipo": "conteudo", "expressao": "max(dh_atualizacao)"}
+    with pytest.raises(ValueError, match="só vale no modo snapshot"):
+        validar_config(config)
+
+
+def test_expressao_da_data_referencia_de_cada_tipo():
+    assert expressao_data_referencia({"nome": "x"}) is None
+    assert expressao_data_referencia({"data_referencia": {"tipo": "ingestao"}}) is None
+    assert expressao_data_referencia(
+        {"data_referencia": {"tipo": "conteudo", "expressao": "max(dt_x)"}}
+    ) == "max(dt_x)"
+    nome_arquivo = expressao_data_referencia(
+        {"data_referencia": {"tipo": "nome_arquivo", "regex": "_(\\d{8})[.]csv$", "formato": "yyyyMMdd"}}
+    )
+    # Só o nome do arquivo (sem a pasta), grupo 1 da regex, com a barra escapada para o SQL.
+    assert nome_arquivo == (
+        "max(CAST(try_to_timestamp(nullif(regexp_extract(element_at(split(_arquivo_origem, '/'), -1), "
+        "'_(\\\\d{8})[.]csv$', 1), ''), 'yyyyMMdd') AS DATE))"
+    )
+
+
+def test_agenda_escolhe_o_retrato_pela_maior_data_de_entrevista():
+    assert expressao_data_referencia(fonte("agenda")) == "max(dt_entrevista)"
+    assert expressao_data_referencia(fonte("cargos")) is None
+
+
+def test_silver_ordena_pela_data_de_referencia_e_depois_pela_ingestao():
+    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
+    funcao = codigo[codigo.index("def manter_ultimo_arquivo") : codigo.index("def manter_versao_mais_recente")]
+    assert 'ordem = [F.desc("_ingerido_em"), F.desc("_arquivo_origem")]' in funcao
+    assert 'ordem.insert(0, F.col("_data_referencia").desc_nulls_last())' in funcao
+    assert 'groupBy("_arquivo_origem", "_ingerido_em").agg(F.expr(referencia)' in funcao
+    # A data de referência usa os nomes padronizados: a limpeza vem antes da escolha do arquivo.
+    assert "manter_ultimo_arquivo(limpar(spark.read.table(origem), fonte), fonte)" in codigo
+
+
+# Full refresh --------------------------------------------------------------------------
+
+
+def test_bronze_da_landing_e_historico_nao_sao_esvaziados_por_full_refresh():
+    bloqueado = {"pipelines.reset.allowed": "false"}
+    for tipo in ("arquivo", "banco", "api"):
+        assert bloqueado.items() <= propriedades_tabela("bronze", "bruta", {"nome": "x", "tipo": tipo}).items()
+    assert bloqueado.items() <= propriedades_tabela("silver", "historico", {"nome": "x", "tipo": "arquivo"}).items()
+    for camada, tipo, tipo_fonte in (("bronze", "bruta", "tabela"), ("silver", "atual", "arquivo"),
+                                      ("silver", "intermediaria", "arquivo")):
+        assert "pipelines.reset.allowed" not in propriedades_tabela(camada, tipo, {"nome": "x", "tipo": tipo_fonte})
 
 
 # Bronze ---------------------------------------------------------------------------
@@ -565,12 +671,27 @@ def agendas(tmp_path_factory) -> list[Path]:
     return importar_gerador().gerar(tmp_path_factory.mktemp("agendas"))
 
 
-def test_gerador_cria_as_quatro_versoes(agendas):
-    assert [caminho.name for caminho in agendas] == [f"agenda_exemplo_v{n}.csv" for n in range(1, 5)]
+def versao(agendas: list[Path], n: int) -> Path:
+    return next(caminho for caminho in agendas if caminho.name == f"agenda_exemplo_v{n}.csv")
+
+
+# Planilhas no formato da exportação do Excel (UTF-8 com BOM e ao menos uma entrevista);
+# a v7 (só cabeçalho) e a v8 (cp1252) fogem dele de propósito.
+VERSOES_NO_FORMATO_DA_PLANILHA = (1, 2, 3, 4, 5, 6)
+
+
+def test_gerador_cria_as_oito_versoes(agendas):
+    assert [caminho.name for caminho in agendas] == [f"agenda_exemplo_v{n}.csv" for n in range(1, 9)]
+
+
+def test_gerador_nao_muda_as_versoes_ja_publicadas(agendas):
+    # Os totais de tests/integracao/esperado.py dependem dos bytes da v1 a v4 versionados em data/.
+    for n in range(1, 5):
+        assert versao(agendas, n).read_bytes() == (RAIZ / "data" / f"agenda_exemplo_v{n}.csv").read_bytes(), n
 
 
 def test_cenarios_de_falha_saem_da_v2(agendas):
-    v2, v3, v4 = (ler_agenda(caminho) for caminho in agendas[1:])
+    v2, v3, v4 = (ler_agenda(versao(agendas, n)) for n in (2, 3, 4))
     # v3: só o último mês, uma queda bem maior que o limite de 50% do alerta de volume.
     assert 0 < len(v3) < len(v2) / 2
     # v4: a v2 inteira mais uma entrevista antes de 2020, que viola a regra data_plausivel.
@@ -578,8 +699,49 @@ def test_cenarios_de_falha_saem_da_v2(agendas):
     assert any(e["data"].endswith("/2019") for e in v4)
 
 
+def maior_data(entrevistas: list[dict]):
+    return max(datetime.strptime(e["data"], "%d/%m/%Y").date() for e in entrevistas)
+
+
+def test_reenvio_tem_os_mesmos_bytes_da_v2(agendas):
+    assert versao(agendas, 5).read_bytes() == versao(agendas, 2).read_bytes()
+
+
+def test_atrasado_tem_o_conteudo_da_v1_e_data_de_referencia_menor_que_a_da_v2(agendas):
+    assert versao(agendas, 6).read_bytes() == versao(agendas, 1).read_bytes()
+    # data_referencia da agenda: max(dt_entrevista). A v1 atrasada não pode vencer a v2.
+    assert maior_data(ler_agenda(versao(agendas, 6))) < maior_data(ler_agenda(versao(agendas, 2)))
+
+
+def test_v3_e_v4_tem_a_mesma_data_de_referencia_da_v2(agendas):
+    # Empatam com a v2 e viram o retrato por serem as mais recentes, como antes da data_referencia.
+    datas = {n: maior_data(ler_agenda(versao(agendas, n))) for n in (2, 3, 4)}
+    assert datas[3] == datas[4] == datas[2]
+
+
+def test_so_cabecalho_nao_tem_entrevista(agendas):
+    conteudo = versao(agendas, 7).read_bytes()
+    assert conteudo.startswith(b"\xef\xbb\xbf") and conteudo.endswith(b"\r\n")
+    linhas = conteudo.decode("utf-8-sig").split("\r\n")
+    assert linhas == [versao(agendas, 2).read_bytes().decode("utf-8-sig").split("\r\n")[0], ""]
+    assert re.fullmatch(r"AGENDA DIA \d{2}/\d{2}/\d{4};NOME;VAGA;TELEFONE;STATUS\.;", linhas[0])
+    assert ler_agenda(versao(agendas, 7)) == []
+
+
+def test_cp1252_e_a_v2_em_outra_codificacao(agendas):
+    conteudo = versao(agendas, 8).read_bytes()
+    texto_v2 = versao(agendas, 2).read_bytes().decode("utf-8-sig")
+    assert not conteudo.startswith(b"\xef\xbb\xbf"), "cp1252 não tem BOM"
+    assert conteudo.decode("cp1252") == texto_v2
+    # Lido como UTF-8 (o que o formato texto faz), o arquivo é inválido e os acentos viram U+FFFD.
+    with pytest.raises(UnicodeDecodeError):
+        conteudo.decode("utf-8")
+    substituido = conteudo.decode("utf-8", errors="replace")
+    assert "\N{REPLACEMENT CHARACTER}" in substituido and "\N{REPLACEMENT CHARACTER}" not in texto_v2
+
+
 def test_agenda_tem_formato_da_planilha_real(agendas):
-    for caminho in agendas:
+    for caminho in (versao(agendas, n) for n in VERSOES_NO_FORMATO_DA_PLANILHA):
         conteudo = caminho.read_bytes()
         assert conteudo.startswith(b"\xef\xbb\xbf"), "falta o BOM do UTF-8"
         assert conteudo.count(b"\n") == conteudo.count(b"\r\n"), "toda quebra de linha deve ser CRLF"

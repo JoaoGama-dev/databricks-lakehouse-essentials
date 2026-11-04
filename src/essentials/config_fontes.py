@@ -8,6 +8,7 @@ os testes cubram exatamente o que roda no Databricks.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import jsonschema
@@ -41,6 +42,10 @@ PREFIXOS_POR_TIPO = {
 
 # Tipo de cada tabela, gravado em TBLPROPERTIES ('tipo' = ...).
 TIPOS_DE_TABELA = {"bruta", "intermediaria", "atual", "historico", "dimensao", "fato", "agregada"}
+
+# Tabelas que um full refresh do pipeline não pode esvaziar: a bronze que lê a landing
+# (o arquivo pode já ter saído de lá) e o histórico SCD tipo 2 (não dá para refazer).
+TIPOS_DE_FONTE_SEM_RESET_NA_BRONZE = {"arquivo", "banco", "api"}
 
 # Dicionário de dados: tipo SQL de cada tipo do fontes.yml e descrição das colunas que o
 # pipeline cria. Viram o schema (com COMMENT por coluna) das tabelas da silver.
@@ -136,6 +141,8 @@ def validar_config(config: dict) -> None:
             )
             if so_alerta:
                 erros.append(f"{nome}: regra nao_nulo da chave precisa de drop ou falhar: {', '.join(so_alerta)}")
+
+        erros += erros_data_referencia(fonte)
 
         declaradas = set(colunas)
         if not declaradas:
@@ -275,10 +282,62 @@ def nome_tabela_origem(fonte: dict, catalogo: str, projeto: str) -> str:
     return fonte["tabela"]["nome_completo"].replace("{catalogo}", catalogo).replace("{projeto}", projeto)
 
 
+def bloqueia_reset(camada: str, tipo: str, fonte: dict) -> bool:
+    """Bronze de arquivo, banco ou api e histórico SCD 2: um full refresh não as esvazia."""
+    bronze_da_landing = camada == "bronze" and fonte["tipo"] in TIPOS_DE_FONTE_SEM_RESET_NA_BRONZE
+    return bronze_da_landing or tipo == "historico"
+
+
 def propriedades_tabela(camada: str, tipo: str, fonte: dict) -> dict:
     if tipo not in TIPOS_DE_TABELA:
         raise ValueError(f"tipo de tabela desconhecido: {tipo}")
-    return {"camada": camada, "tipo": tipo, "fonte": fonte["nome"]}
+    propriedades = {"camada": camada, "tipo": tipo, "fonte": fonte["nome"]}
+    if bloqueia_reset(camada, tipo, fonte):
+        propriedades["pipelines.reset.allowed"] = "false"
+    return propriedades
+
+
+# Data de referência do snapshot ----------------------------------------------------
+
+
+def expressao_data_referencia(fonte: dict) -> str | None:
+    """Expressão SQL agregada que dá a data de referência de cada arquivo de um snapshot.
+
+    É calculada por arquivo (agrupando por _arquivo_origem), sobre as colunas já com os
+    nomes padronizados. O retrato é o arquivo com a maior data; empate ou data nula
+    (nulos por último) desempata pelo momento da ingestão e pelo nome do arquivo.
+      ingestao (padrão) -> None: vale o último arquivo ingerido, como antes
+      conteudo          -> a expressão do YAML, ex.: max(dt_entrevista)
+      nome_arquivo      -> a data extraída do nome do arquivo (grupo 1 da regex) no formato
+    """
+    referencia = fonte.get("data_referencia") or {"tipo": "ingestao"}
+    if referencia["tipo"] == "conteudo":
+        return referencia["expressao"]
+    if referencia["tipo"] == "nome_arquivo":
+        nome = "element_at(split(_arquivo_origem, '/'), -1)"
+        trecho = f"regexp_extract({nome}, {literal_sql(referencia['regex'])}, 1)"
+        return f"max(CAST(try_to_timestamp(nullif({trecho}, ''), {literal_sql(referencia['formato'])}) AS DATE))"
+    return None
+
+
+def erros_data_referencia(fonte: dict) -> list[str]:
+    """O que o JSON Schema não confere no campo data_referencia."""
+    referencia = fonte.get("data_referencia")
+    if not referencia or referencia["tipo"] == "ingestao":
+        return []
+    nome = fonte["nome"]
+    erros = []
+    if fonte["modo_carga"] != "snapshot" or fonte["tipo"] == "tabela":
+        erros.append(f"{nome}: data_referencia só vale no modo snapshot com arquivos (tipo arquivo, banco ou api)")
+    if referencia["tipo"] == "nome_arquivo":
+        try:
+            grupos = re.compile(referencia["regex"]).groups
+        except re.error as erro:
+            erros.append(f"{nome}: regex de data_referencia inválida: {erro}")
+        else:
+            if grupos != 1:
+                erros.append(f"{nome}: regex de data_referencia precisa de exatamente um grupo (a data); tem {grupos}")
+    return erros
 
 
 # Regras de qualidade --------------------------------------------------------------

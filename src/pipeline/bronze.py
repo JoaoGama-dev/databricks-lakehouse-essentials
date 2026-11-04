@@ -89,6 +89,7 @@ def criar_bronze(fonte: dict) -> None:
         df = ler_tabela_em_streaming(fonte) if fonte["tipo"] == "tabela" else ler_landing(fonte)
         return com_colunas_tecnicas(df, fonte)
 
+    # Na bronze de arquivo, banco e api, propriedades_tabela já bloqueia o reset do full refresh.
     dp.table(name=nome, comment=comentario, table_properties=propriedades)(leitura_incremental)
 
 

@@ -42,6 +42,16 @@
 #   preparacao_sql     true quando a fonte precisa de lógica própria antes da limpeza
 #                      padrão. Nesse caso existe src/pipeline/silver_<nome>.sql com a view
 #                      temporária silver_int_<nome>_preparada, lida no lugar da bronze.
+#   data_referencia    (só snapshot de arquivos; opcional) como escolher o arquivo que vira
+#                      o retrato, para um arquivo antigo que chega depois não "voltar no
+#                      tempo". Vence a maior data; empate ou data vazia desempata pelo último
+#                      ingerido. O arquivo que não vira retrato aparece em mon_estrutura
+#                      como arquivo_ignorado.
+#                        tipo: ingestao     -> (padrão) o último arquivo ingerido
+#                        tipo: conteudo     -> expressao: SQL agregado sobre as colunas
+#                                              padronizadas do arquivo, ex.: max(dt_entrevista)
+#                        tipo: nome_arquivo -> regex (com um grupo, a data) e formato
+#                                              (ex.: regex "_([0-9]{8})[.]csv$", formato yyyyMMdd)
 #
 # BLOCO DO TIPO (só o do tipo escolhido)
 #   arquivo:  formato (csv | json | parquet | texto | excel), caminho (pasta dentro da
@@ -49,6 +59,9 @@
 #             excel, dataAddress para escolher a aba ou o intervalo, ex.: "Agenda!A1:F500",
 #             e headerRows, padrão 1). No excel, coluna nova na planilha é ignorada (o
 #             Auto Loader de Excel não evolui schema); nos outros, vai para _rescued_data.
+#             CSV que não vem em UTF-8: encoding nas opcoes (ex.: encoding: windows-1252).
+#             O formato texto lê sempre como UTF-8: arquivo em outra codificação aparece
+#             em mon_estrutura como codificacao_invalida (a carga não para).
 #   tabela:   nome_completo (catalogo.schema.tabela; {catalogo} e {projeto} viram o
 #             catálogo e o projeto do target)
 #   banco:    conexao (conexão do Unity Catalog; o catálogo estrangeiro tem o mesmo nome),
@@ -113,6 +126,11 @@ fontes:
     preparacao_sql: true
     chave_primaria: [dt_entrevista, nm_candidato]
     coluna_atualizacao: _linha
+    # A planilha é do ano inteiro e só cresce: a versão mais nova tem a entrevista mais
+    # recente. Uma planilha antiga reenviada depois não substitui o retrato.
+    data_referencia:
+      tipo: conteudo
+      expressao: max(dt_entrevista)
     colunas:
       dt_entrevista:
         origem: data_entrevista
