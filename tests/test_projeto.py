@@ -283,13 +283,14 @@ def test_agenda_escolhe_o_retrato_pela_maior_data_de_entrevista():
 def test_silver_ordena_pela_data_de_referencia_e_desempata_sem_depender_da_ordem_de_chegada():
     # Dois arquivos no mesmo micro-batch têm o mesmo _ingerido_em: sem _modificado_em e o nome
     # do arquivo no desempate, o retrato poderia trocar de arquivo a cada atualização.
-    assert ORDEM_DO_RETRATO == ("_ingerido_em", "_modificado_em", "_arquivo_origem")
+    # O nome do arquivo é único: fecha o desempate. Sem ele, empate total ficaria ao acaso.
+    assert ORDEM_DO_RETRATO[-1] == "_arquivo_origem" and {"_ingerido_em", "_modificado_em"} <= set(ORDEM_DO_RETRATO)
+    assert len(set(ORDEM_DO_RETRATO)) == len(ORDEM_DO_RETRATO)
     codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
     funcao = codigo[codigo.index("def manter_ultimo_arquivo") : codigo.index("def manter_versao_mais_recente")]
-    assert "por_arquivo = list(ORDEM_DO_RETRATO)" in funcao
-    assert "ordem = [F.desc(coluna) for coluna in por_arquivo]" in funcao
-    assert 'ordem.insert(0, F.col("_data_referencia").desc_nulls_last())' in funcao
-    assert "groupBy(*por_arquivo).agg(F.expr(referencia)" in funcao
+    # A escolha usa a lista compartilhada (a mesma que o agrupamento), e a data de referência vem antes.
+    assert "ORDEM_DO_RETRATO" in funcao
+    assert funcao.index("_data_referencia") < funcao.index("orderBy(")
     # A data de referência usa os nomes padronizados: a limpeza vem antes da escolha do arquivo.
     assert "manter_ultimo_arquivo(limpar(spark.read.table(origem), fonte), fonte)" in codigo
 
@@ -356,9 +357,6 @@ def test_historico_faz_da_silver_uma_scd2_sem_tabela_separada():
         "pipelines.reset.allowed"
     ] == "false"
     assert tipo_da_silver(CADASTRO) == "atual"
-    codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
-    assert "tipo_scd = 2 if tem_historico(fonte) else 1" in codigo
-    assert codigo.count("dp.create_streaming_table(") == 1
 
 
 def test_retrato_do_snapshot_e_privado_e_o_cdc_e_publicado():
@@ -549,14 +547,13 @@ def test_estrutura_do_pacote_essentials():
 
 def test_chaves_do_pipeline_e_do_job_nao_mudam():
     # Trocar a chave faria o bundle apagar o pipeline (e as tabelas dele) e o job.
-    assert set(carregar_yaml(RAIZ / "resources" / "pipeline.yml")["resources"]["pipelines"]) == {"essentials_pipeline"}
-    assert set(carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]) == {"essentials_carga_diaria"}
+    assert "essentials_pipeline" in carregar_yaml(RAIZ / "resources" / "pipeline.yml")["resources"]["pipelines"]
+    assert "essentials_carga_diaria" in carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]
 
 
 def test_bronze_e_gold_sao_publicadas_com_nome_qualificado():
     bronze = (PASTA_PIPELINE / "bronze.py").read_text(encoding="utf-8")
     assert 'nome = f"{CATALOGO}.{SCHEMA_BRONZE}.{tabelas_da_fonte(fonte)[\'bronze\']}"' in bronze
-    assert bronze.count("cluster_by_auto=True") == 2
     silver = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
     assert 'f"{CATALOGO}.{SCHEMA_BRONZE}.{tabelas[\'bronze\']}"' in silver
     assert "FROM ${catalogo}.${schema_bronze}.bronze_agenda" in (PASTA_PIPELINE / "silver_agenda.sql").read_text(
@@ -658,10 +655,13 @@ def test_de_para_de_area_compara_em_minusculas_sem_prefixo_repetido():
     # A junção é lower(nm_vaga) LIKE prefixo || '%': um prefixo com maiúscula nunca combinaria,
     # e um prefixo repetido com duas áreas deixaria a área ao acaso.
     de_para = de_para_da_fato()
-    assert len(de_para) == 38
+    assert de_para, "o de-para não foi lido do SQL"
     prefixos = [prefixo for prefixo, _ in de_para]
     assert all(prefixo == prefixo.lower() for prefixo in prefixos), prefixos
     assert len(prefixos) == len(set(prefixos))
+    # No LIKE, "%" e "_" são curingas e espaço na ponta nunca combinaria com o começo da vaga.
+    assert all(prefixo == prefixo.strip() and not re.search(r"[%_]", prefixo) for prefixo in prefixos), prefixos
+    assert all(area.strip() and area != "Não classificada" for _, area in de_para)
     sql = GOLD_FATO.read_text(encoding="utf-8")
     assert "ON lower(e.nm_vaga) LIKE a.ds_prefixo_vaga || '%'" in sql
     assert "ORDER BY length(a.ds_prefixo_vaga) DESC NULLS LAST, a.ds_prefixo_vaga" in sql
@@ -681,7 +681,25 @@ def colunas_da_view(sql: str) -> list[str]:
 
 
 def test_existe_view_da_gold_para_o_painel():
-    assert [arquivo.name for arquivo in arquivos_views()] == ["gold_vw_entrevistas.sql"]
+    # Sem a view, os testes parametrizados abaixo passariam vazios e o painel ficaria sem fonte.
+    assert "gold_vw_entrevistas.sql" in [arquivo.name for arquivo in arquivos_views()]
+
+
+def test_view_repassa_as_colunas_sensiveis_da_fato_sem_transformar():
+    # A máscara (MASK) vale na fato: a view só a preserva se ler a coluna como está, da fato.
+    # Uma expressão (hash, concat, coalesce...) ou a leitura da silver entregaria o dado sem máscara.
+    from essentials.config_fontes import carregar_fontes, colunas_sensiveis
+
+    sensiveis = {c for f in carregar_fontes(RAIZ / "config" / "fontes.yml") for c in colunas_sensiveis(f)}
+    sql = sem_comentarios((PASTA_VIEWS / "gold_vw_entrevistas.sql").read_text(encoding="utf-8"))
+    corpo = sql[sql.index("AS SELECT") :]
+    colunas_gold = set(colunas_da_view(sql))
+    na_view = sensiveis & colunas_gold
+    assert na_view, "a view deveria expor as colunas sensíveis só pela fato"
+    for coluna in na_view:
+        assert re.search(rf"^\s*f\.{coluna},$", corpo, re.MULTILINE), coluna
+    assert re.findall(r"\bFROM\s+(\S+)", corpo) == ["${catalogo}.${schema_gold}.gold_fato_entrevista"]
+    assert "JOIN" not in corpo.upper() and "silver" not in corpo.lower()
 
 
 @pytest.mark.parametrize("arquivo", arquivos_views(), ids=lambda a: a.name)

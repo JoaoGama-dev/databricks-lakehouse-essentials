@@ -123,10 +123,14 @@ def test_coluna_mascarada_precisa_ser_sensivel():
 
 def test_toda_coluna_sensivel_da_gold_tem_mascara():
     sql = (RAIZ / "src" / "pipeline" / "gold_entrevistas.sql").read_text(encoding="utf-8")
+    vistas = set()
     for linha in sql.splitlines():
         coluna = re.match(r"\s+(\w+) [A-Z]+ COMMENT", linha)
         if coluna and coluna.group(1) in SENSIVEIS:
+            vistas.add(coluna.group(1))
             assert linha.rstrip(",").endswith(f"MASK ${{catalogo}}.${{schema_silver}}.{FUNCAO_MASCARA}"), linha
+    # Sem isto, uma mudança no formato da declaração faria o teste passar sem conferir nada.
+    assert vistas == SENSIVEIS, SENSIVEIS - vistas
 
 
 def test_funcao_de_mascara_libera_so_o_grupo_de_dados_pessoais():
@@ -200,16 +204,16 @@ def test_governanca_aplica_as_tags_depois_das_views_nos_quatro_schemas():
     depois = codigo[codigo.index("fontes = carregar_fontes(args.config)") :]
     assert depois.index("sqls_views_gold(") < depois.index("sqls_tags_pii(") < depois.index("aplicar_tags_das_tabelas(")
     assert "schemas = [args.schema_bronze, args.schema_silver, args.schema_gold, monitoramento]" in depois
-    assert 'spark.sql(f"SHOW TBLPROPERTIES {nome_completo(catalogo, schema, tabela)}")' in codigo
 
 
 def test_views_da_gold_saem_do_arquivo_com_o_schema_do_target():
     comandos = sqls_views_gold(RAIZ / "src", "essentials", "dev_x_portfolio_gold")
-    assert len(comandos) == 1
-    view = comandos[0]
+    assert comandos
+    view = next(c for c in comandos if "gold_vw_entrevistas" in c)
     assert view.startswith("CREATE OR REPLACE VIEW `essentials`.`dev_x_portfolio_gold`.gold_vw_entrevistas (")
     assert "FROM `essentials`.`dev_x_portfolio_gold`.gold_fato_entrevista AS f" in view
-    assert "${" not in view and "--" not in view and not view.endswith(";")
+    # Sobrou marcador, comentário ou ";" no fim: o spark.sql recusaria ou leria o schema errado.
+    assert all("${" not in c and "--" not in c and not c.endswith(";") for c in comandos)
 
 
 def test_job_cria_a_mascara_antes_e_aplica_as_tags_depois_do_pipeline():

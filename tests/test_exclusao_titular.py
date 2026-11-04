@@ -162,6 +162,17 @@ def test_agenda_cobre_todas_as_tabelas_com_dado_pessoal():
         assert not any(mv in c and c.startswith(("DELETE", "UPDATE")) for c in executados), mv
 
 
+def test_delete_da_silver_scd2_pega_versoes_fechadas_e_nao_so_a_vigente():
+    # Risco LGPD: com um filtro __END_AT IS NULL, o DELETE apagaria a versão vigente e deixaria
+    # o titular nas versões antigas (fechadas) da silver SCD tipo 2.
+    silver = f"{SILVER}.`silver_agenda`"
+    delete = next(c for c in comandos(sql_agenda()) if c.startswith(f"DELETE FROM {silver}"))
+    assert "__END_AT" not in delete and "__START_AT" not in delete
+    # O retrato privado não aceita DELETE nem REORG: só a silver publicada.
+    alteram = [c for c in comandos(sql_agenda()) if c.startswith(("DELETE", "REORG", "VACUUM"))]
+    assert alteram and not any("silver_int_agenda_retrato" in c for c in alteram)
+
+
 @pytest.mark.parametrize("gerar", [sql_agenda, sql_clientes], ids=["agenda", "ficticia"])
 def test_parametro_vazio_nao_apaga_nada(gerar):
     # Parâmetro esquecido ou em branco casaria com todo campo vazio: todo DELETE e UPDATE, e o
