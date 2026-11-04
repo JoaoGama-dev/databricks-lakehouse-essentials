@@ -46,6 +46,10 @@ IDENTIFICADOR = re.compile(r"[a-z0-9_]+")
 PADRAO_GOLD = re.compile(r"CREATE OR REFRESH MATERIALIZED VIEW\s+\$\{schema_gold\}\.(\w+)", re.IGNORECASE)
 # Formatos em que a bronze tem as colunas da origem (o DELETE compara coluna a coluna).
 FORMATOS_COM_COLUNAS = {"csv", "json", "parquet", "excel"}
+# Separadores de campo aceitos numa linha de arquivo texto (a agenda usa ";"). O ";" vai como
+# o escape unicode 003B, que o Spark SQL converte no literal: um ";" cru cortaria o comando
+# em ferramentas que separam os comandos pelo ";". chr(92) é a barra invertida.
+SEPARADORES_TEXTO = "[" + chr(92) + "u003B," + chr(92) + "t|]"
 
 
 class IdentificadorInvalido(ValueError):
@@ -84,29 +88,39 @@ def valor_limpo(coluna: str, configuracao: dict) -> str:
     return expressao.replace(origem, parametro(coluna))
 
 
+def guarda_parametro_vazio(fonte: dict) -> str:
+    """Parâmetro esquecido ou em branco não casa com nada (sem isso, campo vazio = valor vazio)."""
+    return " AND ".join(f"length(trim({parametro(coluna)})) > 0" for coluna in colunas_do_titular(fonte))
+
+
 def condicao_silver(fonte: dict) -> str:
-    return " AND ".join(
+    comparacoes = (
         f"`{coluna}` = {valor_limpo(coluna, configuracao)}"
         for coluna, configuracao in colunas_do_titular(fonte).items()
     )
+    return " AND ".join([guarda_parametro_vazio(fonte), *comparacoes])
 
 
 def condicao_bronze_por_coluna(fonte: dict) -> str:
     """Na bronze com as colunas da origem: a mesma limpeza dos dois lados da comparação."""
-    return " AND ".join(
+    comparacoes = (
         f"{expressao_limpeza(configuracao['origem'], configuracao)} = {valor_limpo(coluna, configuracao)}"
         for coluna, configuracao in colunas_do_titular(fonte).items()
     )
+    return " AND ".join([guarda_parametro_vazio(fonte), *comparacoes])
 
 
 def condicao_linha_de_texto(fonte: dict) -> str:
-    """A linha do arquivo cita o titular: sem regex montada com o valor da pessoa, compara o
-    texto em minúsculas e com um espaço só entre as palavras."""
-    linha = "lower(regexp_replace(linha, ' +', ' '))"
-    return " AND ".join(
-        f"instr({linha}, lower(regexp_replace(trim({parametro(coluna)}), ' +', ' '))) > 0"
-        for coluna in colunas_do_titular(fonte)
-    )
+    """A linha do arquivo tem um CAMPO igual ao titular, com a limpeza da silver dos dois lados.
+
+    Igualdade do campo inteiro, nunca pedaço do texto: "Ana" não casa com "Mariana"."""
+    comparacoes = []
+    for coluna, configuracao in colunas_do_titular(fonte).items():
+        campo = expressao_limpeza(configuracao["origem"], configuracao).replace(f"`{configuracao['origem']}`", "campo")
+        comparacoes.append(
+            f"exists(split(linha, '{SEPARADORES_TEXTO}'), campo -> {campo} = {valor_limpo(coluna, configuracao)})"
+        )
+    return " AND ".join([guarda_parametro_vazio(fonte), *comparacoes])
 
 
 def nome_completo(catalogo: str, schema: str, tabela: str) -> str:
@@ -161,8 +175,11 @@ def passo_bronze(fonte: dict, catalogo: str, schema: str) -> tuple[list[str], li
             "-- todas as pessoas do arquivo, e no snapshot o retrato voltaria para um arquivo mais",
             "-- antigo, que também cita o titular. Por isso o UPDATE tira do texto só as linhas que",
             "-- citam o titular e mantém o resto do arquivo como chegou (quebras de linha e BOM).",
-            "-- Confira antes quais arquivos serão alterados:",
-            f"SELECT _arquivo_origem FROM {tabela}",
+            "-- Confira antes quais arquivos e quantas linhas serão alterados. Se qt_linhas_do_titular",
+            "-- passar do número de registros que o titular tem na silver (passo 3), PARE: o valor",
+            "-- informado está casando com outra pessoa.",
+            f"SELECT _arquivo_origem, size(filter(split(value, '\\n'), linha -> {condicao})) AS qt_linhas_do_titular",
+            f"FROM {tabela}",
             f"WHERE exists(split(value, '\\n'), linha -> {condicao});",
             "",
             f"UPDATE {tabela}",
@@ -266,7 +283,12 @@ def passo_vacuum(alteradas: list[str], catalogo: str, schema: str) -> list[str]:
         "-- pelo time travel (versões anteriores da tabela). O VACUUM só remove arquivos fora do prazo",
         "-- de retenção (delta.deletedFileRetentionDuration, 7 dias por padrão; o histórico da tabela",
         "-- fica 30 dias por padrão): rode este passo DEPOIS desse prazo, contado do passo 6. Confira o",
-        "-- prazo com SHOW TBLPROPERTIES e não reduza a retenção sem uma decisão registrada.",
+        "-- prazo com SHOW TBLPROPERTIES (delta.deletedFileRetentionDuration e delta.logRetentionDuration)",
+        "-- e não reduza a retenção sem uma decisão registrada. Anote no chamado a data do passo 6: a",
+        "-- exclusão só termina depois deste passo. Rode antes o DRY RUN para ver o que será apagado.",
+        "-- As materialized views (passo 5) dependem da manutenção do próprio pipeline (otimização",
+        "-- preditiva) para limpar os arquivos antigos.",
+        *(f"VACUUM {nome_completo(catalogo, schema, tabela)} DRY RUN;" for tabela in alteradas),
         *(f"VACUUM {nome_completo(catalogo, schema, tabela)};" for tabela in alteradas),
     ]
 
@@ -321,6 +343,7 @@ def main(args: list[str] | None = None) -> None:
     if opcoes.saida:
         Path(opcoes.saida).write_text(sql, encoding="utf-8")
         print(f"SQL de exclusão gravado em {opcoes.saida}, para revisão. Nada foi executado.")
+        print("Anexe ao chamado; não versione o arquivo no repositório.")
     else:
         # No Windows, o console usaria a página de código do sistema e trocaria os acentos.
         if hasattr(sys.stdout, "reconfigure"):

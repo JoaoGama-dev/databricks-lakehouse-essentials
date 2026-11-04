@@ -85,7 +85,7 @@ def test_saida_nao_tem_nenhum_valor_de_pessoa(gerar):
     assert not re.search(r"\d{6,}", sql)
     # Os únicos textos literais nos comandos são os da limpeza padrão, nunca um valor.
     literais = {texto for comando in comandos(sql) for texto in re.findall(r"'([^']*)'", comando)}
-    assert literais <= {" +", " ", "", "[.]+$", "\\n", "(", ") ****-", "[^0-9]"}, literais
+    assert literais <= {" +", " ", "", "[.]+$", "\\n", "[\\u003B,\\t|]", "(", ") ****-", "[^0-9]"}, literais
 
 
 def test_cada_coluna_que_identifica_a_pessoa_vira_um_parametro():
@@ -153,6 +153,26 @@ def test_agenda_cobre_todas_as_tabelas_com_dado_pessoal():
         assert not any(mv in c and c.startswith(("DELETE", "UPDATE")) for c in executados), mv
 
 
+@pytest.mark.parametrize("gerar", [sql_agenda, sql_clientes], ids=["agenda", "ficticia"])
+def test_parametro_vazio_nao_apaga_nada(gerar):
+    # Parâmetro esquecido ou em branco casaria com todo campo vazio: todo DELETE e UPDATE, e o
+    # filtro que tira as linhas do texto, exigem o parâmetro preenchido.
+    for comando in comandos(gerar()):
+        if comando.startswith(("DELETE", "UPDATE", "SELECT")):
+            for parametro in set(re.findall(r":titular_\w+", comando)):
+                assert f"length(trim({parametro})) > 0" in comando, comando[:80]
+    update = next(c for c in comandos(sql_agenda()) if c.startswith("UPDATE"))
+    assert update.count("length(trim(:titular_nm_candidato)) > 0") == 2, "no filter e no WHERE"
+
+
+def test_bronze_de_texto_compara_o_campo_inteiro_e_nao_pedaco_do_nome():
+    # "Ana" não pode casar com "Mariana": cada campo da linha é comparado inteiro.
+    update = next(c for c in comandos(sql_agenda()) if c.startswith("UPDATE"))
+    assert "instr(" not in update and " LIKE " not in update.upper()
+    assert "exists(split(linha, '[\\u003B,\\t|]'), campo -> initcap(" in update
+    assert "= initcap(" in update
+
+
 def test_fonte_csv_apaga_na_bronze_pelas_colunas_da_origem():
     executados = comandos(sql_clientes())
     delete = next(c for c in executados if c.startswith("DELETE FROM `essentials`.`portfolio`.`bronze_clientes`"))
@@ -166,7 +186,7 @@ def test_reorg_e_vacuum_em_cada_tabela_alterada():
     ):
         executados = comandos(sql)
         reorg = [c for c in executados if c.startswith("REORG TABLE")]
-        vacuum = [c for c in executados if c.startswith("VACUUM")]
+        vacuum = [c for c in executados if c.startswith("VACUUM") and not c.endswith("DRY RUN")]
         assert reorg == [f"REORG TABLE `essentials`.`portfolio`.`{t}` APPLY (PURGE)" for t in alteradas]
         assert vacuum == [f"VACUUM `essentials`.`portfolio`.`{t}`" for t in alteradas]
 
