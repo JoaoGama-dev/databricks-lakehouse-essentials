@@ -65,7 +65,10 @@ def valor(consultar):
 
 @pytest.fixture(scope="session")
 def ultima_carga(integracao, recursos):
-    """Estado de cada tarefa na última execução do job do CI."""
+    """Estado de cada tarefa na última execução do job do CI (None se ainda sem resultado)."""
     w = integracao.cliente()
     execucao = next(iter(w.jobs.list_runs(job_id=int(recursos["job_id"]), limit=1, expand_tasks=True)))
-    return {tarefa.task_key: tarefa.state.result_state.value for tarefa in execucao.tasks}
+    return {
+        tarefa.task_key: tarefa.state.result_state.value if tarefa.state and tarefa.state.result_state else None
+        for tarefa in execucao.tasks
+    }

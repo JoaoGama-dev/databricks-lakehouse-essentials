@@ -10,6 +10,69 @@ só a versão menor.
 
 ## [Unreleased]
 
+### Simplificação do log e da integração (PR 2)
+
+#### Adicionado
+
+- Tabela `mon_log_execucao` (`<projeto>_monitoramento`, tipo `observabilidade`): uma linha por
+  execução e nível (job, tarefa e tabela), com início, fim, duração (segundos e `hh:mm:ss`),
+  status, método de carga, técnica de refresh, linhas gravadas, descartadas e em alerta,
+  total na tabela, última atualização anterior, motivo seguro e link (ADR 0022).
+- Log legível na saída das tarefas Python: `[AAAA-MM-DD hh:mm:ss]-[NIVEL]: mensagem`, no fuso da
+  variável `fuso_horario` (`America/Sao_Paulo`).
+- Tarefas `avisar_falha` (`alert_task` do alerta `falha_carga`, só se algo falhou: e-mail com o
+  motivo na hora) e `encerrar_com_falha` (`sql_task` com `raise_error` de texto fixo, folha do
+  job: deixa a execução vermelha e dispara o aviso nativo) (ADR 0021).
+- Alerta `falha_carga` ativo no dev (avisa o usuário do workspace), com `retrigger_seconds` de
+  3600: uma nova falha avisa de novo. No `ci` continua pausado.
+- Custo: `mon_custo_diario` atribui pela tag `projeto` (dev, ci e prod); `mon_custo_mensal` por
+  ambiente e total, com a projeção do mês; `mon_custo_por_carga` com o custo de lista de cada
+  execução. Variável `warehouse_dedicado` (padrão `"false"`) para incluir o warehouse
+  exclusivo do projeto (ADR 0023).
+- Painel de saúde com duas páginas: "Saúde da plataforma" (custo por ambiente, projeção e
+  custo por carga) e "Saúde da carga" (última execução por tarefa e tabela, duração e
+  descartes por dia, falhas com motivo).
+- Testes de unidade para cp1252, full refresh, regra que para a carga e queda de volume, que
+  saíram da integração.
+- ADRs 0021 (tarefa final de monitoramento e aviso de falha na hora), 0022 (`mon_log_execucao`
+  e log legível), 0023 (custo por tag e projeção) e 0024 (integração em duas rodadas e
+  desempate pelo arquivo).
+
+#### Alterado
+
+- Tarefas do job: `governanca_antes` é `preparar_governanca`, `atualizar_lakehouse` é
+  `processar_medalhao`, `governanca_depois` é `publicar_monitoramento`, e `ingestao_banco` e
+  `ingestao_api` viram `ingerir_fontes_externas`, atrás de `tem_fonte_externa`. A variável
+  `ingerir_fontes_externas` substitui `ingerir_banco` e `ingerir_api`.
+- A `publicar_monitoramento` só termina com erro se uma etapa dela falhar: o serverless repete
+  tarefas Python com erro e o bundle omite `max_retries: 0`; comprovado no dev, ela rodava 3
+  vezes.
+- `mon_falhas` virou uma view sobre `mon_log_execucao`. A tabela antiga, se existir, é
+  renomeada para `mon_falhas_legado`.
+- O alerta `custo_teto` lê a linha `total` de `mon_custo_mensal`.
+- Desempate do retrato: data de referência, modificação do arquivo na landing, ingestão e
+  nome. A ordem de envio não depende dos micro-batches.
+- Integração em duas rodadas (cerca de 15 minutos, timeout de 30): rodada 1 com a v1; rodada 2
+  com v2, v6, v7 e v5 numa carga só (retrato = v5; `arquivo_ignorado` = v2, v6 e v7;
+  histórico de 252, 234 e 18 versões). O input `cenarios_de_falha` saiu; v3, v4 e v8 ficam em
+  `data/` para teste manual no dev.
+- Documentação: arquitetura, roteiro de operação, padrões, desenvolvimento, levando ao Azure,
+  cenários reais e guia do Free Edition.
+
+#### Removido
+
+- Tarefa `registrar_falha` (`registrar_falha.py`) e a tabela `mon_falhas` gravada por ela.
+- Os cenários de integração com `cenarios_de_falha` (`tests/integracao/test_cenarios.py`).
+
+#### Migração
+
+- Quem usa o `databricks.yml` de um cliente troca `ingerir_banco` e `ingerir_api` por
+  `ingerir_fontes_externas`.
+- No Azure: o service principal precisa de `SELECT` em `system.billing` e `system.lakeflow`,
+  `CAN_USE` no warehouse e `CAN_RUN` no alerta `falha_carga`; use `warehouse_dedicado` =
+  `"true"` só com warehouse exclusivo, e imponha a tag `projeto` por política.
+- O token de dev do CI expira por volta de 2027-01-28: rotacione.
+
 ### Simplificação do exemplo (PR 1)
 
 #### Adicionado

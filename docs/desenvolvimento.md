@@ -60,7 +60,7 @@ hook, e o deploy de produção só acontece pelo GitHub Actions
 | Workflow | Gatilho | O que faz |
 |---|---|---|
 | `ci.yml` | pull request para a `main` | `ruff check .`, `pytest -q` (só testes de unidade, inclui a validação do `fontes.yml`, dos padrões e da documentação), `databricks bundle validate -t dev` e varredura de segredos no histórico (gitleaks) |
-| `integracao.yml` | 1h de segunda a sexta e manual (nunca em PR) | implanta o target `ci`, carrega a agenda fictícia v1 e a v2, confere os dados (`tests/integracao/`) e destrói tudo no fim |
+| `integracao.yml` | 1h de segunda a sexta e manual (nunca em PR) | implanta o target `ci`, faz duas rodadas de carga com a agenda fictícia (v1; depois v2, v6, v7 e v5), confere os dados (`tests/integracao/test_carga.py`) e destrói tudo no fim (cerca de 15 minutos; timeout de 30) |
 | `deploy.yml` | manual (`workflow_dispatch`) | `bundle validate` e `bundle deploy -t prod` no environment `prod`, com login OIDC |
 
 - **Testes de integração** ([ADR 0005](adr/0005-testes-de-integracao.md)): o target `ci`
@@ -69,16 +69,29 @@ hook, e o deploy de produção só acontece pelo GitHub Actions
   asserções conferem as versões da silver (vigentes, total e fechadas), descartes e alertas
   por regra, chaves sem nulo e sem duplicata, que o retrato privado não aparece no catálogo,
   a fato com uma linha por entrevista vigente, a view do painel com o mesmo total da fato e
-  as tags `camada` e `tipo`.
+  as tags `camada` e `tipo`, e o log da carga (`mon_log_execucao`) com job, tarefas e
+  tabelas, duração legível e a última atualização anterior preenchida na rodada 2.
+- **Duas rodadas** ([ADR 0024](adr/0024-integracao-em-duas-rodadas-e-desempate-pelo-arquivo.md)):
+  a rodada 1 carrega a v1. A rodada 2 envia a v2, a v6 (a v1 chegando atrasada), a v7 (só
+  cabeçalho) e a v5 (cópia da v2 com outro nome) **numa carga só**. O esperado é: retrato =
+  v5, `arquivo_ignorado` = v2, v6 e v7, e histórico de 252 versões, 234 vigentes e 18
+  fechadas. O desempate do retrato usa a modificação do arquivo na landing, então a ordem
+  de envio vale. O workflow não tem mais o input `cenarios_de_falha`.
 - **Testes por risco:** todo teste protege contra dado errado, vazamento de dado pessoal,
   custo, deploy quebrado ou falha de segurança. Forma e ordem de ADRs e do CHANGELOG não
   são testadas (só links quebrados). A matriz está em
   [`cenarios-reais.md`](cenarios-reais.md).
-- **Cenários de integração:** com `cenarios_de_falha`, o `integracao.yml` envia, depois da
-  v1 e da v2, as agendas v5 (reenvio da v2 com outro nome), v6 (a v1 chegando atrasada),
-  v7 (só cabeçalho), um full refresh (que precisa ser recusado), v8 (a v2 em cp1252), v3
-  (queda de volume) e v4 (regra que para a carga). Cada cenário parte do estado do
-  anterior. A coluna nova na origem é conferida por teste de unidade, não pela integração.
+- **Cenários que viraram testes de unidade:** cp1252 (v8), full refresh, regra que para a
+  carga (v4), queda de volume (v3) e coluna nova na origem. A integração não os roda mais;
+  a matriz com o teste de cada um está em [`cenarios-reais.md`](cenarios-reais.md). As
+  agendas v3, v4 e v8 continuam em `data/` para teste manual no dev.
+- **Como forçar uma falha no dev** (para ver o e-mail com o motivo e o job vermelho): envie
+  a v4 para a pasta da fonte na landing do dev e rode o job
+  (`databricks bundle run essentials_carga_diaria -t dev`). A regra `data_plausivel` para a
+  carga. O e-mail chega pela tarefa `avisar_falha`, e a `encerrar_com_falha` deixa o job
+  vermelho. **Para voltar ao normal, envie a v5** (cópia da v2): ela tem a mesma data de
+  referência e modificação mais recente que a v4, então vira o retrato. Só dados
+  fictícios; o target `dev` nunca recebe dado real.
 - **Sem UDF Python:** um teste de unidade recusa `udf`, `pandas_udf`, `LANGUAGE PYTHON` e
   `applyInPandas` em `src/`; a lógica é SQL e funções nativas.
 - `DATABRICKS_HOST_DEV` (variável do repositório) é a URL do workspace de dev; o

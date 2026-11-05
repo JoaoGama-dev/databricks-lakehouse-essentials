@@ -8,7 +8,7 @@
 #   schema    <projeto>_bronze         bronze e o volume landing (só engenharia)
 #   schema    <projeto>_silver         silver e a função de máscara (só engenharia)
 #   schema    <projeto>_gold           gold (leitura para o negócio)
-#   schema    <projeto>_monitoramento  event log, views mon_* e mon_falhas (só engenharia)
+#   schema    <projeto>_monitoramento  event log, log da carga e views mon_* (só engenharia)
 #   bundle    essentials_<projeto>, para cada projeto ter sua pasta no workspace
 #   job       <projeto>_job_carga_diaria; pipeline <projeto>_pipeline_medalhao
 # Os schemas e o volume são criados pelo bundle (resources/governanca.yml). Em dev, o
@@ -40,6 +40,12 @@ variables:
     description: SQL warehouse que executa as consultas do painel AI/BI (localizado pelo nome)
     lookup:
       warehouse: Serverless Starter Warehouse
+  warehouse_dedicado:
+    # O faturamento do warehouse não traz a tag projeto: o custo dele só pode ser atribuído ao
+    # projeto quando ninguém mais o usa. No Free Edition ele é compartilhado (false); no
+    # cliente, o recomendado é um warehouse só do projeto e true.
+    description: '"true" quando o warehouse_id é só deste projeto: o custo dele entra nas views de custo'
+    default: "false"
   alert_email:
     # Não versione o e-mail real: passe-o no deploy com --var="alert_email=..." ou com a
     # variável de ambiente BUNDLE_VAR_alert_email.
@@ -53,13 +59,13 @@ variables:
   cliente:
     description: Cliente do projeto, em snake_case; vira a tag cliente para separar o custo
     default: demonstracao
-  ingerir_banco:
+  ingerir_fontes_externas:
     # Precisa refletir o fontes.yml: um teste falha se divergir (docs/adr/0004).
-    description: '"true" quando o fontes.yml tem fonte do tipo banco; senão a tarefa é pulada'
+    description: '"true" quando o fontes.yml tem fonte do tipo banco ou api; senão a tarefa de ingestão é pulada'
     default: "false"
-  ingerir_api:
-    description: '"true" quando o fontes.yml tem fonte do tipo api; senão a tarefa é pulada'
-    default: "false"
+  fuso_horario:
+    description: Fuso (nome IANA) dos horários do log legível das tarefas do job
+    default: America/Sao_Paulo
   limite_duracao_carga_segundos:
     description: Duração da carga diária que dispara o aviso de demora (normal em dev, 2 a 6 min)
     default: 900
@@ -119,11 +125,12 @@ targets:
           schedule:
             pause_status: PAUSED
       alerts:
-        # Em dev os alertas ficam pausados: dá para rodá-los à mão na tela de cada alerta.
+        # Em dev os alertas ficam pausados (dá para rodá-los à mão na tela de cada alerta),
+        # menos o falha_carga: ele fica ativo e avisa o usuario_alerta (quem implantou), para
+        # o e-mail de falha com o motivo ser conferido no dev.
         atraso_carga: &pausado
           schedule:
             pause_status: PAUSED
-        falha_carga: *pausado
         qualidade_carga: *pausado
         custo_teto: *pausado
 

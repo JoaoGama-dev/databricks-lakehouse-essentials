@@ -1,15 +1,20 @@
 """SQL das views de monitoramento mon_* (docs/adr/0003).
 
 Funções puras, sem Spark, para serem testadas pelo pytest. Quem executa é
-src/governanca/governanca.py, na tarefa governanca_depois do job, depois do pipeline:
-o event log (mon_log_eventos) só existe depois da primeira atualização do pipeline.
+src/governanca/publicar_monitoramento.py, na tarefa publicar_monitoramento do job, depois
+do pipeline: o event log (mon_log_eventos) só existe depois da primeira atualização do
+pipeline.
 
-As views, o event log e a tabela mon_falhas ficam no schema de monitoramento
-(<projeto>_monitoramento); as views leem a bronze e a silver nos schemas de cada camada.
+As views e o event log ficam no schema de monitoramento (<projeto>_monitoramento); as views
+leem a bronze e a silver nos schemas de cada camada. O log de cada carga (mon_log_execucao)
+e a view mon_falhas estão em src/essentials/log_sql.py.
 
-  mon_qualidade_diaria  por dia, tabela e regra: linhas aprovadas, descartadas e alertas
+  mon_qualidade_diaria  por dia, tabela e regra do fontes.yml: linhas aprovadas, descartadas e alertas
   mon_atualizacao       última atualização do pipeline e última ingestão de cada silver
-  mon_custo_diario      DBUs e custo de lista do job e do pipeline, por dia e produto
+  mon_custo_diario      DBUs e custo de lista do projeto (todos os ambientes), por dia, ambiente,
+                        recurso e produto
+  mon_custo_mensal      custo do mês por ambiente e total, teto e projeção do mês
+  mon_custo_por_carga   custo de lista de cada execução do job (job e pipeline)
 """
 
 from __future__ import annotations
@@ -105,12 +110,14 @@ ultima_do_dia AS (
     row_number() OVER (PARTITION BY to_date(dh_fim), nm_tabela, nm_regra ORDER BY dh_fim DESC) AS nr_ordem
   FROM por_atualizacao
 )
-SELECT u.dt_execucao, u.id_atualizacao, u.nm_tabela, u.nm_regra, coalesce(r.ds_acao, 'desconhecida') AS ds_acao,
+SELECT u.dt_execucao, u.id_atualizacao, u.nm_tabela, u.nm_regra, r.ds_acao,
   u.qt_aprovadas,
   CASE WHEN r.ds_acao = 'drop' THEN u.qt_reprovadas ELSE 0 END AS qt_descartadas,
   CASE WHEN r.ds_acao = 'drop' THEN 0 ELSE u.qt_reprovadas END AS qt_alertas
 FROM ultima_do_dia u
-LEFT JOIN regras r ON r.nm_tabela = u.nm_tabela AND r.nm_regra = u.nm_regra
+-- Só as regras do fontes.yml atual: as de tabelas e regras que não existem mais (o event log
+-- guarda o histórico do pipeline inteiro) não aparecem.
+JOIN regras r ON r.nm_tabela = u.nm_tabela AND r.nm_regra = u.nm_regra
 WHERE u.nr_ordem = 1"""
     return definicao_view(
         catalogo,
@@ -169,41 +176,258 @@ FROM horas"""
 
 COLUNAS_CUSTO = {
     "dt_uso": "Dia do consumo.",
-    "nm_recurso": "Recurso do projeto que consumiu: job (tarefas Python) ou pipeline.",
-    "ds_produto": "Produto de faturamento da Databricks (JOBS, DLT...).",
+    "ds_ambiente": "Ambiente do projeto que consumiu (tag ambiente: dev, ci ou prod).",
+    "nm_recurso": "Recurso do projeto que consumiu: job (tarefas Python), pipeline ou warehouse (só o dedicado).",
+    "ds_produto": "Produto de faturamento da Databricks (JOBS, DLT, SQL...).",
     "qt_dbus": "Consumo em DBUs no dia.",
-    "vl_custo_lista": "Custo estimado pelo preço de lista (sem descontos do contrato).",
+    "vl_custo_lista": "Custo estimado pelo preço de lista vigente no dia (sem descontos do contrato).",
     "sg_moeda": "Moeda do preço de lista.",
 }
 
+# O target ci usa o projeto do bundle com este sufixo (databricks.yml; um teste confere).
+SUFIXO_CI = "_ci"
+AMBIENTE_CI = "ci"
+# Ambiente de uma linha cujo recurso tem a tag projeto, mas não a tag ambiente.
+SEM_AMBIENTE = "sem_tag"
 
-def sql_custo_diario(catalogo: str, schema: str, job_id: str, pipeline_id: str) -> str:
-    """Custo do projeto pelas tabelas de sistema, filtrando pelos IDs do job e do pipeline.
+# Versão mais recente de cada job e de cada pipeline: as tags atuais (presets.tags do bundle).
+VERSOES_DOS_RECURSOS = """jobs AS (
+  SELECT workspace_id, job_id, tags FROM system.lakeflow.jobs
+  QUALIFY row_number() OVER (PARTITION BY workspace_id, job_id ORDER BY change_time DESC) = 1
+),
+pipelines AS (
+  SELECT workspace_id, pipeline_id, tags FROM system.lakeflow.pipelines
+  QUALIFY row_number() OVER (PARTITION BY workspace_id, pipeline_id ORDER BY change_time DESC) = 1
+)"""
 
-    Os IDs funcionam em qualquer workspace; as tags (projeto, cliente, ambiente) só chegam ao
-    faturamento serverless do job, não ao do pipeline (conferido no Free Edition).
+
+def booleano_da_variavel(valor: str) -> bool:
+    """Variável booleana do bundle (warehouse_dedicado) como chega no parâmetro da tarefa.
+
+    Só true ou false: um valor digitado errado não pode virar false em silêncio (o custo do
+    warehouse sumiria do painel sem ninguém notar).
     """
-    job, pipeline = literal_sql(job_id), literal_sql(pipeline_id)
-    consulta = f"""SELECT u.usage_date AS dt_uso,
-  CASE WHEN u.usage_metadata.job_id = {job} THEN 'job' ELSE 'pipeline' END AS nm_recurso,
-  u.billing_origin_product AS ds_produto,
-  sum(u.usage_quantity) AS qt_dbus,
-  sum(u.usage_quantity * p.pricing.effective_list.default) AS vl_custo_lista,
-  first(p.currency_code) AS sg_moeda
-FROM system.billing.usage u
-LEFT JOIN system.billing.list_prices p
-  ON p.cloud = u.cloud AND p.sku_name = u.sku_name AND p.usage_unit = u.usage_unit
-  AND u.usage_start_time >= p.price_start_time
-  AND (p.price_end_time IS NULL OR u.usage_start_time < p.price_end_time)
-WHERE u.usage_metadata.job_id = {job} OR u.usage_metadata.dlt_pipeline_id = {pipeline}
-GROUP BY ALL"""
+    texto = str(valor).strip().lower()
+    if texto not in ("true", "false"):
+        raise ValueError(f"Esperado true ou false, veio {valor!r}.")
+    return texto == "true"
+
+
+def projetos_do_custo(projeto: str, ambiente: str) -> tuple[str, str]:
+    """Valores da tag projeto que são deste projeto: o do bundle e o do target ci.
+
+    No ci, var.projeto já vem com o sufixo (portfolio_ci): o projeto do bundle é ele sem o
+    sufixo. A comparação é exata (IN), então outro projeto com o nome parecido (portfolio2,
+    portfolio_novo) não entra.
+    """
+    base = projeto.removesuffix(SUFIXO_CI) if ambiente == AMBIENTE_CI else projeto
+    return base, f"{base}{SUFIXO_CI}"
+
+
+def tag_do_recurso(chave: str) -> str:
+    """Tag do uso; sem ela, a da versão atual do job ou do pipeline.
+
+    O faturamento serverless do pipeline não traz custom_tags, e o do job só traz as tags
+    depois que elas entraram no job (conferido no Free Edition em 2026-11-05).
+    """
+    return f"coalesce(u.custom_tags['{chave}'], j.tags['{chave}'], pl.tags['{chave}'])"
+
+
+def cte_uso_do_projeto(projeto: str, ambiente: str, warehouse_dedicado: bool, warehouse_id: str) -> str:
+    """CTEs jobs, pipelines e uso: cada linha de faturamento do projeto, com o custo de lista.
+
+    Entram o job e o pipeline de todos os ambientes do projeto (dev, ci e prod), pela tag
+    projeto, inclusive os recriados (o ci ganha IDs novos a cada rodada). O warehouse só
+    entra quando é dedicado ao projeto: ele não tem a tag, e o uso dele vai para o ambiente
+    que publica a view.
+    """
+    projetos = ", ".join(literal_sql(nome) for nome in projetos_do_custo(projeto, ambiente))
+    do_warehouse = f"u.usage_metadata.warehouse_id = {literal_sql(warehouse_id)}"
+    filtro = f"{tag_do_recurso('projeto')} IN ({projetos})"
+    ambiente_sql = f"coalesce({tag_do_recurso('ambiente')}, '{SEM_AMBIENTE}')"
+    if warehouse_dedicado:
+        filtro = f"({filtro})\n    OR {do_warehouse}"
+        ambiente_sql = f"CASE WHEN {do_warehouse} THEN {literal_sql(ambiente)} ELSE {ambiente_sql} END"
+    return f"""{VERSOES_DOS_RECURSOS},
+uso AS (
+  SELECT u.usage_date AS dt_uso, u.usage_start_time AS dh_inicio_uso, u.workspace_id,
+    {ambiente_sql} AS ds_ambiente,
+    CASE
+      WHEN u.usage_metadata.dlt_pipeline_id IS NOT NULL THEN 'pipeline'
+      WHEN u.usage_metadata.job_id IS NOT NULL THEN 'job'
+      WHEN u.usage_metadata.warehouse_id IS NOT NULL THEN 'warehouse'
+      ELSE lower(u.billing_origin_product)
+    END AS nm_recurso,
+    u.billing_origin_product AS ds_produto,
+    u.usage_metadata.job_run_id AS id_execucao_job,
+    u.usage_metadata.dlt_pipeline_id AS id_pipeline, u.usage_metadata.dlt_update_id AS id_atualizacao,
+    u.usage_quantity AS qt_dbus,
+    u.usage_quantity * p.pricing.effective_list.default AS vl_custo_lista,
+    p.currency_code AS sg_moeda
+  FROM system.billing.usage u
+  -- Preço de lista vigente quando o uso aconteceu.
+  LEFT JOIN system.billing.list_prices p
+    ON p.cloud = u.cloud AND p.sku_name = u.sku_name AND p.usage_unit = u.usage_unit
+    AND u.usage_start_time >= p.price_start_time
+    AND (p.price_end_time IS NULL OR u.usage_start_time < p.price_end_time)
+  LEFT JOIN jobs j ON j.workspace_id = u.workspace_id AND j.job_id = u.usage_metadata.job_id
+  LEFT JOIN pipelines pl ON pl.workspace_id = u.workspace_id AND pl.pipeline_id = u.usage_metadata.dlt_pipeline_id
+  WHERE {filtro}
+)"""
+
+
+def sql_custo_diario(
+    catalogo: str, schema: str, projeto: str, ambiente: str, warehouse_dedicado: bool, warehouse_id: str
+) -> str:
+    """Custo do projeto por dia, ambiente, recurso e produto (tabelas de sistema de faturamento).
+
+    Atribuição pela tag projeto (cte_uso_do_projeto), não pelos IDs do target atual: assim
+    entram o dev, o ci e o prod, e os recursos recriados.
+    """
+    fora = (
+        "Inclui o warehouse dedicado do projeto (warehouse_dedicado: true). "
+        if warehouse_dedicado
+        else "Fora: o SQL warehouse (compartilhado; warehouse_dedicado: false). "
+    )
+    consulta = f"""WITH {cte_uso_do_projeto(projeto, ambiente, warehouse_dedicado, warehouse_id)}
+SELECT dt_uso, ds_ambiente, nm_recurso, ds_produto, sum(qt_dbus) AS qt_dbus, sum(vl_custo_lista) AS vl_custo_lista,
+  first(sg_moeda, true) AS sg_moeda
+FROM uso
+GROUP BY dt_uso, ds_ambiente, nm_recurso, ds_produto"""
     return definicao_view(
         catalogo,
         schema,
         "mon_custo_diario",
         "custo",
-        "Custo diário do projeto (job e pipeline) pelas tabelas de sistema de faturamento.",
+        "Custo diário do projeto em todos os ambientes (dev, ci, prod), pela tag projeto do job e do pipeline, "
+        f"a preço de lista. {fora}Fora também: armazenamento padrão e otimização preditiva (sem tag de projeto). "
+        "As tabelas de cobrança atrasam algumas horas.",
         COLUNAS_CUSTO,
+        consulta,
+    )
+
+
+COLUNAS_CUSTO_POR_CARGA = {
+    "dt_execucao": "Dia em que a execução do job começou.",
+    "id_execucao_job": "Execução do job da carga diária (run_id).",
+    "ds_ambiente": "Ambiente do job (tag ambiente: dev, ci ou prod).",
+    "st_execucao": "Resultado da execução em system.lakeflow.job_run_timeline (SUCCEEDED, ERROR...); vazio "
+    "enquanto roda.",
+    "dh_inicio": "Início da execução do job.",
+    "dh_fim": "Fim da execução do job.",
+    "qt_atualizacoes_pipeline": "Atualizações do pipeline disparadas pela execução (inclui as novas tentativas).",
+    "qt_dbus": "DBUs da execução: tarefas do job e atualizações do pipeline.",
+    "vl_custo_job": "Custo de lista das tarefas do job (serverless) da execução.",
+    "vl_custo_pipeline": "Custo de lista das atualizações do pipeline da execução, com o rateio do uso cobrado "
+    "por hora sem atualização.",
+    "vl_custo_lista": "Custo de lista da execução inteira (job e pipeline).",
+    "sg_moeda": "Moeda do preço de lista.",
+    "fl_custo_parcial": "Verdadeiro quando a execução não terminou ou terminou há menos de 24 horas: a cobrança "
+    "atrasa algumas horas e o custo ainda pode subir.",
+}
+
+# Horas depois do fim da execução em que o custo dela é dado como completo.
+HORAS_ATRASO_COBRANCA = 24
+
+
+def sql_custo_por_carga(
+    catalogo: str, schema: str, projeto: str, ambiente: str, warehouse_dedicado: bool, warehouse_id: str
+) -> str:
+    """Custo de lista de cada execução do job do projeto (todos os ambientes).
+
+    Ligação conferida no Free Edition em 2026-11-05:
+      job       usage_metadata.job_run_id é o run_id da execução do job (não o da tarefa);
+      pipeline  cada atualização (system.lakeflow.pipeline_update_timeline) traz a tarefa do
+                job que a disparou (trigger_details.job_task.job_task_run_id), e a tarefa traz a
+                execução (system.lakeflow.job_task_run_timeline.job_run_id). Uma execução pode
+                disparar várias atualizações (RETRY_ON_FAILURE): todas entram;
+      rateio    parte do uso do pipeline serverless vem por hora, sem dlt_update_id (~37% no
+                dev). Ele é rateado entre as atualizações do mesmo pipeline e da mesma hora, na
+                proporção do uso de cada uma (no dev, toda hora com esse uso tinha atualização).
+    O warehouse (alerta e encerrar_com_falha) não entra: o faturamento dele não diz a execução.
+    """
+    uso = cte_uso_do_projeto(projeto, ambiente, warehouse_dedicado, warehouse_id)
+    projetos = ", ".join(literal_sql(nome) for nome in projetos_do_custo(projeto, ambiente))
+    consulta = f"""WITH {uso},
+execucoes AS (
+  SELECT r.workspace_id, r.job_id, r.run_id AS id_execucao_job,
+    coalesce(max(j.tags['ambiente']), '{SEM_AMBIENTE}') AS ds_ambiente,
+    min(r.period_start_time) AS dh_inicio,
+    max(r.period_end_time) FILTER (WHERE r.result_state IS NOT NULL) AS dh_fim,
+    max_by(r.result_state, r.period_end_time) FILTER (WHERE r.result_state IS NOT NULL) AS st_execucao
+  FROM system.lakeflow.job_run_timeline r
+  JOIN jobs j ON j.workspace_id = r.workspace_id AND j.job_id = r.job_id
+  WHERE j.tags['projeto'] IN ({projetos})
+  GROUP BY r.workspace_id, r.job_id, r.run_id
+),
+custo_job AS (
+  SELECT workspace_id, id_execucao_job, sum(qt_dbus) AS qt_dbus, sum(vl_custo_lista) AS vl_custo
+  FROM uso
+  WHERE nm_recurso = 'job' AND id_execucao_job IS NOT NULL
+  GROUP BY workspace_id, id_execucao_job
+),
+pipeline_por_hora AS (
+  SELECT workspace_id, id_pipeline, id_atualizacao, date_trunc('HOUR', dh_inicio_uso) AS dh_hora,
+    sum(qt_dbus) AS qt_dbus, sum(vl_custo_lista) AS vl_custo
+  FROM uso
+  WHERE nm_recurso = 'pipeline'
+  GROUP BY workspace_id, id_pipeline, id_atualizacao, date_trunc('HOUR', dh_inicio_uso)
+),
+-- Uso da atualização mais a parte dela no uso da mesma hora sem atualização.
+pipeline_rateado AS (
+  SELECT a.workspace_id, a.id_atualizacao,
+    sum(a.qt_dbus + coalesce(s.qt_dbus * a.qt_dbus / nullif(a.qt_dbus_hora, 0), 0)) AS qt_dbus,
+    sum(a.vl_custo + coalesce(s.vl_custo * a.qt_dbus / nullif(a.qt_dbus_hora, 0), 0)) AS vl_custo
+  FROM (
+    SELECT *, sum(qt_dbus) OVER (PARTITION BY workspace_id, id_pipeline, dh_hora) AS qt_dbus_hora
+    FROM pipeline_por_hora WHERE id_atualizacao IS NOT NULL
+  ) AS a
+  LEFT JOIN pipeline_por_hora s ON s.workspace_id = a.workspace_id AND s.id_pipeline = a.id_pipeline
+    AND s.dh_hora = a.dh_hora AND s.id_atualizacao IS NULL
+  GROUP BY a.workspace_id, a.id_atualizacao
+),
+atualizacoes AS (
+  SELECT DISTINCT workspace_id, update_id AS id_atualizacao, trigger_details.job_task.job_id AS job_id,
+    trigger_details.job_task.job_task_run_id AS id_execucao_tarefa
+  FROM system.lakeflow.pipeline_update_timeline
+  WHERE trigger_details.job_task.job_task_run_id IS NOT NULL
+),
+tarefas AS (
+  SELECT DISTINCT workspace_id, job_id, run_id AS id_execucao_tarefa, job_run_id AS id_execucao_job
+  FROM system.lakeflow.job_task_run_timeline
+),
+custo_pipeline AS (
+  SELECT t.workspace_id, t.id_execucao_job, count(DISTINCT a.id_atualizacao) AS qt_atualizacoes,
+    sum(pr.qt_dbus) AS qt_dbus, sum(pr.vl_custo) AS vl_custo
+  FROM atualizacoes a
+  JOIN tarefas t ON t.workspace_id = a.workspace_id AND t.job_id = a.job_id
+    AND t.id_execucao_tarefa = a.id_execucao_tarefa
+  LEFT JOIN pipeline_rateado pr ON pr.workspace_id = a.workspace_id AND pr.id_atualizacao = a.id_atualizacao
+  GROUP BY t.workspace_id, t.id_execucao_job
+),
+moeda AS (
+  SELECT first(sg_moeda, true) AS sg_moeda FROM uso
+)
+SELECT to_date(e.dh_inicio) AS dt_execucao, e.id_execucao_job, e.ds_ambiente, e.st_execucao, e.dh_inicio, e.dh_fim,
+  coalesce(cp.qt_atualizacoes, 0) AS qt_atualizacoes_pipeline,
+  coalesce(cj.qt_dbus, 0) + coalesce(cp.qt_dbus, 0) AS qt_dbus,
+  coalesce(cj.vl_custo, 0) AS vl_custo_job, coalesce(cp.vl_custo, 0) AS vl_custo_pipeline,
+  coalesce(cj.vl_custo, 0) + coalesce(cp.vl_custo, 0) AS vl_custo_lista,
+  m.sg_moeda,
+  coalesce(e.dh_fim > current_timestamp() - INTERVAL {HORAS_ATRASO_COBRANCA} HOURS, true) AS fl_custo_parcial
+FROM execucoes e
+CROSS JOIN moeda m
+LEFT JOIN custo_job cj ON cj.workspace_id = e.workspace_id AND cj.id_execucao_job = e.id_execucao_job
+LEFT JOIN custo_pipeline cp ON cp.workspace_id = e.workspace_id AND cp.id_execucao_job = e.id_execucao_job"""
+    return definicao_view(
+        catalogo,
+        schema,
+        "mon_custo_por_carga",
+        "custo",
+        "Custo de lista de cada execução do job do projeto (todos os ambientes): tarefas do job e atualizações do "
+        "pipeline que ela disparou. Estimativa a preço de lista; sem o SQL warehouse e o armazenamento. Use as "
+        "execuções com fl_custo_parcial falso (a cobrança atrasa algumas horas).",
+        COLUNAS_CUSTO_POR_CARGA,
         consulta,
     )
 
@@ -338,20 +562,41 @@ def arquivos_do_retrato(catalogo: str, schema_bronze: str, schema_silver: str, f
     )
 
 
-def sql_arquivo_ignorado(catalogo: str, schema_bronze: str, schema_silver: str, fonte: dict) -> str:
-    """Aviso quando o último arquivo recebido de um snapshot não virou o retrato.
+def inicio_da_ultima_carga(catalogo: str, schema_monitoramento: str, bronze: str) -> str:
+    """Início da atualização do pipeline que gravou a ingestão mais recente da bronze.
 
-    Ele perdeu para um arquivo com data de referência maior (data_referencia) ou não gerou
-    nenhuma linha (ex.: só o cabeçalho).
+    É a atualização mais recente que começou antes do último _ingerido_em. Vários arquivos
+    de uma mesma carga podem cair em micro-batches diferentes (com _ingerido_em diferentes),
+    mas todos são ingeridos depois do início da atualização. Sem event log, vale o último
+    _ingerido_em (só o último micro-batch).
+    """
+    log = nome_completo(catalogo, schema_monitoramento, EVENT_LOG)
+    ultima_ingestao = f"(SELECT max(_ingerido_em) FROM {bronze})"
+    return (
+        f"coalesce((SELECT max(u.dh_inicio) FROM (SELECT origin.update_id, min(timestamp) AS dh_inicio FROM {log} "
+        f"WHERE origin.update_id IS NOT NULL GROUP BY origin.update_id) AS u "
+        f"WHERE u.dh_inicio <= {ultima_ingestao}), {ultima_ingestao})"
+    )
+
+
+def sql_arquivo_ignorado(
+    catalogo: str, schema_monitoramento: str, schema_bronze: str, schema_silver: str, fonte: dict
+) -> str:
+    """Aviso para cada arquivo da última carga de um snapshot que não virou o retrato.
+
+    Ele perdeu para um arquivo com data de referência maior (data_referencia), empatou e
+    perdeu no desempate, ou não gerou nenhuma linha (ex.: só o cabeçalho). A última carga
+    são os arquivos ingeridos desde o início da atualização que os gravou
+    (inicio_da_ultima_carga), não só o último micro-batch.
     """
     bronze = tabelas_da_fonte(fonte)["bronze"]
     tabela = nome_completo(catalogo, schema_bronze, bronze)
     retrato = arquivos_do_retrato(catalogo, schema_bronze, schema_silver, fonte)
+    inicio = inicio_da_ultima_carga(catalogo, schema_monitoramento, tabela)
     return (
         f"SELECT {literal_sql(bronze)} AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, "
         f"{NOME_DO_ARQUIVO} AS nm_coluna, CAST(NULL AS BIGINT) AS qt_linhas "
-        f"FROM (SELECT DISTINCT _arquivo_origem FROM {tabela} "
-        f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {tabela})) AS b "
+        f"FROM (SELECT DISTINCT _arquivo_origem FROM {tabela} WHERE _ingerido_em >= {inicio}) AS b "
         f"LEFT ANTI JOIN ({retrato}) AS r ON b._arquivo_origem = r._arquivo_origem"
     )
 
@@ -402,7 +647,7 @@ def sql_estrutura(
         if "_arquivo_origem" not in colunas:
             continue
         if fonte["modo_carga"] == "snapshot":
-            partes.append(sql_arquivo_ignorado(catalogo, schema_bronze, schema_silver, fonte))
+            partes.append(sql_arquivo_ignorado(catalogo, schema, schema_bronze, schema_silver, fonte))
         if fonte.get("arquivo", {}).get("formato") == "texto" and "value" in colunas:
             partes.append(sql_codificacao_invalida(catalogo, schema_bronze, schema_silver, fonte))
     return definicao_view(
@@ -452,9 +697,16 @@ GROUP BY dt_execucao"""
     )
 
 
+AMBIENTE_TOTAL = "total"
+
 COLUNAS_CUSTO_MENSAL = {
     "dt_mes": "Primeiro dia do mês do consumo.",
-    "vl_custo_lista": "Custo do mês pelo preço de lista (job e pipeline do projeto).",
+    "ds_ambiente": "Ambiente do projeto (dev, ci, prod) ou total (a soma de todos, comparada com o teto).",
+    "vl_custo_lista": "Custo do mês até agora pelo preço de lista (o que mon_custo_diario atribui ao projeto).",
+    "qt_dias_com_uso": "Dias do mês com algum consumo.",
+    "qt_dias_mes": "Dias do mês.",
+    "vl_projecao_mes": "Estimativa a preço de lista do mês inteiro: custo médio dos dias com uso vezes os dias do "
+    "mês (no mês atual); nos meses fechados, o custo do mês. No total, a soma das projeções dos ambientes.",
     "vl_teto": "Teto mensal de custo do Databricks combinado no diagnóstico (preço de lista).",
     "pc_do_teto": "Percentual do teto já consumido no mês.",
     "sg_moeda": "Moeda do preço de lista.",
@@ -462,86 +714,114 @@ COLUNAS_CUSTO_MENSAL = {
 
 
 def sql_custo_mensal(catalogo: str, schema: str, teto: float) -> str:
-    """Consumo do mês contra o teto do diagnóstico; o alerta dispara a partir de 80%."""
+    """Custo do mês por ambiente e no total, contra o teto, com a projeção do mês.
+
+    O alerta custo_teto lê a linha total (dispara a partir de 80% do teto). A projeção
+    supõe que os próximos dias custam como a média dos dias com uso: é estimativa.
+    """
     custo = nome_completo(catalogo, schema, "mon_custo_diario")
     teto_sql = f"CAST({float(teto)} AS DOUBLE)"
-    consulta = f"""SELECT date_trunc('MONTH', dt_uso) AS dt_mes, sum(vl_custo_lista) AS vl_custo_lista,
+    consulta = f"""WITH diario AS (
+  SELECT date_trunc('MONTH', dt_uso) AS dt_mes, dt_uso, ds_ambiente, vl_custo_lista, sg_moeda FROM {custo}
+),
+por_ambiente AS (
+  SELECT dt_mes, ds_ambiente, sum(vl_custo_lista) AS vl_custo_lista, count(DISTINCT dt_uso) AS qt_dias_com_uso,
+    first(sg_moeda, true) AS sg_moeda
+  FROM diario
+  GROUP BY dt_mes, ds_ambiente
+),
+com_projecao AS (
+  SELECT *,
+    CASE WHEN dt_mes = date_trunc('MONTH', current_date())
+      THEN vl_custo_lista / nullif(qt_dias_com_uso, 0) * day(last_day(dt_mes))
+      ELSE vl_custo_lista END AS vl_projecao
+  FROM por_ambiente
+),
+dias_do_total AS (
+  SELECT dt_mes, count(DISTINCT dt_uso) AS qt_dias_com_uso FROM diario GROUP BY dt_mes
+),
+-- Cada ambiente usa os próprios dias com uso; o total soma as projeções (ex.: o ci rodando
+-- 3 dias e o dev 5 não pode dar um total menor que a projeção do ci sozinho).
+por_mes AS (
+  SELECT dt_mes, ds_ambiente, vl_custo_lista, qt_dias_com_uso, vl_projecao, sg_moeda FROM com_projecao
+  UNION ALL
+  SELECT c.dt_mes, '{AMBIENTE_TOTAL}', sum(c.vl_custo_lista), max(t.qt_dias_com_uso), sum(c.vl_projecao),
+    first(c.sg_moeda, true)
+  FROM com_projecao c JOIN dias_do_total t ON t.dt_mes = c.dt_mes
+  GROUP BY c.dt_mes
+)
+SELECT dt_mes, ds_ambiente, vl_custo_lista, qt_dias_com_uso, day(last_day(dt_mes)) AS qt_dias_mes,
+  round(vl_projecao, 2) AS vl_projecao_mes,
   {teto_sql} AS vl_teto,
-  round(sum(vl_custo_lista) * 100.0 / nullif({teto_sql}, 0), 1) AS pc_do_teto,
-  first(sg_moeda) AS sg_moeda
-FROM {custo}
-GROUP BY 1"""
+  round(vl_custo_lista * 100.0 / nullif({teto_sql}, 0), 1) AS pc_do_teto,
+  sg_moeda
+FROM por_mes"""
     return definicao_view(
         catalogo,
         schema,
         "mon_custo_mensal",
         "custo",
-        "Custo do Databricks no mês contra o teto do diagnóstico.",
+        "Custo do Databricks no mês por ambiente e no total (linha total, a do alerta) contra o teto do diagnóstico, "
+        "com a projeção do mês: estimativa a preço de lista.",
         COLUNAS_CUSTO_MENSAL,
         consulta,
     )
 
 
-TABELA_FALHAS = "mon_falhas"
-COLUNAS_FALHAS = {
-    "dh_falha": "Quando a falha foi registrada.",
-    "id_execucao": "Execução do job que falhou.",
-    "nm_tarefa": "Tarefa do job que falhou.",
-    "ds_motivo": "Motivo da falha, sem dados do registro (só a primeira linha e os nomes das regras).",
-    "ds_link": "Link da execução no Databricks.",
-}
-
-
-def sql_tabela_falhas(catalogo: str, schema: str) -> str:
-    """Tabela onde a tarefa registrar_falha grava cada falha; criada antes da primeira carga."""
-    colunas = ",\n  ".join(
-        f"`{coluna}` {'TIMESTAMP' if coluna.startswith('dh_') else 'STRING'} COMMENT {literal_sql(texto)}"
-        for coluna, texto in COLUNAS_FALHAS.items()
-    )
-    return (
-        f"CREATE TABLE IF NOT EXISTS {nome_completo(catalogo, schema, TABELA_FALHAS)} (\n  {colunas}\n)\n"
-        "COMMENT 'Falhas da carga diária com o motivo, para o aviso por e-mail e o relatório mensal.'\n"
-        f"TBLPROPERTIES ('camada' = '{CAMADA}', 'tipo' = 'falha')"
-    )
-
-
-def sql_registrar_falhas(
-    catalogo: str, schema: str, id_execucao: str, falhas: list[tuple[str, str]], link: str
-) -> str:
-    """Grava as falhas de uma execução sem duplicar: uma linha por (execução, tarefa).
-
-    Se a tarefa registrar_falha for tentada de novo na mesma execução, o MERGE não grava
-    outra vez o que já está lá.
-    """
-    valores = ",\n    ".join(
-        f"({literal_sql(id_execucao)}, {literal_sql(tarefa)}, {literal_sql(motivo)}, {literal_sql(link)})"
-        for tarefa, motivo in falhas
-    )
-    return f"""MERGE INTO {nome_completo(catalogo, schema, TABELA_FALHAS)} AS f
-USING (SELECT * FROM VALUES
-    {valores}
-  AS novas(id_execucao, nm_tarefa, ds_motivo, ds_link)) AS n
-ON f.id_execucao = n.id_execucao AND f.nm_tarefa = n.nm_tarefa
-WHEN NOT MATCHED THEN INSERT (dh_falha, id_execucao, nm_tarefa, ds_motivo, ds_link)
-  VALUES (current_timestamp(), n.id_execucao, n.nm_tarefa, n.ds_motivo, n.ds_link)"""
-
-
 TAMANHO_MAXIMO_MOTIVO = 300
+# Lista de permissões: o motivo é só texto montado aqui. Do erro do motor sai no máximo a
+# classe (um identificador), os nomes de regra e a etapa; nunca texto livre (LGPD).
+MOTIVO_SEM_CLASSE = "Falha sem classe de erro identificada: veja a mensagem completa pelo link da execução."
+# Condição de erro do Databricks no começo de uma mensagem ([CAST_INVALID_INPUT],
+# [DELTA_X.Y]): no início do texto, de uma linha, depois de ": " ou do "message" do JSON.
+CONDICAO_DE_ERRO = re.compile(r'(?:^|\n|\\n|: |"message":")\[([A-Z][A-Z0-9]*(?:[_.][A-Z0-9]+)+)\]')
+# Nome de classe de exceção (AnalysisException, ValueError, SparkNumberFormatException),
+# sem o pacote: precisa terminar em Exception ou Error e ter algo antes.
+CLASSE_DE_EXCECAO = re.compile(r"(?<![\w$])(?:[\w$]+\.)*([A-Z][A-Za-z0-9]+(?:Exception|Error))(?![\w$])")
+ETAPA = re.compile(r"[A-Z][A-Z_]{1,60}")
+# Classes reais do Spark, do Delta e do Python cabem com folga; um texto maior que passasse pelo
+# formato da regex não é uma classe.
+TAMANHO_MAXIMO_CLASSE = 60
 
 
-def motivo_seguro(mensagem: str | None) -> str:
-    """Motivo da falha que pode ir por e-mail: nunca o registro que violou a regra (LGPD).
+def classe_do_erro(mensagem: str | None) -> str | None:
+    """Classe do erro (condição do Databricks ou nome da exceção), nunca texto livre."""
+    texto = mensagem or ""
+    for padrao in (CONDICAO_DE_ERRO, CLASSE_DE_EXCECAO):
+        achado = padrao.search(texto)
+        if achado and len(achado.group(1)) <= TAMANHO_MAXIMO_CLASSE:
+            return achado.group(1)
+    return None
 
-    Regra `falhar` violada: só os nomes das regras. Outros erros: só a primeira linha, cortada
-    antes de qualquer trecho que pareça um registro ({...}, [...] ou "record"), com tamanho
-    limitado.
+
+def regras_violadas(mensagem: str, regras: set[str] | None = None) -> list[str]:
+    """Nomes das regras na lista "Violated expectations: 'a', 'b'" (só identificadores).
+
+    Com a lista de regras conhecida (fontes.yml), fica só o que é nome de regra de verdade.
     """
-    texto = (mensagem or "").strip()
-    if not texto:
-        return "Falha sem mensagem: veja a execução pelo link."
-    violadas = re.findall(r"Violated expectations?: ([^\n]+)", texto)
+    nomes = set()
+    for lista in re.findall(r"Violated expectations?: ((?:'\w+'(?:,\s*)?)+)", mensagem):
+        nomes.update(re.findall(r"'(\w+)'", lista))
+    if regras is not None:
+        nomes &= set(regras)
+    return sorted(nomes)
+
+
+def motivo_seguro(mensagem: str | None, etapa: str | None = None, regras: set[str] | None = None) -> str:
+    """Motivo da falha que pode ser gravado e ir por e-mail: só texto nosso (LGPD).
+
+    1. Regra falhar violada: só os nomes das regras.
+    2. Outros erros: só a classe do erro (classe_do_erro) e, se conhecida, a etapa da
+       atualização do pipeline (um estado, ex.: SETTING_UP_TABLES).
+    3. Sem classe identificável: MOTIVO_SEM_CLASSE.
+    Nenhuma palavra da mensagem do motor além disso chega ao motivo.
+    """
+    texto = mensagem or ""
+    violadas = regras_violadas(texto, regras)
     if violadas:
-        nomes = sorted(set(re.findall(r"'(\w+)'", " ".join(violadas))))
-        return f"Regra de qualidade que para a carga foi violada: {', '.join(nomes)}. Confira o arquivo enviado."
-    primeira = re.split(r"[{\[]|(?i:record)", texto.splitlines()[0])[0].strip(" :-")
-    return primeira[:TAMANHO_MAXIMO_MOTIVO] or "Falha sem mensagem legível: veja a execução pelo link."
+        return f"Regra de qualidade que para a carga foi violada: {', '.join(violadas)}. Confira o arquivo enviado."
+    classe = classe_do_erro(texto)
+    if not classe:
+        return MOTIVO_SEM_CLASSE
+    na_etapa = f" na etapa {etapa}" if etapa and ETAPA.fullmatch(etapa) else ""
+    return f"Erro {classe}{na_etapa}: veja a mensagem completa pelo link da execução."[:TAMANHO_MAXIMO_MOTIVO]

@@ -6,9 +6,10 @@ dos recursos vêm do resumo do bundle, gravado pelo workflow depois do deploy:
     databricks bundle summary -t ci -o json > recursos-ci.json
 
 Comandos:
-    python scripts/integracao.py preparar           esvazia a landing do CI
-    python scripts/integracao.py enviar --versao 1  envia data/agenda_exemplo_v1.csv (1 a 8)
-    python scripts/integracao.py limpar             apaga os schemas do CI que sobrarem
+    python scripts/integracao.py preparar                   esvazia a landing do CI
+    python scripts/integracao.py enviar --versao 1          envia data/agenda_exemplo_v1.csv (1 a 8)
+    python scripts/integracao.py enviar --versao 2 6 7 5    envia várias, nesta ordem, para uma carga só
+    python scripts/integracao.py limpar                     apaga os schemas do CI que sobrarem
 
 Por segurança, nada aqui toca num schema cujo nome não termine em _ci_bronze, _ci_silver,
 _ci_gold ou _ci_monitoramento: o dev de quem roda fica intacto.
@@ -139,11 +140,26 @@ def arquivo_da_versao(versao: int) -> Path:
     return RAIZ / "data" / f"agenda_exemplo_v{versao}.csv"
 
 
-def enviar(recursos: dict, versao: int) -> None:
-    arquivo = arquivo_da_versao(versao)
-    destino = f"{recursos['landing']}/{PASTA_AGENDA}/{arquivo.name}"
-    cliente().files.upload(destino, io.BytesIO(arquivo.read_bytes()), overwrite=True)
-    print(f"Enviado {arquivo.name} para {destino}.")
+def arquivos_das_versoes(versoes: list[int]) -> list[Path]:
+    """Arquivos das versões, na ordem pedida; recusa a lista inteira se uma versão não vale.
+
+    A ordem importa: a última enviada tem a modificação mais recente, que desempata o retrato
+    entre arquivos de mesmo conteúdo. Repetir uma versão mudaria essa ordem sem avisar.
+    """
+    if not versoes:
+        raise ValueError("informe ao menos uma versão da agenda")
+    repetidas = sorted({versao for versao in versoes if versoes.count(versao) > 1})
+    if repetidas:
+        raise ValueError(f"versões repetidas: {repetidas}")
+    return [arquivo_da_versao(versao) for versao in versoes]
+
+
+def enviar(recursos: dict, versoes: list[int]) -> None:
+    w = cliente()
+    for arquivo in arquivos_das_versoes(versoes):
+        destino = f"{recursos['landing']}/{PASTA_AGENDA}/{arquivo.name}"
+        w.files.upload(destino, io.BytesIO(arquivo.read_bytes()), overwrite=True)
+        print(f"Enviado {arquivo.name} para {destino}.")
 
 
 def limpar(recursos: dict) -> None:
@@ -158,7 +174,9 @@ def limpar(recursos: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("comando", choices=["preparar", "enviar", "limpar"])
-    parser.add_argument("--versao", type=int, choices=VERSOES_AGENDA, help="versão da agenda fictícia (enviar)")
+    parser.add_argument(
+        "--versao", type=int, nargs="+", choices=VERSOES_AGENDA, help="versões da agenda fictícia, na ordem (enviar)"
+    )
     args = parser.parse_args()
     if not ARQUIVO_RECURSOS.is_file():
         sys.exit(f"Resumo do bundle não encontrado em {ARQUIVO_RECURSOS}: rode o deploy -t ci antes.")

@@ -14,8 +14,8 @@ gerais de dado pessoal em [`lgpd.md`](lgpd.md).
 | Gold (fato e view) | máscara de coluna na fato e função de máscara na view, para quem não é do grupo `grupo_dados_pessoais` | sim, mascarado |
 | Views e tabelas `mon_*` | contagens, nomes de tabela, regra, nome do arquivo e motivo da falha | **não** |
 
-As `mon_*` não têm dado pessoal de propósito: `mon_falhas` guarda só o nome da regra
-(ADR 0015) e os avisos de arquivo mostram só o nome do arquivo. **Por isso o nome do
+As `mon_*` não têm dado pessoal de propósito: `mon_log_execucao` e `mon_falhas` guardam só
+o nome da regra (ADR 0021 e 0022) e os avisos de arquivo mostram só o nome do arquivo. **Por isso o nome do
 arquivo nunca pode ter dado pessoal.** Oriente quem envia arquivos a usar nomes como
 `agenda_2025-12-15.csv`.
 

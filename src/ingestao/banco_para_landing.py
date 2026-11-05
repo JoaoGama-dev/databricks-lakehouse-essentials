@@ -7,7 +7,8 @@ cdc, só vêm as linhas com coluna_watermark maior que a da última carga; o úl
 valor fica em <landing>/_controle/<fonte>.json. No modo snapshot, vem a tabela
 inteira a cada execução.
 
-Roda como tarefa do job essentials_carga_diaria, antes do pipeline.
+É chamado pela tarefa ingerir_fontes_externas do job (ingerir_fontes_externas.py), antes
+do pipeline; também roda sozinho, com os mesmos argumentos.
 Testado só no Azure Databricks: o Free Edition restringe o acesso a bancos externos.
 """
 
@@ -15,8 +16,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import UTC, datetime
+
+log = logging.getLogger("essentials")
 
 
 def argumentos() -> argparse.Namespace:
@@ -24,6 +28,7 @@ def argumentos() -> argparse.Namespace:
     parser.add_argument("--config", required=True, help="caminho do config/fontes.yml")
     parser.add_argument("--landing", required=True, help="raiz da landing zone")
     parser.add_argument("--codigo", required=True, help="pasta src/ do bundle")
+    parser.add_argument("--fuso-horario", default="America/Sao_Paulo", help="fuso do log legível")
     return parser.parse_args()
 
 
@@ -37,22 +42,19 @@ def ler_watermark(spark, caminho: str) -> str | None:
         return None
 
 
-def main() -> None:
-    args = argumentos()
-    sys.path.append(args.codigo)
+def ingerir(fontes: list[dict], landing: str) -> None:
+    """Grava na landing os dados de cada fonte do tipo banco da lista."""
     from databricks.sdk.runtime import dbutils
     from pyspark.sql import SparkSession
     from pyspark.sql import functions as F
 
-    from essentials.config_fontes import carregar_fontes
-
-    fontes = [fonte for fonte in carregar_fontes(args.config) if fonte["tipo"] == "banco"]
+    fontes = [fonte for fonte in fontes if fonte["tipo"] == "banco"]
     if not fontes:
-        print("Nenhuma fonte do tipo banco no config/fontes.yml; nada a fazer.")
+        log.info("Nenhuma fonte do tipo banco no config/fontes.yml; nada a fazer.")
         return
 
     spark = SparkSession.builder.getOrCreate()
-    landing = args.landing.rstrip("/")
+    landing = landing.rstrip("/")
     momento = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
 
     for fonte in fontes:
@@ -68,7 +70,8 @@ def main() -> None:
                 df = df.where(F.col(coluna) > F.lit(anterior))
             novo = df.agg(F.max(coluna)).first()[0]
             if novo is None:
-                print(f"{fonte['nome']}: nenhuma linha nova desde {anterior}.")
+                # Sem o valor do watermark na mensagem: ele vem de uma coluna do registro.
+                log.info("%s: nenhuma linha nova desde a última carga.", fonte["nome"])
                 continue
             # Fixa o limite superior para não perder linhas gravadas durante a leitura.
             df = df.where(F.col(coluna) <= F.lit(novo))
@@ -77,7 +80,17 @@ def main() -> None:
         df.write.mode("errorifexists").parquet(destino)
         if incremental:
             dbutils.fs.put(controle, json.dumps({"valor": str(novo)}), overwrite=True)
-        print(f"{fonte['nome']}: carga gravada em {destino}")
+        log.info("%s: carga gravada em %s", fonte["nome"], destino)
+
+
+def main() -> None:
+    args = argumentos()
+    sys.path.append(args.codigo)
+    from essentials.config_fontes import carregar_fontes
+    from essentials.log_texto import configurar_log
+
+    configurar_log(args.fuso_horario)
+    ingerir(carregar_fontes(args.config), args.landing)
 
 
 if __name__ == "__main__":

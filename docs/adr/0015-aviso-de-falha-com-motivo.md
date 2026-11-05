@@ -1,6 +1,7 @@
 # 0015. Aviso de falha com o motivo, sem dado pessoal
 
-- **Status:** aceita
+- **Status:** substituída por [0021](0021-tarefa-final-de-monitoramento-e-aviso-de-falha-na-hora.md)
+  (a tarefa `registrar_falha` saiu; `motivo_seguro` e os destinatários continuam)
 - **Data:** 2026-11-03
 
 ## Contexto

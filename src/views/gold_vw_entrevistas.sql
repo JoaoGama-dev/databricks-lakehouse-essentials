@@ -1,6 +1,6 @@
 -- View da gold lida pelo painel de entrevistas: a fato mais os campos que dependem da data
 -- de hoje (que não podem ficar na materialized view sem impedir a atualização incremental).
--- Criada pela tarefa governanca_depois, depois do pipeline: a view de pipeline (CREATE VIEW)
+-- Criada pela tarefa publicar_monitoramento, depois do pipeline: a view de pipeline (CREATE VIEW)
 -- não aplica o COMMENT de cada coluna, e o dicionário de dados exige descrição em todas.
 -- ${catalogo}, ${schema_gold} e ${schema_silver} são trocados pelos nomes do target.
 -- As colunas com dado pessoal já têm MASK na fato e a view aplica a mesma função de novo

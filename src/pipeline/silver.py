@@ -83,9 +83,9 @@ def manter_ultimo_arquivo(df: DataFrame, fonte: dict) -> DataFrame:
 
     Mais recente pela data de referência do fontes.yml (data_referencia), calculada por
     arquivo sobre as colunas já padronizadas; nulos por último. Empate, ou fonte sem
-    data_referencia, desempata por ORDEM_DO_RETRATO: último ingerido, arquivo modificado
-    por último e, por fim, o nome do arquivo (vários arquivos no mesmo micro-batch têm o
-    mesmo _ingerido_em). Arquivo que não gerou linha nenhuma não entra na disputa
+    data_referencia, desempata por ORDEM_DO_RETRATO: arquivo que chegou por último à landing,
+    último ingerido e, por fim, o nome do arquivo (a ordem de envio não depende de como o
+    Auto Loader dividiu os arquivos em micro-batches). Arquivo que não gerou linha nenhuma não entra na disputa
     (mon_estrutura avisa: arquivo_ignorado).
     """
     if "_arquivo_origem" not in df.columns:

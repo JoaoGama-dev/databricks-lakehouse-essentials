@@ -1,7 +1,9 @@
 # 0002. Dados pessoais no Unity Catalog: máscara de coluna e tags
 
 - **Status:** aceita, atualizada por [0020](0020-exemplo-sem-cargos-e-view-que-mascara.md)
-  (a view da gold aplica a mesma função de máscara; a função fica no schema da silver)
+  (a view da gold aplica a mesma função de máscara; a função fica no schema da silver).
+  Os nomes das tarefas do job mudaram no [0021](0021-tarefa-final-de-monitoramento-e-aviso-de-falha-na-hora.md):
+  `governanca_antes` é `preparar_governanca` e `governanca_depois` é `publicar_monitoramento`
 - **Data:** 2026-11-03
 
 ## Contexto

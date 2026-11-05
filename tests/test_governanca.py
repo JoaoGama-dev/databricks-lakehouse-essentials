@@ -154,7 +154,7 @@ def test_tags_pii_cobrem_silver_e_gold_e_nunca_o_retrato_privado():
     assert ("`essentials`.`portfolio_silver`.`silver_agenda`", "nm_candidato") in alvos
     assert ("`essentials`.`portfolio_silver`.`silver_agenda`", "nr_telefone") in alvos
     assert ("`essentials`.`portfolio_gold`.`gold_fato_entrevista`", "nm_candidato") in alvos
-    # O retrato é privado: não está no catálogo, e um ALTER nele derrubaria a governanca_depois.
+    # O retrato é privado: não está no catálogo, e um ALTER nele derrubaria a etapa de tags.
     assert not any("retrato" in c for c in comandos)
     assert not any(tabela.endswith("`gold_fato_outra`") for tabela, _ in alvos)
     assert not any("__materialization" in c for c in comandos), "tabela interna não recebe tag"
@@ -200,10 +200,12 @@ def test_sem_camada_e_tipo_ou_tabela_interna_nao_recebe_tag():
 
 
 def test_governanca_aplica_as_tags_depois_das_views_nos_quatro_schemas():
-    codigo = (RAIZ / "src" / "governanca" / "governanca.py").read_text(encoding="utf-8")
-    depois = codigo[codigo.index("fontes = carregar_fontes(args.config)") :]
-    assert depois.index("sqls_views_gold(") < depois.index("sqls_tags_pii(") < depois.index("aplicar_tags_das_tabelas(")
-    assert "schemas = [args.schema_bronze, args.schema_silver, args.schema_gold, monitoramento]" in depois
+    # As tags camada e tipo vêm por último, para alcançar também as views criadas antes.
+    codigo = (RAIZ / "src" / "governanca" / "publicar_monitoramento.py").read_text(encoding="utf-8")
+    etapas = codigo[codigo.index('etapa("views da gold"') :]
+    ordem = ["criar_views_gold(", "aplicar_tags_pii(", "criar_views_mon(", "aplicar_tags_camada_tipo("]
+    assert [etapas.index(chamada) for chamada in ordem] == sorted(etapas.index(chamada) for chamada in ordem)
+    assert "(args.schema_bronze, args.schema_silver, args.schema_gold, args.schema_monitoramento)" in codigo
 
 
 def test_views_da_gold_saem_do_arquivo_com_o_schema_do_target():
@@ -221,9 +223,9 @@ def test_views_da_gold_saem_do_arquivo_com_o_schema_do_target():
 def test_job_cria_a_mascara_antes_e_aplica_as_tags_depois_do_pipeline():
     job = carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]["essentials_carga_diaria"]
     tarefas = {tarefa["task_key"]: tarefa for tarefa in job["tasks"]}
-    dependencias = {d["task_key"] for d in tarefas["atualizar_lakehouse"]["depends_on"]}
-    assert "governanca_antes" in dependencias
-    assert [d["task_key"] for d in tarefas["governanca_depois"]["depends_on"]] == ["atualizar_lakehouse"]
-    for chave, etapa in (("governanca_antes", "antes"), ("governanca_depois", "depois")):
-        parametros = tarefas[chave]["spark_python_task"]["parameters"]
-        assert parametros[parametros.index("--etapa") + 1] == etapa
+    # Sem a função de máscara, o pipeline não cria a gold (MASK aponta para ela).
+    assert "preparar_governanca" in {d["task_key"] for d in tarefas["processar_medalhao"]["depends_on"]}
+    assert "processar_medalhao" in {d["task_key"] for d in tarefas["publicar_monitoramento"]["depends_on"]}
+    assert tarefas["preparar_governanca"]["spark_python_task"]["python_file"] == "../src/governanca/governanca.py"
+    parametros = tarefas["preparar_governanca"]["spark_python_task"]["parameters"]
+    assert parametros[parametros.index("--schema-silver") + 1] == "${resources.schemas.silver.name}"

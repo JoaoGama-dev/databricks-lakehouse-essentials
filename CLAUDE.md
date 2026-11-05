@@ -15,7 +15,7 @@ Azure Databricks do cliente (target `prod`). Tudo em português do Brasil.
 | Gold (modelo estrela) | `src/pipeline/gold_*.sql` |
 | Views da gold (o painel lê só elas; aplicam a máscara) | `src/views/gold_vw_*.sql` |
 | Painel AI/BI | `src/dashboards/*.lvdash.json`, `resources/dashboard.yml` |
-| Monitoramento (views `mon_*`, alerta de atraso) | `src/essentials/monitoramento_sql.py`, `resources/alertas.yml` |
+| Monitoramento (views `mon_*`, `mon_log_execucao`, log legível, alertas) | `src/essentials/monitoramento_sql.py`, `log_sql.py`, `log_texto.py`, `src/governanca/publicar_monitoramento.py`, `resources/alertas.yml` |
 | Bundle, job e pipeline | `databricks.yml`, `resources/*.yml` |
 | Perfil de dados sem expor conteúdo | `scripts/perfilar_dados.py` |
 | Permissões e hooks do Claude Code | `.claude/settings.json`, `.claude/hooks/` |
