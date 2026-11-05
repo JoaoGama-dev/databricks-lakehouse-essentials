@@ -20,6 +20,7 @@ from essentials.monitoramento_sql import (
     EVENT_LOG,
     SUFIXO_CI,
     booleano_da_variavel,
+    cotacao_da_variavel,
     projetos_do_custo,
     regras_monitoradas,
     sql_atualizacao,
@@ -36,6 +37,7 @@ from fontes_ficticias import CADASTRO
 RAIZ = Path(__file__).resolve().parents[1]
 FONTES = carregar_fontes(RAIZ / "config" / "fontes.yml")
 PAINEL_SAUDE = RAIZ / "src" / "dashboards" / "saude.lvdash.json"
+PAINEIS = sorted((RAIZ / "src" / "dashboards").glob("*.lvdash.json"))
 
 
 def carregar_yaml(caminho: Path) -> dict:
@@ -58,20 +60,23 @@ COLUNAS_BRONZE_EXEMPLO = {"bronze_agenda": ["value", "_fonte", "_arquivo_origem"
 MON = "portfolio_monitoramento"
 # Atribuição do custo no dev, com o warehouse compartilhado (o padrão do bundle).
 ATRIBUICAO_DEV = ("portfolio", "dev", False, "wh-compartilhado")
+# Cotação "quebrada" de propósito: um valor fixo no SQL não passaria por ela.
+COTACAO = 5.4321
+COTACAO_SQL = "CAST(5.4321 AS DOUBLE)"
 
 
 def views() -> dict[str, str]:
     return {
         "mon_qualidade_diaria": sql_qualidade_diaria("essentials", MON, FONTES),
         "mon_atualizacao": sql_atualizacao("essentials", MON, "portfolio_silver", FONTES, 26),
-        "mon_custo_diario": sql_custo_diario("essentials", MON, *ATRIBUICAO_DEV),
-        "mon_custo_por_carga": sql_custo_por_carga("essentials", MON, *ATRIBUICAO_DEV),
+        "mon_custo_diario": sql_custo_diario("essentials", MON, *ATRIBUICAO_DEV, COTACAO),
+        "mon_custo_por_carga": sql_custo_por_carga("essentials", MON, *ATRIBUICAO_DEV, COTACAO),
         "mon_volume": sql_volume("essentials", MON, FONTES, 50),
         "mon_estrutura": sql_estrutura(
             "essentials", MON, "portfolio_bronze", "portfolio_silver", FONTES, COLUNAS_BRONZE_EXEMPLO
         ),
         "mon_execucoes": sql_execucoes("essentials", MON, "123"),
-        "mon_custo_mensal": sql_custo_mensal("essentials", MON, 150),
+        "mon_custo_mensal": sql_custo_mensal("essentials", MON, 150, COTACAO),
     }
 
 
@@ -176,8 +181,8 @@ def test_custo_cobre_dev_ci_e_prod_do_projeto_em_qualquer_target(projeto, ambien
     # Publicada no dev, no ci ou no prod, a view atribui ao projeto o custo dos três ambientes
     # (o ci roda com var.projeto já com o sufixo).
     for sql in (
-        sql_custo_diario("essentials", MON, projeto, ambiente, False, "wh"),
-        sql_custo_por_carga("essentials", MON, projeto, ambiente, False, "wh"),
+        sql_custo_diario("essentials", MON, projeto, ambiente, False, "wh", COTACAO),
+        sql_custo_por_carga("essentials", MON, projeto, ambiente, False, "wh", COTACAO),
     ):
         assert projetos_no_filtro(sql) == {"portfolio", "portfolio_ci"}
 
@@ -232,7 +237,7 @@ def test_warehouse_compartilhado_fica_fora_e_o_comentario_diz():
 
 
 def test_warehouse_dedicado_entra_no_ambiente_que_publica():
-    sql = sql_custo_diario("essentials", MON, "portfolio", "prod", True, "wh-do-projeto")
+    sql = sql_custo_diario("essentials", MON, "portfolio", "prod", True, "wh-do-projeto", COTACAO)
     assert "OR u.usage_metadata.warehouse_id = 'wh-do-projeto'" in sql
     # Sem tag no faturamento do warehouse: o ambiente é o do target que publica a view.
     assert "CASE WHEN u.usage_metadata.warehouse_id = 'wh-do-projeto' THEN 'prod' ELSE" in sql
@@ -254,6 +259,100 @@ def test_warehouse_dedicado_invalido_e_erro_e_nao_false(valor):
 def test_variavel_warehouse_dedicado_comeca_desligada():
     padrao = bundle()["variables"]["warehouse_dedicado"]["default"]
     assert booleano_da_variavel(padrao) is False
+
+
+# Custo em reais ----------------------------------------------------------------------
+
+@pytest.mark.parametrize(("valor", "esperado"), [("5.40", 5.4), (" 5.4 ", 5.4), ("6", 6.0), ("5.4321", 5.4321)])
+def test_cotacao_aceita_numero_com_ponto(valor, esperado):
+    assert cotacao_da_variavel(valor) == esperado
+
+
+@pytest.mark.parametrize(
+    "valor",
+    ["", "0", "0.00", "-5.40", "5,40", "R$ 5.40", "cinco", "${var.cotacao_usd_brl}", "nan", "inf", "1e1", "5_40"],
+)
+def test_cotacao_invalida_e_erro_e_nao_zero(valor):
+    # Um 0 (ou uma vírgula lida errado) zeraria o custo em reais do painel sem ninguém notar.
+    with pytest.raises(ValueError):
+        cotacao_da_variavel(valor)
+
+
+@pytest.mark.parametrize("cotacao", [0, -5.4, float("inf"), float("nan")])
+def test_sql_de_custo_recusa_cotacao_invalida(cotacao):
+    # Mesmo chamado sem passar pela validação da variável, o SQL não sai com cotação errada.
+    with pytest.raises(ValueError):
+        sql_custo_mensal("essentials", MON, 150, cotacao)
+    with pytest.raises(ValueError):
+        sql_custo_diario("essentials", MON, *ATRIBUICAO_DEV, cotacao)
+
+
+def test_cotacao_vem_da_variavel_do_bundle_e_falha_a_etapa_se_invalida():
+    variaveis = bundle()["variables"]
+    assert cotacao_da_variavel(variaveis["cotacao_usd_brl"]["default"]) > 0
+    assert cotacao_da_variavel(bundle()["targets"]["prod"]["variables"]["cotacao_usd_brl"]) > 0
+    parametros = tarefas()["publicar_monitoramento"]["spark_python_task"]["parameters"]
+    valor = {parametros[i]: parametros[i + 1] for i in range(0, len(parametros), 2)}
+    assert valor["--cotacao-usd-brl"] == "${var.cotacao_usd_brl}"
+    publicar = (RAIZ / "src" / "governanca" / "publicar_monitoramento.py").read_text(encoding="utf-8")
+    funcao = publicar.split("def criar_views_de_sistema", 1)[1].split("\ndef ", 1)[0]
+    # Validada antes do try das tabelas de sistema: o ValueError faz a etapa falhar (não vira só
+    # um aviso de acesso).
+    assert "cotacao = cotacao_da_variavel(args.cotacao_usd_brl)" in funcao
+    assert funcao.index("cotacao_da_variavel(") < funcao.index("try:")
+    assert "except PySparkException" in funcao
+    assert "except ValueError" not in funcao and "except Exception" not in funcao
+
+
+# Coluna em reais -> coluna em dólar de que ela vem, por view.
+COLUNAS_EM_REAIS = {
+    "mon_custo_diario": {"vl_custo_brl": "vl_custo_lista"},
+    "mon_custo_mensal": {"vl_custo_brl": "vl_custo_lista", "vl_projecao_brl": "vl_projecao"},
+    "mon_custo_por_carga": {
+        "vl_custo_job_brl": "vl_custo_job",
+        "vl_custo_pipeline_brl": "vl_custo_pipeline",
+        "vl_custo_brl": "vl_custo_lista",
+    },
+}
+
+
+def test_colunas_em_reais_sao_o_dolar_vezes_a_cotacao():
+    # Risco: real calculado de outra coluna, com outra cotação ou com um número fixo.
+    for nome, pares in COLUNAS_EM_REAIS.items():
+        sql = views()[nome]
+        selecao_final = sql.rsplit("\nSELECT ", 1)[1]
+        em_reais = {c for c in colunas_da_view(sql) if c.endswith("_brl") and c != "vl_cotacao_usd_brl"}
+        assert em_reais == set(pares) | ({"vl_teto_brl"} if nome == "mon_custo_mensal" else set()), nome
+        for brl, usd in pares.items():
+            conta = re.escape(f"CASE WHEN sg_moeda = 'USD' THEN {usd} * {COTACAO_SQL} END")
+            assert re.search(rf"{conta}(, 2\))? AS {brl}\b", selecao_final), (nome, brl)
+        assert f"{COTACAO_SQL} AS vl_cotacao_usd_brl" in selecao_final, nome
+        assert "5.4" not in sql.replace(COTACAO_SQL, ""), nome
+    mensal = views()["mon_custo_mensal"]
+    assert f"round(CAST(150.0 AS DOUBLE) * {COTACAO_SQL}, 2) AS vl_teto_brl" in mensal
+    assert f"round(CASE WHEN sg_moeda = 'USD' THEN vl_projecao * {COTACAO_SQL} END, 2) AS vl_projecao_brl" in mensal
+
+
+def test_teto_e_alerta_continuam_em_dolar():
+    # O teto é combinado em USD de preço de lista: o % do teto não pode passar a usar reais.
+    mensal = views()["mon_custo_mensal"]
+    assert "round(vl_custo_lista * 100.0 / nullif(CAST(150.0 AS DOUBLE), 0), 1) AS pc_do_teto" in mensal
+    assert "CAST(150.0 AS DOUBLE) AS vl_teto" in mensal
+    alerta = carregar_yaml(RAIZ / "resources" / "alertas.yml")["resources"]["alerts"]["custo_teto"]
+    assert alerta["evaluation"]["source"]["name"] == "pc_do_teto"
+    assert "_brl" not in alerta["query_text"]
+
+
+def test_comentario_das_colunas_em_reais_diz_que_e_estimativa():
+    # Sem o aviso, o valor em reais seria lido como o da fatura.
+    for nome in COLUNAS_EM_REAIS:
+        sql = views()[nome]
+        for coluna, comentario in re.findall(r"`(\w+_brl)` COMMENT '((?:[^']|'')*)'", sql):
+            if coluna == "vl_cotacao_usd_brl":
+                assert "cotacao_usd_brl" in comentario, (nome, coluna)
+                continue
+            for trecho in ("stimativa", "USD", "cotacao_usd_brl", "cotação da Microsoft", "descontos do contrato"):
+                assert trecho in comentario, (nome, coluna, trecho)
 
 
 def test_views_sao_criadas_depois_do_pipeline_com_os_parametros():
@@ -463,9 +562,14 @@ def test_painel_de_saude_mostra_o_custo_por_ambiente_projecao_e_carga():
     }
     for esperado in (
         ("ds_custo_mensal", "MAX(`pc_do_teto`)"),
-        ("ds_custo_mensal", "MAX(`vl_projecao_mes`)"),
+        ("ds_custo_mensal", "MAX(`vl_custo_brl`)"),
+        ("ds_custo_mensal", "MAX(`vl_projecao_brl`)"),
         ("ds_custo_mensal_ambiente", "`ds_ambiente`"),
+        ("ds_custo_mensal_ambiente", "`vl_custo_brl`"),
+        ("ds_custo_mensal_ambiente", "`vl_custo_lista`"),
+        ("ds_custo_por_carga", "`vl_custo_medio_carga_brl`"),
         ("ds_custo_por_carga", "`vl_custo_medio_carga`"),
+        ("ds_custo", "SUM(`vl_custo_brl`)"),
         ("ds_custo", "`ds_ambiente_produto`"),
     ):
         assert esperado in lidos, esperado
@@ -473,3 +577,73 @@ def test_painel_de_saude_mostra_o_custo_por_ambiente_projecao_e_carga():
     # Os contadores leem a linha total; a média por carga, só execuções com o custo completo.
     assert f"ds_ambiente = '{AMBIENTE_TOTAL}'" in datasets["ds_custo_mensal"]
     assert "NOT fl_custo_parcial AND st_execucao = 'SUCCEEDED'" in datasets["ds_custo_por_carga"]
+
+
+def widgets_do_painel(painel: dict) -> list[dict]:
+    return [item["widget"] for pagina in painel["pages"] for item in pagina["layout"]]
+
+
+# Sem elas, o AI/BI mostra "Invalid widget definition" na tabela (visto no dev; PR #19).
+PROPRIEDADES_DA_TABELA = {
+    "invisibleColumns": [],
+    "allowHTMLByDefault": False,
+    "itemsPerPage": 25,
+    "paginationSize": "default",
+    "condensed": True,
+    "withRowNumber": False,
+}
+
+
+@pytest.mark.parametrize("caminho", PAINEIS, ids=lambda caminho: caminho.name)
+def test_toda_tabela_do_painel_tem_as_propriedades_obrigatorias(caminho):
+    painel = json.loads(caminho.read_text(encoding="utf-8"))
+    tabelas = [w for w in widgets_do_painel(painel) if w.get("spec", {}).get("widgetType") == "table"]
+    assert tabelas, caminho.name
+    for widget in tabelas:
+        spec = widget["spec"]
+        erradas = {
+            chave for chave, valor in PROPRIEDADES_DA_TABELA.items()
+            if chave not in spec or type(spec[chave]) is not type(valor) or spec[chave] != valor
+        }
+        assert not erradas, (caminho.name, widget["name"], erradas)
+
+
+def moeda_da_coluna(coluna: str) -> str | None:
+    """R$ nas colunas em reais (_brl), US$ nas outras de valor (vl_); a cotação não é custo."""
+    if not coluna.startswith("vl_") or coluna == "vl_cotacao_usd_brl":
+        return None
+    return "R$" if coluna.endswith("_brl") else "US$"
+
+
+def test_nenhum_valor_de_custo_no_painel_sem_a_moeda_no_titulo():
+    # Risco: ler dólar como real (ou o contrário) e errar o custo por ~5 vezes.
+    outra = {"R$": "US$", "US$": "R$"}
+    com_custo = 0
+    for widget in widgets_do_painel(painel_saude()):
+        moedas_dos_campos = {
+            campo["name"]: {moeda_da_coluna(c) for c in re.findall(r"`(\w+)`", campo["expression"])} - {None}
+            for consulta in widget.get("queries", [])
+            for campo in consulta["query"]["fields"]
+        }
+        moedas = set().union(*moedas_dos_campos.values()) if moedas_dos_campos else set()
+        if not moedas:
+            continue
+        com_custo += 1
+        spec = widget["spec"]
+        assert spec["frame"]["showTitle"] is True, widget["name"]
+        titulo = spec["frame"]["title"]
+        assert moedas <= {m for m in ("R$", "US$") if m in titulo}, (widget["name"], titulo)
+        if "R$" in moedas:
+            assert "estim" in titulo, (widget["name"], titulo)
+        encodings = spec.get("encodings", {})
+        exibidos = encodings.get("columns", []) + [e for e in encodings.values() if isinstance(e, dict)]
+        for exibido in exibidos:
+            moedas_do_campo = moedas_dos_campos.get(exibido.get("fieldName"), set())
+            assert len(moedas_do_campo) <= 1, (widget["name"], exibido["fieldName"])
+            for moeda in moedas_do_campo:
+                for rotulo in (exibido.get("title"), exibido.get("displayName")):
+                    if rotulo is None:
+                        continue
+                    assert moeda in rotulo and outra[moeda] not in rotulo, (widget["name"], rotulo)
+    # Contadores do período, do mês e da projeção, as duas tabelas e o gráfico diário.
+    assert com_custo >= 6

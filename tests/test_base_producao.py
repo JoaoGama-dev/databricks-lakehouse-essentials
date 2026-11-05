@@ -291,7 +291,7 @@ def test_taxa_de_sucesso_vem_das_execucoes_do_job():
 
 
 def test_custo_mensal_compara_com_o_teto():
-    sql = sql_custo_mensal("essentials", "portfolio", 150)
+    sql = sql_custo_mensal("essentials", "portfolio", 150, 5.4)
     assert "FROM `essentials`.`portfolio`.`mon_custo_diario`" in sql
     assert "CAST(150.0 AS DOUBLE) AS vl_teto" in sql and "AS pc_do_teto" in sql
 

@@ -15,10 +15,14 @@ e a view mon_falhas estão em src/essentials/log_sql.py.
                         recurso e produto
   mon_custo_mensal      custo do mês por ambiente e total, teto e projeção do mês
   mon_custo_por_carga   custo de lista de cada execução do job (job e pipeline)
+
+As views de custo trazem o valor em dólar (preço de lista) e a estimativa em reais (dólar
+vezes a variável cotacao_usd_brl), porque o cliente no Brasil é faturado em reais.
 """
 
 from __future__ import annotations
 
+import math
 import re
 
 from essentials.config_fontes import (
@@ -174,14 +178,57 @@ FROM horas"""
     )
 
 
+# Custo em reais -----------------------------------------------------------------------------
+
+# Moeda do preço de lista (system.billing.list_prices) que a cotação converte.
+MOEDA_DO_PRECO = "USD"
+# Número com ponto decimal, sem sinal, expoente, vírgula ou separador de milhar.
+FORMATO_COTACAO = re.compile(r"\d+(\.\d+)?")
+ESTIMATIVA_EM_REAIS = (
+    "Estimativa em reais: preço de lista em USD vezes a cotação da variável cotacao_usd_brl (a mesma para todas "
+    "as linhas da view). A fatura do Azure no Brasil vem em reais com a cotação da Microsoft no dia da cobrança e "
+    "os descontos do contrato. Vazio quando o preço de lista não é em USD."
+)
+COMENTARIO_COTACAO = "Cotação USD/BRL usada nas colunas em reais (variável cotacao_usd_brl do bundle)."
+
+
+def cotacao_da_variavel(valor: str) -> float:
+    """Variável cotacao_usd_brl do bundle (ex.: "5.40") como chega no parâmetro da tarefa.
+
+    Só número com ponto e maior que zero: vazio, com vírgula, não resolvido ou zero é erro
+    da etapa, nunca um 0 em silêncio (o custo em reais sairia zerado no painel).
+    """
+    texto = str(valor).strip()
+    if not FORMATO_COTACAO.fullmatch(texto) or float(texto) <= 0:
+        raise ValueError(
+            f"Cotação USD/BRL inválida: esperado número maior que zero com ponto (ex.: 5.40), veio {valor!r}."
+        )
+    return float(texto)
+
+
+def literal_cotacao(cotacao: float) -> str:
+    """A cotação como literal SQL; zero, negativa, infinita ou NaN é erro, não uma view errada."""
+    valor = float(cotacao)
+    if not (math.isfinite(valor) and valor > 0):
+        raise ValueError(f"Cotação USD/BRL precisa ser um número maior que zero, veio {cotacao!r}.")
+    return f"CAST({valor} AS DOUBLE)"
+
+
+def em_reais(valor_usd: str, cotacao: float, moeda: str = "sg_moeda") -> str:
+    """Valor em dólar vezes a cotação; vazio se o preço de lista não estiver em dólar."""
+    return f"CASE WHEN {moeda} = '{MOEDA_DO_PRECO}' THEN {valor_usd} * {literal_cotacao(cotacao)} END"
+
+
 COLUNAS_CUSTO = {
     "dt_uso": "Dia do consumo.",
     "ds_ambiente": "Ambiente do projeto que consumiu (tag ambiente: dev, ci ou prod).",
     "nm_recurso": "Recurso do projeto que consumiu: job (tarefas Python), pipeline ou warehouse (só o dedicado).",
     "ds_produto": "Produto de faturamento da Databricks (JOBS, DLT, SQL...).",
     "qt_dbus": "Consumo em DBUs no dia.",
-    "vl_custo_lista": "Custo estimado pelo preço de lista vigente no dia (sem descontos do contrato).",
+    "vl_custo_lista": "Custo estimado pelo preço de lista vigente no dia (sem descontos do contrato), em USD.",
+    "vl_custo_brl": f"Custo do dia em reais. {ESTIMATIVA_EM_REAIS}",
     "sg_moeda": "Moeda do preço de lista.",
+    "vl_cotacao_usd_brl": COMENTARIO_COTACAO,
 }
 
 # O target ci usa o projeto do bundle com este sufixo (databricks.yml; um teste confere).
@@ -277,7 +324,13 @@ uso AS (
 
 
 def sql_custo_diario(
-    catalogo: str, schema: str, projeto: str, ambiente: str, warehouse_dedicado: bool, warehouse_id: str
+    catalogo: str,
+    schema: str,
+    projeto: str,
+    ambiente: str,
+    warehouse_dedicado: bool,
+    warehouse_id: str,
+    cotacao: float,
 ) -> str:
     """Custo do projeto por dia, ambiente, recurso e produto (tabelas de sistema de faturamento).
 
@@ -289,18 +342,25 @@ def sql_custo_diario(
         if warehouse_dedicado
         else "Fora: o SQL warehouse (compartilhado; warehouse_dedicado: false). "
     )
-    consulta = f"""WITH {cte_uso_do_projeto(projeto, ambiente, warehouse_dedicado, warehouse_id)}
-SELECT dt_uso, ds_ambiente, nm_recurso, ds_produto, sum(qt_dbus) AS qt_dbus, sum(vl_custo_lista) AS vl_custo_lista,
-  first(sg_moeda, true) AS sg_moeda
-FROM uso
-GROUP BY dt_uso, ds_ambiente, nm_recurso, ds_produto"""
+    consulta = f"""WITH {cte_uso_do_projeto(projeto, ambiente, warehouse_dedicado, warehouse_id)},
+por_dia AS (
+  SELECT dt_uso, ds_ambiente, nm_recurso, ds_produto, sum(qt_dbus) AS qt_dbus, sum(vl_custo_lista) AS vl_custo_lista,
+    first(sg_moeda, true) AS sg_moeda
+  FROM uso
+  GROUP BY dt_uso, ds_ambiente, nm_recurso, ds_produto
+)
+SELECT dt_uso, ds_ambiente, nm_recurso, ds_produto, qt_dbus, vl_custo_lista,
+  {em_reais("vl_custo_lista", cotacao)} AS vl_custo_brl,
+  sg_moeda, {literal_cotacao(cotacao)} AS vl_cotacao_usd_brl
+FROM por_dia"""
     return definicao_view(
         catalogo,
         schema,
         "mon_custo_diario",
         "custo",
         "Custo diário do projeto em todos os ambientes (dev, ci, prod), pela tag projeto do job e do pipeline, "
-        f"a preço de lista. {fora}Fora também: armazenamento padrão e otimização preditiva (sem tag de projeto). "
+        f"a preço de lista, em USD e em reais (pela cotação da variável). {fora}Fora também: armazenamento padrão e "
+        "otimização preditiva (sem tag de projeto). "
         "As tabelas de cobrança atrasam algumas horas.",
         COLUNAS_CUSTO,
         consulta,
@@ -317,11 +377,15 @@ COLUNAS_CUSTO_POR_CARGA = {
     "dh_fim": "Fim da execução do job.",
     "qt_atualizacoes_pipeline": "Atualizações do pipeline disparadas pela execução (inclui as novas tentativas).",
     "qt_dbus": "DBUs da execução: tarefas do job e atualizações do pipeline.",
-    "vl_custo_job": "Custo de lista das tarefas do job (serverless) da execução.",
+    "vl_custo_job": "Custo de lista das tarefas do job (serverless) da execução, em USD.",
+    "vl_custo_job_brl": f"Custo das tarefas do job da execução em reais. {ESTIMATIVA_EM_REAIS}",
     "vl_custo_pipeline": "Custo de lista das atualizações do pipeline da execução, com o rateio do uso cobrado "
-    "por hora sem atualização.",
-    "vl_custo_lista": "Custo de lista da execução inteira (job e pipeline).",
+    "por hora sem atualização, em USD.",
+    "vl_custo_pipeline_brl": f"Custo das atualizações do pipeline da execução em reais. {ESTIMATIVA_EM_REAIS}",
+    "vl_custo_lista": "Custo de lista da execução inteira (job e pipeline), em USD.",
+    "vl_custo_brl": f"Custo da execução inteira (job e pipeline) em reais. {ESTIMATIVA_EM_REAIS}",
     "sg_moeda": "Moeda do preço de lista.",
+    "vl_cotacao_usd_brl": COMENTARIO_COTACAO,
     "fl_custo_parcial": "Verdadeiro quando a execução não terminou ou terminou há menos de 24 horas: a cobrança "
     "atrasa algumas horas e o custo ainda pode subir.",
 }
@@ -331,7 +395,13 @@ HORAS_ATRASO_COBRANCA = 24
 
 
 def sql_custo_por_carga(
-    catalogo: str, schema: str, projeto: str, ambiente: str, warehouse_dedicado: bool, warehouse_id: str
+    catalogo: str,
+    schema: str,
+    projeto: str,
+    ambiente: str,
+    warehouse_dedicado: bool,
+    warehouse_id: str,
+    cotacao: float,
 ) -> str:
     """Custo de lista de cada execução do job do projeto (todos os ambientes).
 
@@ -407,26 +477,35 @@ custo_pipeline AS (
 ),
 moeda AS (
   SELECT first(sg_moeda, true) AS sg_moeda FROM uso
+),
+por_execucao AS (
+  SELECT to_date(e.dh_inicio) AS dt_execucao, e.id_execucao_job, e.ds_ambiente, e.st_execucao, e.dh_inicio, e.dh_fim,
+    coalesce(cp.qt_atualizacoes, 0) AS qt_atualizacoes_pipeline,
+    coalesce(cj.qt_dbus, 0) + coalesce(cp.qt_dbus, 0) AS qt_dbus,
+    coalesce(cj.vl_custo, 0) AS vl_custo_job, coalesce(cp.vl_custo, 0) AS vl_custo_pipeline,
+    coalesce(cj.vl_custo, 0) + coalesce(cp.vl_custo, 0) AS vl_custo_lista,
+    m.sg_moeda,
+    coalesce(e.dh_fim > current_timestamp() - INTERVAL {HORAS_ATRASO_COBRANCA} HOURS, true) AS fl_custo_parcial
+  FROM execucoes e
+  CROSS JOIN moeda m
+  LEFT JOIN custo_job cj ON cj.workspace_id = e.workspace_id AND cj.id_execucao_job = e.id_execucao_job
+  LEFT JOIN custo_pipeline cp ON cp.workspace_id = e.workspace_id AND cp.id_execucao_job = e.id_execucao_job
 )
-SELECT to_date(e.dh_inicio) AS dt_execucao, e.id_execucao_job, e.ds_ambiente, e.st_execucao, e.dh_inicio, e.dh_fim,
-  coalesce(cp.qt_atualizacoes, 0) AS qt_atualizacoes_pipeline,
-  coalesce(cj.qt_dbus, 0) + coalesce(cp.qt_dbus, 0) AS qt_dbus,
-  coalesce(cj.vl_custo, 0) AS vl_custo_job, coalesce(cp.vl_custo, 0) AS vl_custo_pipeline,
-  coalesce(cj.vl_custo, 0) + coalesce(cp.vl_custo, 0) AS vl_custo_lista,
-  m.sg_moeda,
-  coalesce(e.dh_fim > current_timestamp() - INTERVAL {HORAS_ATRASO_COBRANCA} HOURS, true) AS fl_custo_parcial
-FROM execucoes e
-CROSS JOIN moeda m
-LEFT JOIN custo_job cj ON cj.workspace_id = e.workspace_id AND cj.id_execucao_job = e.id_execucao_job
-LEFT JOIN custo_pipeline cp ON cp.workspace_id = e.workspace_id AND cp.id_execucao_job = e.id_execucao_job"""
+SELECT dt_execucao, id_execucao_job, ds_ambiente, st_execucao, dh_inicio, dh_fim, qt_atualizacoes_pipeline, qt_dbus,
+  vl_custo_job, {em_reais("vl_custo_job", cotacao)} AS vl_custo_job_brl,
+  vl_custo_pipeline, {em_reais("vl_custo_pipeline", cotacao)} AS vl_custo_pipeline_brl,
+  vl_custo_lista, {em_reais("vl_custo_lista", cotacao)} AS vl_custo_brl,
+  sg_moeda, {literal_cotacao(cotacao)} AS vl_cotacao_usd_brl, fl_custo_parcial
+FROM por_execucao"""
     return definicao_view(
         catalogo,
         schema,
         "mon_custo_por_carga",
         "custo",
         "Custo de lista de cada execução do job do projeto (todos os ambientes): tarefas do job e atualizações do "
-        "pipeline que ela disparou. Estimativa a preço de lista; sem o SQL warehouse e o armazenamento. Use as "
-        "execuções com fl_custo_parcial falso (a cobrança atrasa algumas horas).",
+        "pipeline que ela disparou. Estimativa a preço de lista, em USD e em reais (pela cotação da variável); sem "
+        "o SQL warehouse e o armazenamento. Use as execuções com fl_custo_parcial falso (a cobrança atrasa algumas "
+        "horas).",
         COLUNAS_CUSTO_POR_CARGA,
         consulta,
     )
@@ -702,25 +781,35 @@ AMBIENTE_TOTAL = "total"
 COLUNAS_CUSTO_MENSAL = {
     "dt_mes": "Primeiro dia do mês do consumo.",
     "ds_ambiente": "Ambiente do projeto (dev, ci, prod) ou total (a soma de todos, comparada com o teto).",
-    "vl_custo_lista": "Custo do mês até agora pelo preço de lista (o que mon_custo_diario atribui ao projeto).",
+    "vl_custo_lista": "Custo do mês até agora pelo preço de lista, em USD (o que mon_custo_diario atribui ao "
+    "projeto).",
+    "vl_custo_brl": f"Custo do mês até agora em reais. {ESTIMATIVA_EM_REAIS}",
     "qt_dias_com_uso": "Dias do mês com algum consumo.",
     "qt_dias_mes": "Dias do mês.",
-    "vl_projecao_mes": "Estimativa a preço de lista do mês inteiro: custo médio dos dias com uso vezes os dias do "
-    "mês (no mês atual); nos meses fechados, o custo do mês. No total, a soma das projeções dos ambientes.",
-    "vl_teto": "Teto mensal de custo do Databricks combinado no diagnóstico (preço de lista).",
-    "pc_do_teto": "Percentual do teto já consumido no mês.",
+    "vl_projecao_mes": "Estimativa a preço de lista do mês inteiro, em USD: custo médio dos dias com uso vezes os "
+    "dias do mês (no mês atual); nos meses fechados, o custo do mês. No total, a soma das projeções dos ambientes.",
+    "vl_projecao_brl": f"Projeção do mês inteiro (a de vl_projecao_mes) em reais. {ESTIMATIVA_EM_REAIS}",
+    "vl_teto": "Teto mensal de custo do Databricks combinado no diagnóstico, em USD de preço de lista (variável "
+    "teto_custo_mensal_usd).",
+    "vl_teto_brl": "Teto mensal em reais, só como referência: o teto vale em USD (vl_teto e pc_do_teto). Estimativa: "
+    "vl_teto vezes a cotação da variável cotacao_usd_brl; a fatura do Azure no Brasil usa a cotação da Microsoft "
+    "no dia da cobrança e os descontos do contrato.",
+    "pc_do_teto": "Percentual do teto já consumido no mês, calculado em USD (o que o alerta custo_teto avalia).",
     "sg_moeda": "Moeda do preço de lista.",
+    "vl_cotacao_usd_brl": COMENTARIO_COTACAO,
 }
 
 
-def sql_custo_mensal(catalogo: str, schema: str, teto: float) -> str:
+def sql_custo_mensal(catalogo: str, schema: str, teto: float, cotacao: float) -> str:
     """Custo do mês por ambiente e no total, contra o teto, com a projeção do mês.
 
     O alerta custo_teto lê a linha total (dispara a partir de 80% do teto). A projeção
-    supõe que os próximos dias custam como a média dos dias com uso: é estimativa.
+    supõe que os próximos dias custam como a média dos dias com uso: é estimativa. O teto e
+    o pc_do_teto ficam em USD; as colunas _brl são a estimativa em reais pela cotação.
     """
     custo = nome_completo(catalogo, schema, "mon_custo_diario")
     teto_sql = f"CAST({float(teto)} AS DOUBLE)"
+    cotacao_sql = literal_cotacao(cotacao)
     consulta = f"""WITH diario AS (
   SELECT date_trunc('MONTH', dt_uso) AS dt_mes, dt_uso, ds_ambiente, vl_custo_lista, sg_moeda FROM {custo}
 ),
@@ -750,11 +839,14 @@ por_mes AS (
   FROM com_projecao c JOIN dias_do_total t ON t.dt_mes = c.dt_mes
   GROUP BY c.dt_mes
 )
-SELECT dt_mes, ds_ambiente, vl_custo_lista, qt_dias_com_uso, day(last_day(dt_mes)) AS qt_dias_mes,
+SELECT dt_mes, ds_ambiente, vl_custo_lista, {em_reais("vl_custo_lista", cotacao)} AS vl_custo_brl,
+  qt_dias_com_uso, day(last_day(dt_mes)) AS qt_dias_mes,
   round(vl_projecao, 2) AS vl_projecao_mes,
+  round({em_reais("vl_projecao", cotacao)}, 2) AS vl_projecao_brl,
   {teto_sql} AS vl_teto,
+  round({teto_sql} * {cotacao_sql}, 2) AS vl_teto_brl,
   round(vl_custo_lista * 100.0 / nullif({teto_sql}, 0), 1) AS pc_do_teto,
-  sg_moeda
+  sg_moeda, {cotacao_sql} AS vl_cotacao_usd_brl
 FROM por_mes"""
     return definicao_view(
         catalogo,
@@ -762,7 +854,8 @@ FROM por_mes"""
         "mon_custo_mensal",
         "custo",
         "Custo do Databricks no mês por ambiente e no total (linha total, a do alerta) contra o teto do diagnóstico, "
-        "com a projeção do mês: estimativa a preço de lista.",
+        "com a projeção do mês: estimativa a preço de lista, em USD (o teto e o alerta) e em reais (pela cotação "
+        "da variável).",
         COLUNAS_CUSTO_MENSAL,
         consulta,
     )

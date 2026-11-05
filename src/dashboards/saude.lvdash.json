@@ -22,7 +22,7 @@
       "displayName": "Custo diário",
       "queryLines": [
         "SELECT dt_uso, ds_ambiente, nm_recurso, ds_produto,\n",
-        "  concat(ds_ambiente, ' · ', ds_produto) AS ds_ambiente_produto, qt_dbus, vl_custo_lista, sg_moeda\n",
+        "  concat(ds_ambiente, ' · ', ds_produto) AS ds_ambiente_produto, qt_dbus, vl_custo_lista, vl_custo_brl, sg_moeda\n",
         "FROM mon_custo_diario\n",
         "WHERE dt_uso >= current_date() - INTERVAL 90 DAYS"
       ]
@@ -41,7 +41,8 @@
       "name": "ds_custo_mensal",
       "displayName": "Custo do mês (total) e teto",
       "queryLines": [
-        "SELECT dt_mes, ds_ambiente, vl_custo_lista, vl_projecao_mes, vl_teto, pc_do_teto, sg_moeda\n",
+        "SELECT dt_mes, ds_ambiente, vl_custo_lista, vl_projecao_mes, vl_teto, pc_do_teto, sg_moeda,\n",
+        "  round(vl_custo_brl, 2) AS vl_custo_brl, vl_projecao_brl, vl_cotacao_usd_brl\n",
         "FROM mon_custo_mensal\n",
         "WHERE dt_mes = date_trunc('MONTH', current_date()) AND ds_ambiente = 'total'"
       ]
@@ -51,6 +52,7 @@
       "displayName": "Custo do mês por ambiente",
       "queryLines": [
         "SELECT ds_ambiente, round(vl_custo_lista, 2) AS vl_custo_lista, round(vl_projecao_mes, 2) AS vl_projecao_mes,\n",
+        "  round(vl_custo_brl, 2) AS vl_custo_brl, vl_projecao_brl,\n",
         "  pc_do_teto, qt_dias_com_uso, qt_dias_mes, sg_moeda\n",
         "FROM mon_custo_mensal\n",
         "WHERE dt_mes = date_trunc('MONTH', current_date())\n",
@@ -66,6 +68,10 @@
         "  round(min(vl_custo_lista), 4) AS vl_custo_min_carga,\n",
         "  round(max(vl_custo_lista), 4) AS vl_custo_max_carga,\n",
         "  round(avg(vl_custo_lista) * 30, 2) AS vl_custo_30_cargas,\n",
+        "  round(avg(vl_custo_brl), 2) AS vl_custo_medio_carga_brl,\n",
+        "  round(min(vl_custo_brl), 2) AS vl_custo_min_carga_brl,\n",
+        "  round(max(vl_custo_brl), 2) AS vl_custo_max_carga_brl,\n",
+        "  round(avg(vl_custo_brl) * 30, 2) AS vl_custo_30_cargas_brl,\n",
         "  first(sg_moeda, true) AS sg_moeda\n",
         "FROM mon_custo_por_carga\n",
         "WHERE NOT fl_custo_parcial AND st_execucao = 'SUCCEEDED' AND qt_atualizacoes_pipeline > 0\n",
@@ -429,7 +435,7 @@
                   "fields": [
                     {
                       "name": "valor",
-                      "expression": "SUM(`vl_custo_lista`)"
+                      "expression": "SUM(`vl_custo_brl`)"
                     }
                   ],
                   "disaggregated": false
@@ -442,12 +448,12 @@
               "encodings": {
                 "value": {
                   "fieldName": "valor",
-                  "displayName": "Custo de lista no período"
+                  "displayName": "Custo no período (R$, estimativa)"
                 }
               },
               "frame": {
                 "showTitle": true,
-                "title": "Custo de lista no período"
+                "title": "Custo no período (R$, estimativa)"
               }
             }
           },
@@ -1711,7 +1717,7 @@
             "multilineTextboxSpec": {
               "lines": [
                 "### Custo do projeto\n",
-                "Estimativa a **preço de lista** (sem os descontos do contrato), em todos os ambientes do projeto (dev, ci e prod), pela tag projeto do job e do pipeline. As tabelas de cobrança da Databricks chegam com **algumas horas de atraso**: o dia de hoje e as últimas cargas ainda podem subir. **Fica de fora**: o SQL warehouse quando é compartilhado (painéis, alertas; no Free Edition sempre) e o armazenamento padrão e a otimização preditiva, que não têm a tag do projeto. A projeção do mês é a média dos dias com uso vezes os dias do mês."
+                "Estimativa a **preço de lista** (sem os descontos do contrato), em todos os ambientes do projeto (dev, ci e prod), pela tag projeto do job e do pipeline. **Os valores em reais são estimativa**: o preço de lista em dólar vezes a cotação da variável cotacao_usd_brl; a fatura do Azure no Brasil vem em reais, com a cotação da Microsoft no dia da cobrança e os descontos do contrato. O teto de custo é em dólar. As tabelas de cobrança da Databricks chegam com **algumas horas de atraso**: o dia de hoje e as últimas cargas ainda podem subir. **Fica de fora**: o SQL warehouse quando é compartilhado (painéis, alertas; no Free Edition sempre) e o armazenamento padrão e a otimização preditiva, que não têm a tag do projeto. A projeção do mês é a média dos dias com uso vezes os dias do mês."
               ]
             }
           },
@@ -1719,7 +1725,7 @@
             "x": 0,
             "y": 38,
             "width": 6,
-            "height": 3
+            "height": 4
           }
         },
         {
@@ -1733,7 +1739,7 @@
                   "fields": [
                     {
                       "name": "valor",
-                      "expression": "MAX(`vl_custo_lista`)"
+                      "expression": "MAX(`vl_custo_brl`)"
                     }
                   ],
                   "disaggregated": false
@@ -1746,18 +1752,18 @@
               "encodings": {
                 "value": {
                   "fieldName": "valor",
-                  "displayName": "Custo de lista no mês (todos os ambientes)"
+                  "displayName": "Custo no mês, todos os ambientes (R$, estimativa)"
                 }
               },
               "frame": {
                 "showTitle": true,
-                "title": "Custo de lista no mês (todos os ambientes)"
+                "title": "Custo no mês, todos os ambientes (R$, estimativa)"
               }
             }
           },
           "position": {
             "x": 0,
-            "y": 41,
+            "y": 42,
             "width": 3,
             "height": 3
           }
@@ -1773,7 +1779,7 @@
                   "fields": [
                     {
                       "name": "valor",
-                      "expression": "MAX(`vl_projecao_mes`)"
+                      "expression": "MAX(`vl_projecao_brl`)"
                     }
                   ],
                   "disaggregated": false
@@ -1786,18 +1792,18 @@
               "encodings": {
                 "value": {
                   "fieldName": "valor",
-                  "displayName": "Projeção do mês (estimativa a preço de lista)"
+                  "displayName": "Projeção do mês (R$, estimativa)"
                 }
               },
               "frame": {
                 "showTitle": true,
-                "title": "Projeção do mês (estimativa a preço de lista)"
+                "title": "Projeção do mês (R$, estimativa)"
               }
             }
           },
           "position": {
             "x": 3,
-            "y": 41,
+            "y": 42,
             "width": 3,
             "height": 3
           }
@@ -1816,8 +1822,16 @@
                       "expression": "`ds_ambiente`"
                     },
                     {
+                      "name": "vl_custo_brl",
+                      "expression": "`vl_custo_brl`"
+                    },
+                    {
                       "name": "vl_custo_lista",
                       "expression": "`vl_custo_lista`"
+                    },
+                    {
+                      "name": "vl_projecao_brl",
+                      "expression": "`vl_projecao_brl`"
                     },
                     {
                       "name": "vl_projecao_mes",
@@ -1873,13 +1887,67 @@
                     "linkOpenInNewTab": true
                   },
                   {
-                    "fieldName": "vl_custo_lista",
+                    "fieldName": "vl_custo_brl",
                     "type": "float",
                     "displayAs": "number",
                     "visible": true,
                     "order": 100001,
-                    "title": "Custo no mês",
-                    "displayName": "Custo no mês",
+                    "title": "Custo no mês (R$)",
+                    "displayName": "Custo no mês (R$)",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "vl_custo_lista",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Custo no mês (US$)",
+                    "displayName": "Custo no mês (US$)",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "vl_projecao_brl",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Projeção do mês (R$)",
+                    "displayName": "Projeção do mês (R$)",
                     "alignContent": "right",
                     "allowSearch": false,
                     "allowHTML": false,
@@ -1904,9 +1972,9 @@
                     "type": "float",
                     "displayAs": "number",
                     "visible": true,
-                    "order": 100002,
-                    "title": "Projeção do mês",
-                    "displayName": "Projeção do mês",
+                    "order": 100004,
+                    "title": "Projeção do mês (US$)",
+                    "displayName": "Projeção do mês (US$)",
                     "alignContent": "right",
                     "allowSearch": false,
                     "allowHTML": false,
@@ -1931,7 +1999,7 @@
                     "type": "float",
                     "displayAs": "number",
                     "visible": true,
-                    "order": 100003,
+                    "order": 100005,
                     "title": "% do teto",
                     "displayName": "% do teto",
                     "alignContent": "right",
@@ -1958,7 +2026,7 @@
                     "type": "integer",
                     "displayAs": "number",
                     "visible": true,
-                    "order": 100004,
+                    "order": 100006,
                     "title": "Dias com uso",
                     "displayName": "Dias com uso",
                     "alignContent": "right",
@@ -1985,9 +2053,9 @@
                     "type": "string",
                     "displayAs": "string",
                     "visible": true,
-                    "order": 100005,
-                    "title": "Moeda",
-                    "displayName": "Moeda",
+                    "order": 100007,
+                    "title": "Moeda do preço de lista",
+                    "displayName": "Moeda do preço de lista",
                     "alignContent": "left",
                     "allowSearch": true,
                     "allowHTML": false,
@@ -2017,14 +2085,14 @@
               "withRowNumber": false,
               "frame": {
                 "showTitle": true,
-                "title": "Custo do mês por ambiente (preço de lista)"
+                "title": "Custo do mês por ambiente (R$ estimado e US$ de lista)"
               }
             }
           },
           "position": {
             "x": 0,
-            "y": 44,
-            "width": 3,
+            "y": 45,
+            "width": 6,
             "height": 5
           }
         },
@@ -2046,16 +2114,32 @@
                       "expression": "`qt_cargas`"
                     },
                     {
+                      "name": "vl_custo_medio_carga_brl",
+                      "expression": "`vl_custo_medio_carga_brl`"
+                    },
+                    {
                       "name": "vl_custo_medio_carga",
                       "expression": "`vl_custo_medio_carga`"
+                    },
+                    {
+                      "name": "vl_custo_min_carga_brl",
+                      "expression": "`vl_custo_min_carga_brl`"
                     },
                     {
                       "name": "vl_custo_min_carga",
                       "expression": "`vl_custo_min_carga`"
                     },
                     {
+                      "name": "vl_custo_max_carga_brl",
+                      "expression": "`vl_custo_max_carga_brl`"
+                    },
+                    {
                       "name": "vl_custo_max_carga",
                       "expression": "`vl_custo_max_carga`"
+                    },
+                    {
+                      "name": "vl_custo_30_cargas_brl",
+                      "expression": "`vl_custo_30_cargas_brl`"
                     },
                     {
                       "name": "vl_custo_30_cargas",
@@ -2130,13 +2214,67 @@
                     "linkOpenInNewTab": true
                   },
                   {
-                    "fieldName": "vl_custo_medio_carga",
+                    "fieldName": "vl_custo_medio_carga_brl",
                     "type": "float",
                     "displayAs": "number",
                     "visible": true,
                     "order": 100002,
-                    "title": "Média por carga",
-                    "displayName": "Média por carga",
+                    "title": "Média por carga (R$)",
+                    "displayName": "Média por carga (R$)",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "vl_custo_medio_carga",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Média por carga (US$)",
+                    "displayName": "Média por carga (US$)",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "vl_custo_min_carga_brl",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Menor (R$)",
+                    "displayName": "Menor (R$)",
                     "alignContent": "right",
                     "allowSearch": false,
                     "allowHTML": false,
@@ -2161,9 +2299,36 @@
                     "type": "float",
                     "displayAs": "number",
                     "visible": true,
-                    "order": 100003,
-                    "title": "Menor",
-                    "displayName": "Menor",
+                    "order": 100005,
+                    "title": "Menor (US$)",
+                    "displayName": "Menor (US$)",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "vl_custo_max_carga_brl",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "Maior (R$)",
+                    "displayName": "Maior (R$)",
                     "alignContent": "right",
                     "allowSearch": false,
                     "allowHTML": false,
@@ -2188,9 +2353,36 @@
                     "type": "float",
                     "displayAs": "number",
                     "visible": true,
-                    "order": 100004,
-                    "title": "Maior",
-                    "displayName": "Maior",
+                    "order": 100007,
+                    "title": "Maior (US$)",
+                    "displayName": "Maior (US$)",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "vl_custo_30_cargas_brl",
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100008,
+                    "title": "30 cargas, média vezes 30 (R$)",
+                    "displayName": "30 cargas, média vezes 30 (R$)",
                     "alignContent": "right",
                     "allowSearch": false,
                     "allowHTML": false,
@@ -2215,9 +2407,9 @@
                     "type": "float",
                     "displayAs": "number",
                     "visible": true,
-                    "order": 100005,
-                    "title": "30 cargas (média vezes 30)",
-                    "displayName": "30 cargas (média vezes 30)",
+                    "order": 100009,
+                    "title": "30 cargas, média vezes 30 (US$)",
+                    "displayName": "30 cargas, média vezes 30 (US$)",
                     "alignContent": "right",
                     "allowSearch": false,
                     "allowHTML": false,
@@ -2242,9 +2434,9 @@
                     "type": "string",
                     "displayAs": "string",
                     "visible": true,
-                    "order": 100006,
-                    "title": "Moeda",
-                    "displayName": "Moeda",
+                    "order": 100010,
+                    "title": "Moeda do preço de lista",
+                    "displayName": "Moeda do preço de lista",
                     "alignContent": "left",
                     "allowSearch": true,
                     "allowHTML": false,
@@ -2274,14 +2466,14 @@
               "withRowNumber": false,
               "frame": {
                 "showTitle": true,
-                "title": "Custo médio por carga com sucesso (30 dias, preço de lista)"
+                "title": "Custo por carga com sucesso, 30 dias (R$ estimado e US$ de lista)"
               }
             }
           },
           "position": {
-            "x": 3,
-            "y": 44,
-            "width": 3,
+            "x": 0,
+            "y": 50,
+            "width": 6,
             "height": 5
           }
         },
@@ -2299,8 +2491,8 @@
                       "expression": "`dt_uso`"
                     },
                     {
-                      "name": "vl_custo_lista",
-                      "expression": "SUM(`vl_custo_lista`)"
+                      "name": "vl_custo_brl",
+                      "expression": "SUM(`vl_custo_brl`)"
                     },
                     {
                       "name": "ds_ambiente_produto",
@@ -2323,11 +2515,11 @@
                   "displayName": "Dia"
                 },
                 "y": {
-                  "fieldName": "vl_custo_lista",
+                  "fieldName": "vl_custo_brl",
                   "scale": {
                     "type": "quantitative"
                   },
-                  "displayName": "Custo de lista"
+                  "displayName": "Custo (R$, estimativa)"
                 },
                 "color": {
                   "fieldName": "ds_ambiente_produto",
@@ -2339,13 +2531,13 @@
               },
               "frame": {
                 "showTitle": true,
-                "title": "Custo diário por ambiente e produto (preço de lista)"
+                "title": "Custo diário por ambiente e produto (R$, estimativa)"
               }
             }
           },
           "position": {
             "x": 0,
-            "y": 49,
+            "y": 55,
             "width": 6,
             "height": 6
           }

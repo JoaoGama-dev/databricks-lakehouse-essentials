@@ -140,6 +140,9 @@ resources:
               - ${var.limite_queda_volume_pct}
               - --teto-custo-mensal
               - ${var.teto_custo_mensal_usd}
+              # Cotação das colunas em reais das views de custo; inválida faz a etapa falhar.
+              - --cotacao-usd-brl
+              - ${var.cotacao_usd_brl}
               - --fuso-horario
               - ${var.fuso_horario}
 
