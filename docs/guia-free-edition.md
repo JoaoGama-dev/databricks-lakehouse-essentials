@@ -82,6 +82,16 @@ A `gold_fato_entrevista` tem uma linha por versão vigente (227 e 234), e a
 
 ## Bom saber
 
+- A carga tem as tarefas `tem_fonte_externa`, `ingerir_fontes_externas`,
+  `preparar_governanca`, `processar_medalhao`, `publicar_monitoramento`, `avisar_falha` e
+  `encerrar_com_falha`. Num projeto só com arquivos, a ingestão aparece como **Excluded**; a
+  `avisar_falha` e a `encerrar_com_falha` só rodam se algo falhar. Depois da carga, o
+  resumo legível está na saída da `publicar_monitoramento` e o log em
+  `essentials.<schema>_monitoramento.mon_log_execucao`.
+- No Free Edition, o SQL warehouse é compartilhado: o custo dele fica fora das views de
+  custo (`warehouse_dedicado` = `"false"`).
+- Para ver o aviso de falha, envie a v4 (regra que para a carga) e rode o job; para voltar,
+  envie a v5. O passo a passo está em [`desenvolvimento.md`](desenvolvimento.md).
 - Quem já tinha o ambiente de dev com os dois schemas antigos (`dev_<usuário>_portfolio` e
   `_gold`) não migra sozinho: veja o passo `unbind` em
   [levando ao Azure](levando-ao-azure.md) (seção "Migrar um ambiente que já existe").

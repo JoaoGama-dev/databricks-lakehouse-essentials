@@ -1,8 +1,9 @@
 # 0016. Data de referência do snapshot
 
 - **Status:** aceita, complementada por [0019](0019-silver-unica-scd2-com-retrato-privado.md)
-  (o desempate passa a ser data de referência, `_ingerido_em`, `_modificado_em` e nome do
-  arquivo)
+  e atualizada por [0024](0024-integracao-em-duas-rodadas-e-desempate-pelo-arquivo.md) (o
+  desempate passa a ser data de referência, modificação do arquivo na landing
+  (`_modificado_em`), `_ingerido_em` e nome do arquivo)
 - **Data:** 2026-11-04
 
 ## Contexto

@@ -21,10 +21,10 @@ GitHub Actions ([ADR 0011](adr/0011-deploy-de-producao-por-oidc.md)).
    `nome_completo` o nome real da tabela dele (`catalogo.schema.tabela`).
 4. **Fontes `banco`**: crie a conexão (`CREATE CONNECTION`) e um catálogo estrangeiro
    **com o mesmo nome** (`CREATE FOREIGN CATALOG ... USING CONNECTION`), e troque
-   `ingerir_banco` para `"true"` no `databricks.yml`
+   `ingerir_fontes_externas` para `"true"` no `databricks.yml`
    ([ADR 0004](adr/0004-ingestao-so-com-fonte.md)).
 5. **Fontes `api`**: crie o secret scope e guarde o token (`databricks secrets put-secret`),
-   e troque `ingerir_api` para `"true"`.
+   e troque `ingerir_fontes_externas` para `"true"` (a mesma variável serve a banco e API).
 6. **Service principal** de produção com acesso ao catálogo, à external location, às
    conexões e ao secret scope.
 7. **No `databricks.yml`** (target `prod`): o `host`, o `service_principal_name`, a
@@ -32,17 +32,55 @@ GitHub Actions ([ADR 0011](adr/0011-deploy-de-producao-por-oidc.md)).
    o `usuario_alerta` (usuário do workspace que recebe os alertas), o
    `teto_custo_mensal_usd` (teto do Databricks no diagnóstico), o `email_suporte` e o
    `destino_suporte_id` (destino de notificação de e-mail do suporte da Logos, criado pelo
-   administrador em **Settings > Notifications**). Para as views de custo e de execuções,
-   o service principal precisa de `SELECT` em `system.billing` e em `system.lakeflow`;
-   para separar o custo serverless por tag, o administrador cria uma política de uso
-   serverless com as tags do projeto
-   ([ADR 0003](adr/0003-monitoramento-fora-do-pipeline.md),
-   [ADR 0015](adr/0015-aviso-de-falha-com-motivo.md)).
+   administrador em **Settings > Notifications**). Os pontos de custo e de aviso estão na
+   seção "Custo real, warehouse dedicado e avisos" abaixo
+   ([ADR 0021](adr/0021-tarefa-final-de-monitoramento-e-aviso-de-falha-na-hora.md),
+   [ADR 0023](adr/0023-custo-do-projeto-por-tag-e-projecao.md)).
 8. **No GitHub**: environment `prod` com revisor obrigatório, variáveis
    `DATABRICKS_HOST_PROD` e `DATABRICKS_CLIENT_ID_PROD` e, no Databricks, a federation
    policy do service principal para o repositório (OIDC).
 9. Rode o workflow **Deploy produção** e configure o **Azure Budgets** com o teto do
    diagnóstico.
+
+## Custo real, warehouse dedicado e avisos
+
+**O que o custo mostra.** As views `mon_custo_*` atribuem o consumo pela tag `projeto`
+(jobs pela cobrança e por `system.lakeflow.jobs`; pipelines por `system.lakeflow.pipelines`),
+em `dev`, `ci` e `prod`, a preço de lista. Referência medida no dev em 2026-11-05: cerca de
+US$ 0,12 por carga no `dev` e US$ 0,17 no `ci`; para uma carga diária de volume parecido,
+de US$ 3 a 6 por mês de job e pipeline, **mais** warehouse e armazenamento. Uma carga que
+falha custou cerca de US$ 0,70 no `ci`, por causa das novas tentativas do pipeline. Esses
+números são do Free Edition: confirme no ambiente do cliente.
+
+**Warehouse dedicado.**
+
+- O faturamento do SQL warehouse não traz a tag `projeto`. Por isso o custo dele só entra
+  nas views quando a variável `warehouse_dedicado` é `"true"` (padrão `"false"`).
+- **Use `"true"` só com um warehouse exclusivo do projeto**; num warehouse compartilhado,
+  o custo de outros usos entraria na conta do projeto.
+- No cliente, o recomendado é criar um warehouse exclusivo e usá-lo em `warehouse_id`,
+  inclusive nas tarefas `avisar_falha` e `encerrar_com_falha`, que também usam warehouse.
+- Armazenamento e otimização preditiva ficam fora do custo do projeto.
+
+**Tag `projeto`.** A atribuição só funciona se os recursos levam a tag. O bundle a coloca no
+job e no pipeline; no cliente, imponha-a por **política**, a cargo do
+administrador (como a política de uso serverless), para ninguém criar recurso sem ela.
+
+**Grants.**
+
+- O service principal de prod precisa de `SELECT` em `system.billing` e `system.lakeflow`,
+  concedido pelo **metastore admin**. Sem isso, as views de custo e de execuções não são
+  criadas, e o log mostra só um aviso (a carga não falha).
+- Para as tarefas `avisar_falha` (`alert_task`) e `encerrar_com_falha` (`sql_task`), o
+  service principal precisa de `CAN_USE` no warehouse e `CAN_RUN` no alerta `falha_carga`.
+
+**Aviso de falha na hora.** A tarefa `avisar_falha` avalia o alerta `falha_carga` assim que
+a carga falha; o agendamento das 7h fica como rede de segurança. Em prod, confirme que o
+suporte da Logos está inscrito no alerta. No `ci`, a `avisar_falha` pode mandar e-mail se a
+integração falhar.
+
+**Token de dev do CI.** O token que o CI usa no Free Edition expira por volta de
+2027-01-28: rotacione antes (secret `DATABRICKS_TOKEN_DEV`).
 
 ## Otimização preditiva: decisão do administrador
 
@@ -106,5 +144,9 @@ Databricks para enviar arquivos.
   dá para conferir, porque só há um usuário.
 - Confira que os quatro alertas SQL (falha, volume e estrutura, atraso e custo) estão
   ativos e inscritos para o usuário do cliente e para o destino do suporte.
+- Force uma falha de teste num ambiente de homologação, se houver, e confira o e-mail com o
+  motivo logo depois da falha. Nunca force falha em prod.
+- Confira no painel "Saúde" (página "Saúde da plataforma") que o custo do mês aparece por
+  ambiente; se estiver vazio, revise os grants de `system.billing` e `system.lakeflow`.
 - Entregue o [roteiro de operação](roteiro-de-operacao.md) com os nomes reais do projeto
   (skill `entrega`).

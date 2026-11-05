@@ -1,6 +1,9 @@
 # 0004. Tarefas de ingestão só quando há fonte do tipo
 
-- **Status:** aceita
+- **Status:** aceita, atualizada por
+  [0021](0021-tarefa-final-de-monitoramento-e-aviso-de-falha-na-hora.md) (uma só tarefa,
+  `ingerir_fontes_externas`, atrás da condição `tem_fonte_externa` e da variável
+  `ingerir_fontes_externas`, no lugar de `ingerir_banco` e `ingerir_api`)
 - **Data:** 2026-11-03
 
 ## Contexto

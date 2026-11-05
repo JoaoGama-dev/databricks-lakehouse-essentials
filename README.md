@@ -50,7 +50,7 @@ flowchart LR
         prod["target prod"]
     end
     ci -- "lint, testes, validate, segredos" --> dev
-    integ -- "deploy, cargas v1 e v2, asserções, destroy" --> tci
+    integ -- "deploy, 2 rodadas de carga, asserções, destroy" --> tci
     deploy -- "OIDC, sem segredo guardado" --> prod
 ```
 
@@ -58,10 +58,14 @@ flowchart LR
   Python (`from pyspark import pipelines as dp`), gold em SQL.
 - **Qualidade visível:** regras do YAML viram expectations, com histórico diário,
   alerta de atraso e painel de saúde.
+- **Observável e com custo à vista:** cada carga deixa um log em `mon_log_execucao` (job,
+  tarefas e tabelas, com tempos, linhas e método de carga) e um resumo legível; a falha
+  chega por e-mail na hora, com o motivo sem dado pessoal; o painel mostra o custo do
+  projeto por ambiente, a projeção do mês e o custo de cada carga.
 - **Governança como código:** um schema por camada, volume, permissões, máscara de dado
   pessoal e tags (`pii`, `camada`, `tipo`) no bundle; o negócio lê só a gold.
-- **Testado de ponta a ponta:** testes de unidade em todo PR e, toda noite, uma carga
-  real com dados fictícios num ambiente isolado.
+- **Testado de ponta a ponta:** testes de unidade em todo PR e, toda noite, duas rodadas
+  de carga real com dados fictícios num ambiente isolado.
 - **IA com guardrails:** Claude Code com permissões, hooks, 6 subagentes e 8 skills; o
   modelo nunca vê dados reais.
 
@@ -115,7 +119,7 @@ cada PR `ruff check .`, `pytest -q` e `databricks bundle validate -t dev`.
 
 | Assunto | Onde |
 |---|---|
-| Arquitetura: fluxo dos dados, job, schemas no Unity Catalog, tabelas, regras, dicionário, painéis | [`docs/arquitetura.md`](docs/arquitetura.md) |
+| Arquitetura: fluxo dos dados, job, observabilidade e custo, schemas no Unity Catalog, tabelas, regras, dicionário, painéis | [`docs/arquitetura.md`](docs/arquitetura.md) |
 | Rodar no Free Edition, passo a passo | [`docs/guia-free-edition.md`](docs/guia-free-edition.md) |
 | Levar ao Azure Databricks do cliente | [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md) |
 | Operação do dia a dia, para o cliente | [`docs/roteiro-de-operacao.md`](docs/roteiro-de-operacao.md) |

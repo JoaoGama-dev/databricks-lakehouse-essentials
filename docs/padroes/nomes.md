@@ -14,7 +14,7 @@ validação do `config/fontes.yml` recusam o que fugir dele.
   | `<projeto>_bronze` | `bronze_<fonte>` e o volume `landing` | engenharia |
   | `<projeto>_silver` | `silver_<fonte>` e a função `mascarar_dado_pessoal` | engenharia |
   | `<projeto>_gold` | `gold_fato_*`, `gold_dim_*` e `gold_vw_*` | engenharia e leitura do negócio |
-  | `<projeto>_monitoramento` | event log `mon_log_eventos`, `mon_falhas` e as views `mon_*` | engenharia |
+  | `<projeto>_monitoramento` | event log `mon_log_eventos`, a tabela `mon_log_execucao` e as views `mon_*` (inclusive `mon_falhas`) | engenharia |
 
   Em dev o bundle prefixa os quatro com `dev_<usuário>_`, para cada pessoa ter o seu.
 - Não há schema de origem: o catálogo `essentials` é o único que o `setup/` cria.
@@ -35,21 +35,24 @@ validação do `config/fontes.yml` recusam o que fugir dele.
 | `gold_fato_<nome>` | `fato` | `gold_fato_entrevista` |
 | `gold_agg_<nome>` | `agregada` | (o exemplo não tem; o painel calcula) |
 | `gold_vw_<nome>` | `view` | `gold_vw_entrevistas` |
-| `mon_<nome>` | `qualidade`, `atualizacao`, `custo`, `volume`, `estrutura`, `execucoes`, `falha` | `mon_qualidade_diaria` |
+| `mon_<nome>` | `qualidade`, `atualizacao`, `custo`, `volume`, `estrutura`, `execucoes`, `falha`, `observabilidade` | `mon_qualidade_diaria`; `mon_log_execucao` (tipo `observabilidade`) |
 
 - Fato e dimensão no singular; `gold_vw_*` no plural do que mostra, como a view do painel.
 - Não existe `silver_<fonte>_historico`: com histórico, a própria `silver_<fonte>` é a SCD
   tipo 2 ([ADR 0019](../adr/0019-silver-unica-scd2-com-retrato-privado.md)).
 - `gold_vw_*` são views da gold escritas em `src/views/gold_vw_<nome>.sql` e criadas pela
-  tarefa `governanca_depois`, com `COMMENT` em cada coluna.
+  tarefa `publicar_monitoramento`, com `COMMENT` em cada coluna.
 - `mon_*` são as views de monitoramento (camada `monitoramento`), criadas pela tarefa
-  `governanca_depois` a partir de `src/essentials/monitoramento_sql.py`; o event log
+  `publicar_monitoramento` a partir de `src/essentials/monitoramento_sql.py`; o event log
   publicado do pipeline é `mon_log_eventos`. Ficam no schema `<projeto>_monitoramento`
-  (ADR 0003).
+  (ADR 0003 e 0021).
+- `mon_log_execucao` é a **tabela** do log da carga, de tipo `observabilidade`, criada pela
+  `preparar_governanca` com `COMMENT` em cada coluna (ADR 0022). `mon_falhas` é uma view
+  sobre ela (a tabela antiga de mesmo nome vira `mon_falhas_legado`).
 - Toda tabela e view publicada com `COMMENT` e `TBLPROPERTIES ('camada' = ..., 'tipo' = ...)`;
   os tipos válidos estão em `TIPOS_DE_TABELA` (`src/essentials/config_fontes.py`), que além
-  dos da tabela acima aceita `observabilidade` (ainda sem objeto que o use). A tarefa
-  `governanca_depois` copia `camada` e `tipo` para as **tags do Unity Catalog** de mesmo nome,
+  dos da tabela acima aceita `observabilidade`, hoje usado só por `mon_log_execucao`. A tarefa
+  `publicar_monitoramento` copia `camada` e `tipo` para as **tags do Unity Catalog** de mesmo nome,
   que dá para filtrar no Catalog Explorer. A fonte da verdade são as `TBLPROPERTIES`.
 
 ## Colunas: prefixo da classe da informação

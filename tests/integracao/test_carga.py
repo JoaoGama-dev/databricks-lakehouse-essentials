@@ -165,11 +165,13 @@ def test_tags_de_camada_e_tipo_vem_das_propriedades(consultar):
 
 def test_colunas_sensiveis_da_fato_tem_a_mascara(consultar, recursos):
     linhas = consultar(
-        "SELECT column_name, mask_schema, mask_name FROM {catalogo}.information_schema.column_masks "
-        "WHERE schema_name = {nome_gold} AND table_name = 'gold_fato_entrevista'"
+        # Colunas conferidas no Free Edition: o schema é table_schema e mask_name vem com o nome
+        # completo da função (catálogo.schema.função).
+        "SELECT column_name, mask_name FROM {catalogo}.information_schema.column_masks "
+        "WHERE table_schema = {nome_gold} AND table_name = 'gold_fato_entrevista'"
     )
-    mascaras = {linha["column_name"]: (linha["mask_schema"], linha["mask_name"]) for linha in linhas}
-    funcao = (recursos["schema_silver"], "mascarar_dado_pessoal")
+    mascaras = {linha["column_name"]: linha["mask_name"] for linha in linhas}
+    funcao = f"{recursos['catalogo']}.{recursos['schema_silver']}.mascarar_dado_pessoal"
     assert mascaras == {"nm_candidato": funcao, "nr_telefone": funcao}, mascaras
 
 

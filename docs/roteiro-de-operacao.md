@@ -39,7 +39,7 @@ Avisos automáticos por e-mail:
 | Aviso | Quando | Quem recebe | O que fazer |
 |---|---|---|---|
 | Falha da carga | na hora, quando a execução termina com erro | o e-mail cadastrado no job e o suporte da Logos | seção 5 |
-| Falha da carga, com o motivo | às 7h, se houve falha nas últimas 24 horas; traz a tarefa, o motivo e o link | o usuário responsável e o suporte da Logos | seção 5 |
+| Falha da carga, com o motivo | na hora, logo depois da falha; traz a tarefa, o motivo e o link. Às 7h o aviso é repetido se houve falha nas últimas 24 horas | o usuário responsável e o suporte da Logos | seção 5 |
 | Volume ou estrutura da origem | às 7h, se a planilha veio vazia ou bem menor que a anterior, ou se a origem ganhou uma coluna | o usuário responsável e o suporte da Logos | confira se o arquivo enviado está completo; coluna nova é ajustada pelo suporte |
 | Carga demorada | a execução passa de 15 minutos (o normal é menos de 6) | o e-mail cadastrado no job | acompanhe; se repetir, avise o suporte |
 | Carga atrasada | às 9h, se a última carga concluída tem mais de 26 horas (inclusive quando o job nem rodou) | o usuário responsável e o suporte da Logos | seção 5 |
@@ -48,22 +48,63 @@ Avisos automáticos por e-mail:
 O motivo nunca traz nomes, telefones ou outros dados das linhas: só a regra ou a
 mensagem do sistema.
 
-As tarefas **ingestao_banco** e **ingestao_api** aparecem como **Excluded** (puladas)
-quando o projeto não tem fonte desse tipo. Isso é normal e não custa nada.
+As tarefas do job, na ordem: **tem_fonte_externa**, **ingerir_fontes_externas**,
+**preparar_governanca**, **processar_medalhao** (a carga dos dados),
+**publicar_monitoramento**, **avisar_falha** e **encerrar_com_falha**. Algumas aparecem
+como **Excluded** (puladas), e isso é normal:
 
-### Painel "Saúde da plataforma" (equipe de engenharia)
+- **ingerir_fontes_externas** é pulada quando o projeto não tem fonte de banco ou de API.
+  Não custa nada.
+- **avisar_falha** e **encerrar_com_falha** só rodam quando alguma tarefa falhou. Em uma
+  carga boa, as duas aparecem como puladas.
 
-Em **Dashboards**, abra **Essentials · portfolio · Saúde da plataforma**. Ele mostra:
+### Painel "Saúde" (equipe de engenharia)
+
+Em **Dashboards**, abra **Essentials · portfolio · Saúde**. Ele tem duas páginas.
+
+**Saúde da plataforma** mostra:
 
 - horas desde a última carga, tabelas atrasadas e o percentual de cargas com sucesso nos
   últimos 30 dias;
 - as falhas recentes, com o motivo;
 - o volume de cada carga e as mudanças na estrutura da origem;
-- por dia e regra, quantas linhas foram descartadas e quantos alertas houve;
-- o custo diário do job e do pipeline e o percentual do teto do mês, pelo preço de lista.
+- por dia e regra, quantas linhas foram descartadas e quantos alertas houve (só das regras
+  que existem hoje);
+- o custo do mês por ambiente (dev, ci e prod), a projeção do mês, o custo de cada carga e
+  o custo diário. Os valores são o preço de lista, e a página explica o que fica fora.
+
+**Saúde da carga** mostra:
+
+- a última execução, tarefa por tarefa e tabela por tabela, com a duração;
+- a duração e os descartes por dia;
+- as falhas, com o motivo.
 
 O painel só abre para a equipe de engenharia: as tabelas `mon_*` ficam no espaço de
 monitoramento (`portfolio_monitoramento`), fechado para os usuários de negócio.
+
+### Como ler o log de uma execução
+
+Para ver o que uma carga fez, abra a execução no job e clique na tarefa
+**publicar_monitoramento**. A saída dela é um resumo, uma linha por fato:
+
+```
+[2026-11-05 06:00:12]-[INFO]: Início do job portfolio_job_carga_diaria (execução 1234): 2026-11-05 06:00:03
+[2026-11-05 06:04:40]-[INFO]: Tarefa processar_medalhao | status: SUCCESS | duração: 00:04:21
+[2026-11-05 06:04:41]-[ERROR]: Falha em processar_medalhao: ...
+```
+
+Cada linha começa com a data e a hora (horário de Brasília) e o nível:
+
+| Nível | Significa |
+|---|---|
+| `INFO` | aconteceu como esperado |
+| `WARNING` | algo para observar, mas a carga seguiu |
+| `ERROR` | uma etapa falhou; a linha traz o motivo |
+
+O resumo traz, para cada tabela, o método de carga, quantas linhas foram gravadas,
+descartadas e geraram alerta, o total na tabela e a duração. Os mesmos números ficam na
+tabela `mon_log_execucao`, que o painel "Saúde da carga" mostra. Os exemplos acima são
+fictícios.
 
 ## 3. Como ver os registros descartados (aba Data quality)
 
@@ -97,9 +138,13 @@ passam para a área certa, inclusive as antigas.
 
 ## 5. O que fazer se a carga falhar
 
+Quando a carga falha, chega um **e-mail na hora**, com a tarefa que falhou, o motivo e o
+link da execução. Não é preciso esperar as 7h. Se houve falha nas últimas 24 horas, às 7h
+chega o mesmo aviso de novo, como garantia. A execução fica vermelha (**Failed**) no job.
+
 1. **Não apague nem altere tabelas manualmente.** Toda mudança passa pelo processo de
    implantação.
-2. Leia o **motivo** no e-mail das 7h ou no painel "Saúde da plataforma". Se for uma
+2. Leia o **motivo** no e-mail ou no painel "Saúde" (página "Saúde da carga"). Se for uma
    regra que para a carga (por exemplo, `data_plausivel`), o arquivo enviado está errado.
 3. Confira se o último arquivo enviado está correto: salvo como CSV separado por `;`,
    no mesmo formato da planilha de sempre (linhas `AGENDA DIA dd/mm/aaaa` e as
@@ -153,16 +198,27 @@ O consumo de nuvem é pago diretamente à Microsoft, na assinatura da empresa.
    Azure no primeiro dia do projeto.
 
 Além do orçamento do Azure, que cobre a nuvem toda, o alerta **Custo perto do teto**
-avisa às 8h quando o custo do Databricks no mês passa de 80% do teto combinado, e o
-painel "Saúde da plataforma" mostra o percentual do mês.
+avisa às 8h quando o custo do Databricks no mês (somando os ambientes do projeto) passa de
+80% do teto combinado. O painel "Saúde" mostra:
 
-Se o custo subir sem motivo aparente (sem aumento de dados), avise o suporte.
+- o custo do mês por ambiente e a **projeção** do mês inteiro;
+- o custo de cada carga;
+- o custo por dia.
+
+Os valores são o **preço de lista**, sem descontos do contrato. Entram o job e o pipeline do
+projeto. O armazenamento, a otimização preditiva e o SQL warehouse ficam fora, a menos que o
+warehouse seja exclusivo do projeto (combinado na implantação).
+
+Se o custo subir sem motivo aparente (sem aumento de dados), avise o suporte. Uma carga que
+falha custa mais que uma boa, porque o sistema tenta de novo.
 
 ### Relatório mensal de custo do projeto (equipe de engenharia)
 
 O consumo da Databricks fica nas tabelas de sistema de faturamento. A view
-`mon_custo_diario`, no schema de monitoramento do projeto, já filtra o job e o pipeline do
-projeto pelos IDs deles. Para o relatório do mês anterior, rode num SQL warehouse (troque
+`mon_custo_diario`, no schema de monitoramento do projeto, já separa o job e o pipeline do
+projeto pela tag `projeto`, em todos os ambientes. A view `mon_custo_mensal` traz o mês por
+ambiente, com a projeção, e a `mon_custo_por_carga`, o custo de cada execução. Para o
+relatório do mês anterior, rode num SQL warehouse (troque
 `<catálogo>` e `<schema>` pelos do projeto, por exemplo `prd` e `portfolio_monitoramento`):
 
 ```sql

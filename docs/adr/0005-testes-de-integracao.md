@@ -2,7 +2,9 @@
 
 - **Status:** aceita, atualizada por [0018](0018-schemas-por-camada.md) e
   [0020](0020-exemplo-sem-cargos-e-view-que-mascara.md) (o target `ci` tem quatro schemas
-  `_ci_*` e não usa mais origem simulada)
+  `_ci_*` e não usa mais origem simulada) e por
+  [0024](0024-integracao-em-duas-rodadas-e-desempate-pelo-arquivo.md) (duas rodadas de
+  carga, v1 e depois v2, v6, v7 e v5)
 - **Data:** 2026-11-03
 
 ## Contexto

@@ -16,8 +16,9 @@
 - **Sem dbt.** Tudo em Lakeflow Spark Declarative Pipelines, serverless. Python com
   `from pyspark import pipelines as dp`; nunca `import dlt`.
 - Todo arquivo novo em `src/pipeline/` entra nas `libraries` de `resources/pipeline.yml`.
-- Fontes `banco` e `api` chegam à landing pelos jobs de `src/ingestao/`; só são testadas
-  no Azure (o Free Edition restringe acesso externo).
+- Fontes `banco` e `api` chegam à landing pela tarefa `ingerir_fontes_externas` do job
+  (`src/ingestao/ingerir_fontes_externas.py`); só são testadas no Azure (o Free Edition
+  restringe acesso externo).
 
 ## Bronze
 
@@ -49,14 +50,16 @@
   `nao_nulo` ganha uma com `drop`; no incremental, a chave inteira ganha `unico`. Nos
   modos snapshot e cdc, a regra `nao_nulo` da chave não pode ser só alerta.
 - **Ação `falhar`** só para o que indica arquivo errado (a carga inteira para e o aviso de
-  falha dispara com o motivo, ADR 0015); linha ruim é `drop` ou `alerta`.
+  falha dispara com o motivo, ADR 0021); linha ruim é `drop` ou `alerta`.
 - Na bronze de arquivo, o Auto Loader roda em modo `rescue` (CSV, JSON, Parquet): coluna
   nova na origem não derruba a carga e aparece em `mon_estrutura` (ADR 0014).
 - **Data de referência (snapshot de arquivos):** o retrato é o arquivo com a maior
   `data_referencia` do `fontes.yml` (`ingestao`, padrão; `conteudo`, com uma expressão SQL
   agregada; ou `nome_arquivo`, com regex de um grupo e formato), não o último ingerido. O
-  desempate é, em ordem: data de referência, `_ingerido_em`, `_modificado_em` e nome do
-  arquivo. Como o retrato é privado, os avisos acham o arquivo dele pelas versões vigentes
+  desempate é, em ordem: data de referência, modificação do arquivo na landing
+  (`_modificado_em`), `_ingerido_em` e nome do arquivo; a ordem de envio vale, sem depender
+  dos micro-batches ([ADR 0024](../adr/0024-integracao-em-duas-rodadas-e-desempate-pelo-arquivo.md)).
+  Como o retrato é privado, os avisos acham o arquivo dele pelas versões vigentes
   da silver. A
   `expressao` é código executável: revise como código no PR. O arquivo recebido que não
   virou retrato aparece em `mon_estrutura` como `arquivo_ignorado`, e texto que não é UTF-8 válido, como
@@ -82,7 +85,7 @@
   da fato foi confirmado no dev (`WINDOW_FUNCTION`).
 - **Sem UDF Python** em `src/`: um teste recusa. Use SQL e funções nativas.
 - **Views da gold** (`src/views/gold_vw_*.sql`) trazem o que depende de hoje e são o que o
-  painel lê. São criadas pela tarefa `governanca_depois`, com `COMMENT` por coluna, porque a
+  painel lê. São criadas pela tarefa `publicar_monitoramento`, com `COMMENT` por coluna, porque a
   view de pipeline não aplica o `COMMENT` de cada coluna. Toda coluna sensível passa pela
   função de máscara na view ([ADR 0020](../adr/0020-exemplo-sem-cargos-e-view-que-mascara.md)).
 
@@ -91,15 +94,25 @@
 - O pipeline publica o event log em `mon_log_eventos`, no schema
   `<projeto>_monitoramento`. As views `mon_*` (qualidade
   diária, atualização, volume, estrutura, execuções e custo) são geradas por
-  `src/essentials/monitoramento_sql.py` e criadas pela tarefa `governanca_depois`, fora
-  do pipeline (ADR 0003). A tabela `mon_falhas` é criada pela `governanca_antes` e
-  preenchida pela `registrar_falha` (ADR 0015).
+  `src/essentials/monitoramento_sql.py` e criadas pela tarefa `publicar_monitoramento`, fora
+  do pipeline (ADR 0003 e 0021).
+- **Log da carga:** `mon_log_execucao` é uma tabela (tipo `observabilidade`), com uma linha
+  por execução e nível (job, tarefa e tabela). É criada pela `preparar_governanca` e gravada
+  pela `publicar_monitoramento`, por MERGE pela chave; nunca é recriada. O log por tabela
+  vem do event log: não ponha código de log dentro das tabelas do pipeline (ADR 0022).
+  `mon_falhas` é uma view sobre ela.
+- **Log legível:** toda tarefa Python usa `configurar_log` (`src/essentials/log_texto.py`),
+  no formato `[AAAA-MM-DD hh:mm:ss]-[NIVEL]: mensagem` e no fuso da variável `fuso_horario`.
+  A mensagem só leva nomes, status, contagens, tempos e o motivo já limpo por
+  `motivo_seguro`; nunca o valor de um registro.
+- **Custo:** `mon_custo_*` atribuem pela tag `projeto`, em todos os ambientes; o warehouse
+  só entra com `warehouse_dedicado` igual a `"true"` (ADR 0023).
 - As `mon_*` leem **metadados** (event log, `information_schema`, tabelas de sistema), com
   duas exceções: `codificacao_invalida` e `arquivo_ignorado` leem a bronze (só um arquivo e
   uma coluna) e nunca mostram dado de linha.
 - Mensagem de erro nunca sai do ambiente sem passar por `motivo_seguro` (LGPD).
 - Regra nova no `fontes.yml` entra sozinha em `mon_qualidade_diaria`, com a ação do YAML.
-- Fonte `banco` ou `api` nova: troque `ingerir_banco`/`ingerir_api` para `"true"` no
+- Fonte `banco` ou `api` nova: troque `ingerir_fontes_externas` para `"true"` no
   `databricks.yml` (um teste confere; ADR 0004).
 
 ## Dicionário de dados (obrigatório)

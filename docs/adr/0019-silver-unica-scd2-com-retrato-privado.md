@@ -23,7 +23,8 @@ pipeline. O ADR 0008 criou o histórico e o ADR 0009 pôs as regras no retrato.
 3. **Quem precisa do estado atual filtra `__END_AT IS NULL`.** A gold faz isso.
 4. **Desempate do retrato** (complementa o ADR 0016): data de referência, depois
    `_ingerido_em`, `_modificado_em` e o nome do arquivo. O `_modificado_em` entra como
-   coluna técnica da bronze.
+   coluna técnica da bronze. (O [ADR 0024](0024-integracao-em-duas-rodadas-e-desempate-pelo-arquivo.md)
+   troca a ordem: `_modificado_em` vem antes de `_ingerido_em`.)
 5. Os avisos `arquivo_ignorado` e `codificacao_invalida` acham o arquivo do retrato pelas
    **versões vigentes da silver**, já que o retrato não está no catálogo.
 6. **Tipo da tabela:** a `silver_<fonte>` com histórico tem `'tipo' = 'historico'`.

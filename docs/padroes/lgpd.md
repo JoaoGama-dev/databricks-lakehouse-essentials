@@ -46,7 +46,7 @@ Quatro defesas, decididas nos ADRs 0002 e 0020
 3. **Máscara de coluna na gold**: toda coluna sensível da fato declara
    `MASK ${catalogo}.${schema_silver}.mascarar_dado_pessoal`. Só o grupo
    `grupo_dados_pessoais` vê o valor; os demais veem `****`. A função é criada pela tarefa
-   `governanca_antes` do job, no schema `<projeto>_silver` (máscaras só podem ser declaradas
+   `preparar_governanca` do job, no schema `<projeto>_silver` (máscaras só podem ser declaradas
    na definição da tabela do pipeline; `ALTER ... SET MASK` é recusado).
 4. **A view da gold aplica a mesma função** nas colunas sensíveis
    (`gold_vw_entrevistas`: `nm_candidato` e `nr_telefone`), no padrão dynamic view. Não há
@@ -54,14 +54,28 @@ Quatro defesas, decididas nos ADRs 0002 e 0020
    lê só a view. Coluna sensível nova na gold precisa do `MASK` na fato **e** da função na
    view; testes conferem.
 
-Além disso, a tarefa `governanca_depois` aplica a tag `pii` = `true` nas colunas
+Além disso, a tarefa `publicar_monitoramento` aplica a tag `pii` = `true` nas colunas
 sensíveis da silver, da fato e da view, para localizar todo dado pessoal pelo
 `information_schema.column_tags`. O retrato privado do pipeline não está no catálogo e não
 recebe tag.
 
+## Motivo da falha: no log e no e-mail
+
+O texto de erro do motor pode trazer o registro que violou uma regra (nome, telefone). Por
+isso ele **nunca é gravado nem enviado como está**. O `motivo_seguro` é uma lista de
+permissões: deixa passar só o nome da regra do `fontes.yml`, a classe do erro e a etapa, com
+300 caracteres no máximo. Esse motivo vai para:
+
+- `mon_log_execucao` e a view `mon_falhas` (coluna do motivo);
+- o e-mail do alerta `falha_carga`, enviado na hora pela `avisar_falha` e às 7h;
+- o log legível da tarefa `publicar_monitoramento`.
+
+A mensagem da tarefa `encerrar_com_falha` é um texto fixo, sem dado. O log legível só leva
+nomes de tarefa, schema e tabela, status, contagens, datas e durações (ADR 0021 e 0022).
+
 ## Nome de arquivo e monitoramento
 
-As views `mon_*` não guardam dado pessoal. Os avisos `arquivo_ignorado` e
+As views `mon_*` e a tabela `mon_log_execucao` não guardam dado pessoal. Os avisos `arquivo_ignorado` e
 `codificacao_invalida` de `mon_estrutura` mostram **só o nome do arquivo** recebido.
 Por isso o nome do arquivo nunca pode ter nome, CPF, telefone ou outro dado pessoal:
 use datas e códigos (`agenda_2025-12-15.csv`).

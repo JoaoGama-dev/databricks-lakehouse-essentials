@@ -1,7 +1,12 @@
 # 0003. Monitoramento em views fora do pipeline, sobre o event log publicado
 
 - **Status:** aceita, atualizada por [0018](0018-schemas-por-camada.md) (o event log, as
-  `mon_*` e o painel de saúde ficam no schema `<projeto>_monitoramento`, só da engenharia)
+  `mon_*` e o painel de saúde ficam no schema `<projeto>_monitoramento`, só da engenharia),
+  por [0021](0021-tarefa-final-de-monitoramento-e-aviso-de-falha-na-hora.md) (a tarefa
+  `governanca_depois` virou `publicar_monitoramento`), por
+  [0022](0022-log-de-execucao-e-log-legivel.md) (log da carga) e por
+  [0023](0023-custo-do-projeto-por-tag-e-projecao.md) (o custo passa a ser atribuído pela tag
+  `projeto`, não pelos IDs)
 - **Data:** 2026-11-03
 
 ## Contexto
