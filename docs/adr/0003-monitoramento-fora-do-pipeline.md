@@ -1,6 +1,7 @@
 # 0003. Monitoramento em views fora do pipeline, sobre o event log publicado
 
-- **Status:** aceita
+- **Status:** aceita, atualizada por [0018](0018-schemas-por-camada.md) (o event log, as
+  `mon_*` e o painel de saúde ficam no schema `<projeto>_monitoramento`, só da engenharia)
 - **Data:** 2026-11-03
 
 ## Contexto

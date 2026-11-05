@@ -27,7 +27,10 @@ hooks: não tente contornar.
 7. **Se falhar, pare.** Mostre o erro, explique a causa e proponha a correção antes de
    alterar qualquer arquivo. Erros comuns:
    - pasta da landing não existe → `fs mkdir`;
-   - schema ou volume inexistente → rodar `setup/00_setup_free_edition.sql`;
+   - catálogo inexistente → rodar `setup/00_setup_free_edition.sql` (os schemas e o volume
+     são criados pelo próprio deploy);
+   - deploy recusado por `prevent_destroy` ao mudar schema ou volume → não desligue a
+     proteção; siga a migração com `unbind` de `docs/levando-ao-azure.md`;
    - mudança de schema em streaming table → avaliar com o usuário antes de full refresh;
    - 401 no CI → token do secret `DATABRICKS_TOKEN_DEV` expirado ou errado.
 

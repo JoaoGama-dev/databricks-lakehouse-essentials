@@ -25,7 +25,7 @@ flowchart LR
     subgraph lakehouse["Lakehouse no Unity Catalog"]
         landing["landing"] --> bronze["bronze<br/>dado como chegou"]
         bronze --> silver["silver<br/>limpeza, qualidade, histórico"]
-        silver --> gold["gold<br/>modelo estrela"]
+        silver --> gold["gold<br/>fato e view para o negócio"]
     end
     paineis["Painéis AI/BI e Genie"]
     arquivos --> landing
@@ -58,16 +58,17 @@ flowchart LR
   Python (`from pyspark import pipelines as dp`), gold em SQL.
 - **Qualidade visível:** regras do YAML viram expectations, com histórico diário,
   alerta de atraso e painel de saúde.
-- **Governança como código:** schemas, volume, permissões, máscara de dado pessoal e tags
-  `pii` no bundle; o negócio lê só a gold.
+- **Governança como código:** um schema por camada, volume, permissões, máscara de dado
+  pessoal e tags (`pii`, `camada`, `tipo`) no bundle; o negócio lê só a gold.
 - **Testado de ponta a ponta:** testes de unidade em todo PR e, toda noite, uma carga
   real com dados fictícios num ambiente isolado.
 - **IA com guardrails:** Claude Code com permissões, hooks, 6 subagentes e 8 skills; o
   modelo nunca vê dados reais.
 
-O exemplo usa duas fontes: a **agenda de entrevistas** de um RH (planilha CSV) e um
-**cadastro de cargos** (tabela no Unity Catalog). A gold junta as duas para mostrar
-comparecimento e aprovação por área.
+O exemplo usa uma fonte: a **agenda de entrevistas** de um RH (planilha). Ela vira 3 tabelas
+publicadas (`bronze_agenda`, `silver_agenda` em SCD tipo 2 e `gold_fato_entrevista`) e uma
+view (`gold_vw_entrevistas`), que o painel lê para mostrar comparecimento e aprovação por
+área.
 
 ## Como rodar (Free Edition)
 
@@ -80,19 +81,20 @@ databricks auth login --host https://<seu-workspace>.cloud.databricks.com
 $env:BUNDLE_VAR_alert_email = "voce@exemplo.com"      # PowerShell; não é versionado
 ```
 
-1. No **SQL Editor**, rode `setup/00_setup_free_edition.sql` (catálogo e origem simulada).
+1. No **SQL Editor**, rode `setup/00_setup_free_edition.sql` (só o catálogo).
 2. Implante: `databricks bundle validate -t dev` e `databricks bundle deploy -t dev`.
 3. Gere as agendas fictícias e envie a v1 para a landing:
    ```
    python data/gerar_dados_exemplo.py
-   databricks fs mkdir dbfs:/Volumes/essentials/<schema>/landing/agenda
-   databricks fs cp data/agenda_exemplo_v1.csv dbfs:/Volumes/essentials/<schema>/landing/agenda/
+   databricks fs mkdir dbfs:/Volumes/essentials/<schema>_bronze/landing/agenda
+   databricks fs cp data/agenda_exemplo_v1.csv dbfs:/Volumes/essentials/<schema>_bronze/landing/agenda/
    ```
 4. Rode a carga: `databricks bundle run essentials_carga_diaria -t dev`.
-5. Confira `essentials.<schema>_gold.gold_agg_entrevista_mensal` e os painéis; depois
+5. Confira `essentials.<schema>_gold.gold_vw_entrevistas` e os painéis; depois
    envie a v2 e rode de novo para ver o histórico.
 
-`<schema>` é `dev_<seu usuário>_portfolio` (o `deploy` mostra o nome). O passo a passo
+`<schema>` é `dev_<seu usuário>_portfolio`, e cada camada tem o seu schema, com o sufixo
+`_bronze`, `_silver`, `_gold` ou `_monitoramento` (o `deploy` mostra os nomes). O passo a passo
 completo, com o que conferir em cada etapa e os totais esperados, está em
 [`docs/guia-free-edition.md`](docs/guia-free-edition.md).
 
@@ -104,17 +106,16 @@ cada PR `ruff check .`, `pytest -q` e `databricks bundle validate -t dev`.
 1. Copie este repositório com o nome `essentials-<projeto>`.
 2. No `databricks.yml`, troque `bundle.name` para `essentials_<projeto>`, o `default` da
    variável `projeto` e o `projeto` do target `ci` (`<projeto>_ci`).
-3. Em `setup/00_setup_free_edition.sql`, troque `portfolio` pelo nome do projeto.
-4. Reescreva `config/fontes.yml`, os `src/pipeline/silver_<fonte>.sql` e os
-   `src/pipeline/gold_*.sql`. A skill `novo-cliente` do Claude Code conduz esse passo
+3. Reescreva `config/fontes.yml`, os `src/pipeline/silver_<fonte>.sql`, os
+   `src/pipeline/gold_*.sql` e as views `src/views/gold_vw_*.sql`. A skill `novo-cliente` do Claude Code conduz esse passo
    pelo **perfil** dos arquivos do cliente, sem ver os dados.
-5. Leve ao Azure do cliente: [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md).
+4. Leve ao Azure do cliente: [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md).
 
 ## Documentação
 
 | Assunto | Onde |
 |---|---|
-| Arquitetura: fluxo dos dados, job, Unity Catalog, tabelas, regras, dicionário, painéis | [`docs/arquitetura.md`](docs/arquitetura.md) |
+| Arquitetura: fluxo dos dados, job, schemas no Unity Catalog, tabelas, regras, dicionário, painéis | [`docs/arquitetura.md`](docs/arquitetura.md) |
 | Rodar no Free Edition, passo a passo | [`docs/guia-free-edition.md`](docs/guia-free-edition.md) |
 | Levar ao Azure Databricks do cliente | [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md) |
 | Operação do dia a dia, para o cliente | [`docs/roteiro-de-operacao.md`](docs/roteiro-de-operacao.md) |
@@ -130,8 +131,8 @@ cada PR `ruff check .`, `pytest -q` e `databricks bundle validate -t dev`.
 Dados reais de clientes só rodam no Azure Databricks do cliente, na assinatura dele;
 no Free Edition e no repositório entram só os dados fictícios do gerador
 ([ADR 0010](docs/adr/0010-free-edition-so-com-dados-ficticios.md)). O telefone sai
-mascarado na silver, o nome e o telefone têm máscara de coluna na gold e a tag `pii` no
-Unity Catalog, e o negócio só lê a gold
+mascarado na silver, o nome e o telefone têm máscara de coluna na gold (e a view do painel
+aplica a máscara de novo) e a tag `pii` no Unity Catalog, e o negócio só lê a gold
 ([`docs/padroes/lgpd.md`](docs/padroes/lgpd.md)).
 
 ## Próximos passos
@@ -147,7 +148,7 @@ Este repositório é o pacote **Essentials** completo; o que falta para fechá-l
 - A fábrica (Fase 9): gerar o projeto de um cliente novo com `databricks bundle init`.
 - Kit de serviço (Fase 10): relatório de diagnóstico, treinamento, guia de Power BI e
   relatório mensal da sustentação.
-- No exemplo: completar o cadastro de cargos até zerar as entrevistas com `id_cargo = -1`.
+- No exemplo: aumentar o de-para de áreas até zerar as vagas `Não classificada`.
 
 ## Aviso
 

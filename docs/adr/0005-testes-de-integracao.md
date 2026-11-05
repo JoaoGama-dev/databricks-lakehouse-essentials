@@ -1,6 +1,8 @@
 # 0005. Testes de integração num target ci isolado, destruído ao fim
 
-- **Status:** aceita
+- **Status:** aceita, atualizada por [0018](0018-schemas-por-camada.md) e
+  [0020](0020-exemplo-sem-cargos-e-view-que-mascara.md) (o target `ci` tem quatro schemas
+  `_ci_*` e não usa mais origem simulada)
 - **Data:** 2026-11-03
 
 ## Contexto

@@ -6,20 +6,23 @@ quando algo dá errado.
 
 ## 1. Como os dados chegam
 
-O painel junta duas informações:
+O painel usa uma informação: a **agenda de entrevistas**, a planilha do RH salva como
+**CSV** (separado por `;`). Cada envio é a **planilha inteira**; o painel sempre usa a
+versão mais recente.
 
-- **Agenda de entrevistas**: a planilha do RH, salva como **CSV** (separado por `;`).
-  Cada envio é a **planilha inteira**; o painel sempre usa a versão mais recente.
-- **Cadastro de cargos**: uma tabela que diz a qual **área** cada vaga pertence (por
-  exemplo, tudo o que começa com "auxiliar de cozinha" é da área Cozinha).
+A **área** de cada vaga (por exemplo, tudo o que começa com "auxiliar de cozinha" é da área
+Cozinha) é definida por uma lista de começos de nome de vaga, mantida pela equipe técnica.
 
 Todos os dias às **6h** (horário de Brasília), uma carga automática lê o que chegou de
 novo e atualiza o painel. No caminho, os dados passam por três etapas:
 
 - **bronze**: cópia fiel do que chegou;
 - **silver**: limpeza (nomes padronizados, status unificado, datas corrigidas,
-  telefone mascarado) e regras de qualidade;
-- **gold**: tabelas prontas para o painel, já com a área de cada vaga.
+  telefone mascarado), regras de qualidade e o histórico de cada entrevista;
+- **gold**: a tabela pronta para o painel, já com a área de cada vaga, e a visão que o
+  painel lê.
+
+Cada etapa fica num espaço separado no Databricks. O negócio só enxerga a gold.
 
 O histórico de mudanças de status fica guardado: dá para saber, por exemplo, quando
 uma entrevista passou de Pendente para Aprovado.
@@ -27,7 +30,7 @@ uma entrevista passou de Pendente para Aprovado.
 ## 2. Como ver se a carga rodou
 
 1. Entre no Databricks e clique em **Jobs & Pipelines** no menu à esquerda.
-2. Abra o job **essentials_portfolio_carga_diaria**.
+2. Abra o job **portfolio_job_carga_diaria** (o nome do projeto vem antes).
 3. A execução mais recente deve estar com o ícone verde (**Succeeded**). Vermelho
    (**Failed**) significa que a carga falhou.
 
@@ -59,14 +62,14 @@ Em **Dashboards**, abra **Essentials · portfolio · Saúde da plataforma**. Ele
 - por dia e regra, quantas linhas foram descartadas e quantos alertas houve;
 - o custo diário do job e do pipeline e o percentual do teto do mês, pelo preço de lista.
 
-O painel só abre para a equipe de engenharia: as tabelas `mon_*` ficam no schema do
-projeto, fechado para os usuários de negócio.
+O painel só abre para a equipe de engenharia: as tabelas `mon_*` ficam no espaço de
+monitoramento (`portfolio_monitoramento`), fechado para os usuários de negócio.
 
 ## 3. Como ver os registros descartados (aba Data quality)
 
-1. Em **Jobs & Pipelines**, abra o pipeline **essentials_portfolio**.
-2. No desenho do fluxo, clique em **silver_int_agenda_retrato** (ou
-   **silver_int_cargos_retrato**, para o cadastro de cargos).
+1. Em **Jobs & Pipelines**, abra o pipeline **portfolio_pipeline_medalhao**.
+2. No desenho do fluxo, clique em **silver_int_agenda_retrato**. Esse passo só existe
+   dentro do pipeline: ele não aparece no Catalog, mas é nele que as regras são conferidas.
 3. Abra a aba **Data quality**.
 
 | Regra | O que acontece | Significado |
@@ -77,24 +80,20 @@ projeto, fechado para os usuários de negócio.
 | `telefone_valido` | entra, com **alerta** | telefone vazio, incompleto ou corrompido pelo Excel (ex.: `4,19E+10`) |
 | `horario_valido` | entra, com **alerta** | horário vazio ou fora do formato `09:30` |
 | `data_plausivel` | **a carga para** | entrevista antes de 2020: sinal de arquivo errado; nada é gravado e chega o aviso de falha |
-| `id_cargo_preenchido` | cargo **descartado** | cargo sem identificador |
-| `prefixo_preenchido` | cargo **descartado** | cargo sem o começo do nome da vaga |
-| `area_conhecida` | entra, com **alerta** | área fora da lista combinada |
-| `prefixo_unico` | **alerta** | o mesmo prefixo cadastrado duas vezes (aparece em **silver_int_cargos_unico_ds_prefixo_vaga**) |
 
-Alertas não impedem a carga, mas indicam algo a corrigir na planilha ou no cadastro. A
-chave de cada fonte (aqui, data e nome do candidato; código do cargo) é conferida
-sozinha: linha sem chave é sempre descartada.
+Alertas não impedem a carga, mas indicam algo a corrigir na planilha. A chave da fonte
+(aqui, data e nome do candidato) é conferida sozinha: linha sem chave é sempre descartada.
 
 A aba Data quality mostra uma atualização por vez. O histórico, dia a dia, fica na view
-`mon_qualidade_diaria` do schema do projeto e no painel "Saúde da plataforma" (seção 2).
+`mon_qualidade_diaria` do espaço de monitoramento e no painel "Saúde da plataforma" (seção 2).
 
 ## 4. Vagas "Não classificada"
 
-Quando o nome de uma vaga não combina com nenhum cargo do cadastro, ela aparece no
-painel com a área **Não classificada**. Para corrigir, peça a inclusão do cargo no
-cadastro (o começo do nome da vaga e a área). Na carga seguinte, as entrevistas dessa
-vaga passam para a área certa, inclusive as antigas.
+Quando o nome de uma vaga não começa com nenhum dos nomes da lista de áreas, ela aparece no
+painel com a área **Não classificada** (a página **Pendências** mostra essas vagas). Para
+corrigir, peça ao suporte a inclusão do começo do nome da vaga e da área na lista. A
+mudança passa pelo processo de implantação; na carga seguinte, as entrevistas dessa vaga
+passam para a área certa, inclusive as antigas.
 
 ## 5. O que fazer se a carga falhar
 
@@ -124,8 +123,8 @@ projeto (pasta `portfolio/agenda`). Arraste o arquivo para a pasta e pronto.
 **Pelo Databricks (quem tem acesso de engenharia):**
 
 1. No Databricks, clique em **Catalog** no menu à esquerda.
-2. Navegue até o catálogo do projeto (`prd` no Azure), o schema do projeto (por exemplo,
-   `portfolio`), o volume `landing` e a pasta `agenda`.
+2. Navegue até o catálogo do projeto (`prd` no Azure), o espaço da bronze (por exemplo,
+   `portfolio_bronze`), o volume `landing` e a pasta `agenda`.
 3. Clique em **Upload to this volume** e escolha o arquivo.
 
 Nos dois casos:
@@ -162,9 +161,9 @@ Se o custo subir sem motivo aparente (sem aumento de dados), avise o suporte.
 ### Relatório mensal de custo do projeto (equipe de engenharia)
 
 O consumo da Databricks fica nas tabelas de sistema de faturamento. A view
-`mon_custo_diario`, no schema do projeto, já filtra o job e o pipeline do projeto pelos
-IDs deles. Para o relatório do mês anterior, rode num SQL warehouse (troque `<catálogo>`
-e `<schema>` pelos do projeto, por exemplo `prd` e `portfolio`):
+`mon_custo_diario`, no schema de monitoramento do projeto, já filtra o job e o pipeline do
+projeto pelos IDs deles. Para o relatório do mês anterior, rode num SQL warehouse (troque
+`<catálogo>` e `<schema>` pelos do projeto, por exemplo `prd` e `portfolio_monitoramento`):
 
 ```sql
 SELECT date_trunc('MONTH', dt_uso) AS dt_mes, nm_recurso, ds_produto,
@@ -191,8 +190,11 @@ Toda tabela usada pelo painel tem a descrição de cada coluna, em português.
 
 1. No Databricks, clique em **Catalog** no menu à esquerda.
 2. Abra o catálogo do projeto (`prd` no Azure), o schema da gold (por exemplo,
-   `portfolio_gold`) e a tabela (por exemplo, `gold_fato_entrevista`).
+   `portfolio_gold`) e a view que o painel usa (`gold_vw_entrevistas`) ou a tabela
+   `gold_fato_entrevista`.
 3. Na aba **Columns**, a coluna **Comment** explica cada campo.
+4. Cada tabela e view tem as etiquetas (tags) **camada** e **tipo**, que mostram em que etapa
+   ela está e que papel tem.
 
 O nome e o telefone do candidato são dados pessoais: aparecem como `****` para quem não
 faz parte do grupo de dados pessoais. Para ter acesso, peça ao responsável pelos acessos
@@ -208,7 +210,7 @@ O nome da coluna também ajuda: o começo indica o tipo de informação.
 | `st_` | status ou situação | `st_entrevista` |
 | `qt_` | quantidade | `qt_entrevistas` |
 | `fl_` | sim ou não | `fl_compareceu` |
-| `id_` | identificador | `id_cargo` |
+| `nr_` | número | `nr_telefone` |
 
 ## 9. Quando acionar o suporte
 

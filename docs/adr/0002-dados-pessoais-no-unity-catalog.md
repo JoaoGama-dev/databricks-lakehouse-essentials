@@ -1,6 +1,7 @@
 # 0002. Dados pessoais no Unity Catalog: máscara de coluna e tags
 
-- **Status:** aceita
+- **Status:** aceita, atualizada por [0020](0020-exemplo-sem-cargos-e-view-que-mascara.md)
+  (a view da gold aplica a mesma função de máscara; a função fica no schema da silver)
 - **Data:** 2026-11-03
 
 ## Contexto

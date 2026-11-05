@@ -21,12 +21,14 @@ flowchart TD
     end
 
     subgraph pipeline["Pipeline declarativo (serverless)"]
-        bronze["bronze_#60;fonte#62;<br/>dado como chegou + _fonte, _arquivo_origem, _ingerido_em"]
-        prep["silver_int_#60;fonte#62;_preparada<br/>(opcional, silver_#60;fonte#62;.sql)"]
-        valid["silver_int_#60;fonte#62;_retrato ou _mudancas<br/>limpeza padrão + expectations"]
-        silver["silver_#60;fonte#62; (estado atual)<br/>+ silver_#60;fonte#62;_historico (SCD 2)"]
-        gold["gold_dim_* · gold_fato_* · gold_agg_*<br/>schema #60;projeto#62;_gold"]
+        bronze["bronze_#60;fonte#62;<br/>schema #60;projeto#62;_bronze<br/>dado como chegou + _fonte, _arquivo_origem, _modificado_em, _ingerido_em"]
+        prep["silver_int_#60;fonte#62;_preparada<br/>(opcional, silver_#60;fonte#62;.sql; view temporária)"]
+        valid["silver_int_#60;fonte#62;_retrato (privado) ou _mudancas<br/>limpeza padrão + expectations"]
+        silver["silver_#60;fonte#62;<br/>schema #60;projeto#62;_silver<br/>SCD 2 com historico: true"]
+        gold["gold_fato_* · gold_dim_*<br/>schema #60;projeto#62;_gold"]
     end
+
+    vw["gold_vw_*<br/>view criada pela governança: máscara e o que depende de hoje"]
 
     subgraph consumo["Consumo"]
         painel["Painel de entrevistas (AI/BI) e Genie"]
@@ -43,8 +45,9 @@ flowchart TD
     bronze --> valid
     valid -- "AUTO CDC" --> silver
     silver --> gold
-    gold --> painel
-    pipeline -. "event log" .-> mon["mon_log_eventos → views mon_*"]
+    gold --> vw
+    vw --> painel
+    pipeline -. "event log" .-> mon["mon_log_eventos → views mon_*<br/>schema #60;projeto#62;_monitoramento"]
     mon --> saude
 ```
 
@@ -53,7 +56,11 @@ flowchart TD
 - **As regras de qualidade ficam numa tabela intermediária**, e não numa view, porque o
   AUTO CDC FROM SNAPSHOT lê a origem como um retrato e não aplica expectations de views
   (ADR 0009). No modo incremental, ficam na própria `silver_<fonte>`.
+- **O retrato do snapshot é privado do pipeline:** não aparece no catálogo. A silver é uma
+  só, em SCD tipo 2 (ADR 0019).
 - **AUTO CDC** nos modos `snapshot` e `cdc`, com histórico SCD tipo 2 opcional (ADR 0008).
+- **O painel lê só a view da gold**, que aplica a máscara de dado pessoal e calcula o que
+  depende de hoje (ADR 0020).
 
 ## A carga diária (job)
 
@@ -65,11 +72,11 @@ flowchart LR
     api_t --> lake["atualizar_lakehouse<br/>(pipeline, run_if NONE_FAILED)"]
     bco_t --> lake
     gov_a --> lake
-    lake --> gov_d["governanca_depois<br/>tags pii e views mon_*"]
+    lake --> gov_d["governanca_depois<br/>views gold_vw_*, tags e views mon_*"]
     gov_d -. "se algo falhou" .-> falha["registrar_falha<br/>(run_if AT_LEAST_ONE_FAILED)<br/>motivo sem dado pessoal"]
 ```
 
-Job `essentials_<projeto>_carga_diaria`, às 6h (America/Sao_Paulo) em prod; pausado em
+Job `<projeto>_job_carga_diaria`, às 6h (America/Sao_Paulo) em prod; pausado em
 dev. As ingestões só rodam quando o `fontes.yml` tem fonte daquele tipo (variáveis
 `ingerir_banco` e `ingerir_api`, conferidas por teste); sem fonte, aparecem como puladas
 e não custam nada (ADR 0004). A tarefa `registrar_falha` depende de todas as outras e só
@@ -90,35 +97,42 @@ roda quando alguma falha: grava o motivo limpo em `mon_falhas` e termina com err
 **No Free Edition (target `dev`):**
 
 ```
-essentials                              ← catálogo do pacote (um só para todos os projetos)
-├── dev_<usuário>_portfolio             ← bronze, silver e mon_*: só a engenharia
-│   └── landing (volume)                ← /Volumes/essentials/dev_<usuário>_portfolio/landing/<fonte>/
-├── dev_<usuário>_portfolio_gold        ← gold: leitura para o negócio (e o painel)
-└── portfolio_origem                    ← sistemas de origem simulados (setup)
+essentials                                      ← catálogo do pacote (um só para todos os projetos)
+├── dev_<usuário>_portfolio_bronze              ← bronze_agenda e o volume landing: só a engenharia
+│   └── landing (volume)                        ← /Volumes/essentials/dev_<usuário>_portfolio_bronze/landing/<fonte>/
+├── dev_<usuário>_portfolio_silver              ← silver_agenda e a função mascarar_dado_pessoal: só a engenharia
+├── dev_<usuário>_portfolio_gold                ← gold_fato_entrevista e gold_vw_entrevistas: leitura para o negócio
+└── dev_<usuário>_portfolio_monitoramento       ← mon_log_eventos, mon_falhas e views mon_*: só a engenharia
 ```
 
 Os schemas, o volume e as permissões são criados pelo bundle
 (`resources/governanca.yml`). Em dev, o modo development prefixa os schemas com
 `dev_<usuário>_`, isolando cada desenvolvedor; o target `ci` usa o projeto
 `<projeto>_ci` (ADR 0005). No cliente (target `prod`), o catálogo é o dele (`prd`), os
-schemas são `<projeto>` e `<projeto>_gold` e a landing é um volume externo sobre o ADLS.
+schemas são `<projeto>_bronze`, `<projeto>_silver`, `<projeto>_gold` e
+`<projeto>_monitoramento`, e a landing é um volume externo sobre o ADLS. O `setup/` cria só
+o catálogo (ADR 0018).
 
 **No bundle:** o nome é `essentials_<projeto>` e a variável `projeto` gera os schemas e os
-nomes do job (`essentials_<projeto>_carga_diaria`) e do pipeline (`essentials_<projeto>`).
-Os padrões de nomes de tabelas e colunas estão em
+nomes do job (`<projeto>_job_carga_diaria`) e do pipeline (`<projeto>_pipeline_medalhao`).
+As chaves internas dos recursos (`essentials_carga_diaria`, `essentials_pipeline`) não
+mudam, para o bundle não recriar nada. Os padrões de nomes de tabelas e colunas estão em
 [`docs/padroes/nomes.md`](padroes/nomes.md).
 
 ### Quem acessa o quê
 
-| Grupo (variável do bundle) | Bronze e silver | Gold e painel | Landing | Dado pessoal na gold |
+| Grupo (variável do bundle) | Bronze, silver e monitoramento | Gold e painel | Landing | Dado pessoal na gold |
 |---|---|---|---|---|
 | `grupo_engenharia` | tudo | tudo | lê e grava | conforme o grupo abaixo |
 | `grupo_leitura_gold` | nada | lê | nada | vê `****` |
 | `grupo_dados_pessoais` | — | — | — | vê o valor |
 
-Decisões em [ADR 0001](adr/0001-modelo-de-acesso-no-unity-catalog.md) e
-[ADR 0002](adr/0002-dados-pessoais-no-unity-catalog.md). As colunas com dado pessoal
-levam a tag `pii` no Unity Catalog.
+Decisões em [ADR 0018](adr/0018-schemas-por-camada.md) (que substitui em parte o
+[ADR 0001](adr/0001-modelo-de-acesso-no-unity-catalog.md)),
+[ADR 0002](adr/0002-dados-pessoais-no-unity-catalog.md) e
+[ADR 0020](adr/0020-exemplo-sem-cargos-e-view-que-mascara.md). As colunas com dado pessoal
+levam a tag `pii` no Unity Catalog, e toda tabela e view publicada leva as tags `camada` e
+`tipo`, copiadas das `TBLPROPERTIES`.
 
 ## O `config/fontes.yml`
 
@@ -150,25 +164,23 @@ errado (no exemplo, `data_plausivel`), não linha ruim.
 | Fonte | Tipo | Modo | Chave | Detalhe |
 |---|---|---|---|---|
 | `agenda` | arquivo (texto) | snapshot + histórico | `dt_entrevista`, `nm_candidato` | a planilha do ano inteiro é reenviada a cada vez; a data só aparece na linha `AGENDA DIA`, tratada em `silver_agenda.sql` |
-| `cargos` | tabela | snapshot | `id_cargo` | `essentials.portfolio_origem.cadastro_cargos`, criada pelo setup; liga o prefixo da vaga a uma área |
+
+O exemplo tem uma só fonte. A área da vaga não vem de um cadastro: é um de-para de
+prefixos do nome da vaga, numa CTE da `gold_fato_entrevista` (ADR 0020).
 
 ## Tabelas geradas
 
-| Tabela | Objeto | Camada · tipo | O que tem |
-|---|---|---|---|
-| `bronze_agenda` | streaming table | bronze · bruta | cada arquivo da agenda inteiro numa linha (`value`), como chegou |
-| `bronze_cargos` | materialized view | bronze · bruta | cópia da tabela de cargos |
-| `silver_int_agenda_preparada` | view temporária | silver · intermediária | uma linha por entrevista, com a data do separador repetida |
-| `silver_int_agenda_retrato` | materialized view | silver · intermediária | último retrato limpo; **regras de qualidade da agenda** |
-| `silver_int_cargos_retrato` | materialized view | silver · intermediária | cadastro limpo; **regras de qualidade dos cargos** |
-| `silver_int_cargos_unico_ds_prefixo_vaga` | materialized view | silver · intermediária | checagem da regra `unico` |
-| `silver_agenda` | streaming table (AUTO CDC) | silver · atual | estado atual de cada entrevista |
-| `silver_agenda_historico` | streaming table (SCD 2) | silver · histórico | cada mudança de status, com `__START_AT` e `__END_AT` |
-| `silver_cargos` | streaming table (AUTO CDC) | silver · atual | cadastro atual de cargos |
-| `gold_dim_cargo` | materialized view | gold · dimensão | cargos e áreas, com o membro `-1 = Não classificada` |
-| `gold_fato_entrevista` | materialized view | gold · fato | entrevista + `id_cargo` + `fl_compareceu`, `fl_aprovado`, `fl_sem_retorno` |
-| `gold_agg_entrevista_mensal` | materialized view | gold · agregada | `qt_` por mês, área e status |
-| `mon_log_eventos` | event log do pipeline | monitoramento | todos os eventos das atualizações do pipeline |
+São 3 tabelas publicadas e 1 view na cadeia da agenda, mais o retrato privado do pipeline.
+
+| Tabela | Schema | Objeto | Camada · tipo | O que tem |
+|---|---|---|---|---|
+| `bronze_agenda` | `<projeto>_bronze` | streaming table | bronze · bruta | cada arquivo da agenda inteiro numa linha (`value`), como chegou, mais `_modificado_em` |
+| `silver_int_agenda_preparada` | (só no pipeline) | view temporária | silver · intermediária | uma linha por entrevista, com a data do separador repetida |
+| `silver_int_agenda_retrato` | (só no pipeline) | materialized view **privada** | silver · intermediária | último retrato limpo; **regras de qualidade da agenda**; não aparece no catálogo (ADR 0019) |
+| `silver_agenda` | `<projeto>_silver` | streaming table (AUTO CDC, SCD 2) | silver · histórico | uma linha por versão de cada entrevista, com `__START_AT` e `__END_AT`; a vigente tem `__END_AT` vazio |
+| `gold_fato_entrevista` | `<projeto>_gold` | materialized view | gold · fato | uma linha por entrevista vigente, com a área (de-para), `st_situacao`, `fl_compareceu` e `fl_aprovado`; `MASK` em nome e telefone |
+| `gold_vw_entrevistas` | `<projeto>_gold` | view | gold · view | a fato mais `fl_sem_retorno` (depende de hoje); aplica a máscara em nome e telefone; o painel lê só ela |
+| `mon_log_eventos` | `<projeto>_monitoramento` | event log do pipeline | monitoramento | todos os eventos das atualizações do pipeline |
 | `mon_qualidade_diaria` | view | monitoramento · qualidade | por dia, tabela e regra: aprovadas, descartadas e alertas |
 | `mon_atualizacao` | view | monitoramento · atualização | última carga do pipeline e último dado novo de cada silver |
 | `mon_custo_diario` | view | monitoramento · custo | DBUs e custo de lista do job e do pipeline |
@@ -178,8 +190,11 @@ errado (no exemplo, `data_plausivel`), não linha ruim.
 | `mon_execucoes` | view | monitoramento · execuções | execuções, sucessos, falhas e taxa de sucesso por dia |
 | `mon_falhas` | tabela | monitoramento · falha | falhas da carga com o motivo, sem dado pessoal |
 
-As `mon_*` ficam no schema do projeto e são criadas pela tarefa `governanca_depois`
-([ADR 0003](adr/0003-monitoramento-fora-do-pipeline.md)).
+As `mon_*` ficam no schema `<projeto>_monitoramento` e são criadas pela tarefa
+`governanca_depois` ([ADR 0003](adr/0003-monitoramento-fora-do-pipeline.md)). Elas leem
+metadados (event log, `information_schema`, tabelas de sistema), com duas exceções:
+`codificacao_invalida` e `arquivo_ignorado` leem a bronze, um arquivo e uma coluna. Como o
+retrato é privado, esses dois avisos acham o arquivo dele pelas versões vigentes da silver.
 
 ### Regras de qualidade da agenda
 
@@ -190,6 +205,7 @@ As `mon_*` ficam no schema do projeto e são criadas pela tarefa `governanca_dep
 | `status_conhecido` | alerta | `st_entrevista` dentro da lista depois do de-para |
 | `telefone_valido` | alerta | `nr_telefone` com 10 ou 11 dígitos (um número que o Excel converteu para `4,19E+10` não passa) |
 | `horario_valido` | alerta | `hr_entrevista` no formato `HH:mm` |
+| `data_plausivel` | falhar | `dt_entrevista` vazia ou a partir de 2020-01-01; antes disso, a carga para |
 
 O status passa por um de-para no YAML (`Aprovada` → `Aprovado`, `N/ atendeu` → `Não
 atendeu`, `Cancelou` → `Cancelado`, vazio → `Pendente`), e o telefone sai mascarado
@@ -205,8 +221,9 @@ usam as mesmas descrições para entender os dados.
 | Onde a descrição nasce | Como chega ao Unity Catalog |
 |---|---|
 | Colunas da silver | campo `descricao` de cada coluna no `config/fontes.yml` (obrigatório) → `silver.py` cria as tabelas com o schema do contrato e `COMMENT` por coluna |
-| Colunas técnicas (`_fonte`, `_arquivo_origem`, `_ingerido_em`) e do histórico (`__START_AT`, `__END_AT`) | descrições padrão em `src/essentials/config_fontes.py` |
-| Colunas da gold | lista de colunas com tipo e `COMMENT` em cada `CREATE OR REFRESH MATERIALIZED VIEW` |
+| Colunas técnicas (`_fonte`, `_arquivo_origem`, `_modificado_em`, `_ingerido_em`) e do histórico (`__START_AT`, `__END_AT`) | descrições padrão em `src/essentials/config_fontes.py` |
+| Colunas da fato da gold | lista de colunas com tipo e `COMMENT` em cada `CREATE OR REFRESH MATERIALIZED VIEW` |
+| Colunas das views da gold | lista de colunas com `COMMENT` em cada `src/views/gold_vw_*.sql` (criada pela governança, que aplica o `COMMENT` de cada coluna) |
 | Colunas das views `mon_*` | `COMMENT` gerado por `src/essentials/monitoramento_sql.py` |
 
 A silver tem **contrato explícito**: só entram as colunas declaradas no YAML (e as
@@ -215,12 +232,12 @@ coluna chega à silver sem descrição. Os testes garantem isso: o YAML recusa c
 `descricao`, e a gold recusa coluna sem tipo e `COMMENT`.
 
 Para exportar o dicionário (por exemplo, para uma planilha de entrega ao cliente), troque
-`<schema>` pelo schema do projeto:
+`<projeto>` pelo nome do projeto (em dev, com o prefixo `dev_<usuário>_`):
 
 ```sql
 SELECT table_name AS tabela, column_name AS coluna, full_data_type AS tipo, comment AS descricao
 FROM essentials.information_schema.columns
-WHERE table_schema IN ('<schema>', '<schema>_gold')
+WHERE table_schema IN ('<projeto>_silver', '<projeto>_gold')
   AND (table_name LIKE 'silver%' OR table_name LIKE 'gold%')
 ORDER BY table_name, ordinal_position;
 ```
@@ -237,12 +254,14 @@ serverless, não cobra licença por usuário e respeita as permissões do Unity 
 |---|---|
 | **Visão geral** | contadores de entrevistas, comparecimento e aprovação; barras por mês e situação (concluído, em andamento, pendente); pizza por status; filtros de período e área |
 | **Áreas e vagas** | comparecimento e aprovação por área; entrevistas por vaga e situação; filtros de período e área |
-| **Pendências** | lista de trabalho do RH: entrevistas sem retorno, status não identificado e vagas sem área no cadastro, com filtro por motivo |
+| **Pendências** | lista de trabalho do RH: entrevistas sem retorno, status não identificado e vagas sem área (Não classificada), com filtro por motivo |
 
-A situação (`st_situacao`) é calculada na gold, não no painel: regra de negócio fica no
-modelo de dados. As consultas do painel leem só tabelas `gold_` e não citam catálogo nem
-schema; o bundle aponta para o ambiente certo com `dataset_catalog` e `dataset_schema`.
-O warehouse é localizado pelo nome (`lookup` da variável `warehouse_id`).
+A situação (`st_situacao`) e a área são calculadas na gold, não no painel: regra de negócio
+fica no modelo de dados. Já os totais por mês e por área são calculados nos datasets do
+painel, sem tabela agregada. As consultas do painel leem só a view `gold_vw_entrevistas` e
+não citam catálogo nem schema; o bundle aponta para o ambiente certo com `dataset_catalog`
+e `dataset_schema`. O warehouse é localizado pelo nome (`lookup` da variável
+`warehouse_id`).
 
 **Ajustes visuais feitos na tela** (cores, posições) voltam para o repositório com:
 
@@ -251,13 +270,12 @@ databricks bundle generate dashboard --resource painel_entrevistas --force -t de
 ```
 
 **Saúde da plataforma:** um segundo painel (`src/dashboards/saude.lvdash.json`), só para
-a engenharia, lê as views `mon_*` do schema do projeto: horas desde a última carga,
-tabelas atrasadas, descartes e alertas por dia e regra, e custo diário. É separado para o
-negócio não ver o schema do projeto (ADR 0001).
+a engenharia, lê as views `mon_*` do schema `<projeto>_monitoramento`: horas desde a última
+carga, tabelas atrasadas, descartes e alertas por dia e regra, e custo diário. É separado
+para o negócio não ver o monitoramento (ADR 0018).
 
-**Genie (opcional):** no painel, ative um espaço Genie sobre `gold_fato_entrevista` e
-`gold_agg_entrevista_mensal` para perguntas livres, como "quantos aprovados em Cozinha em
-setembro?".
+**Genie (opcional):** no painel, ative um espaço Genie sobre `gold_vw_entrevistas` (que já
+vem mascarada) para perguntas livres, como "quantos aprovados em Cozinha em setembro?".
 
 ## Estrutura de pastas
 
@@ -269,10 +287,11 @@ setembro?".
 ├── src/
 │   ├── essentials/                # lógica sem Spark: config, governança e monitoramento (testada)
 │   ├── pipeline/                  # bronze.py e silver.py genéricas, silver_<fonte>.sql, gold_*.sql
+│   ├── views/                     # gold_vw_*.sql: views da gold criadas pela governança
 │   ├── ingestao/                  # banco e API para a landing
-│   ├── governanca/                # tarefa do job: máscara, tags pii e views mon_*
+│   ├── governanca/                # tarefa do job: máscara, views da gold, tags e views mon_*
 │   └── dashboards/                # painéis AI/BI como código
-├── setup/00_setup_free_edition.sql  # catálogo e origem simulada (só Free Edition)
+├── setup/00_setup_free_edition.sql  # só o catálogo e o USE CATALOG (Free Edition)
 ├── data/gerar_dados_exemplo.py    # gera as agendas fictícias v1 e v2 (o resto de data/ fica fora do Git)
 ├── scripts/                       # perfilar_dados.py (perfil sem dados pessoais) e integracao.py
 ├── tests/                         # unidade (pytest -q) e integracao/ (workflow integracao.yml)

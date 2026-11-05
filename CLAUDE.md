@@ -13,6 +13,7 @@ Azure Databricks do cliente (target `prod`). Tudo em português do Brasil.
 | Bronze e silver genéricas | `src/pipeline/bronze.py`, `src/pipeline/silver.py` |
 | Lógica específica de uma fonte | `src/pipeline/silver_<fonte>.sql` |
 | Gold (modelo estrela) | `src/pipeline/gold_*.sql` |
+| Views da gold (o painel lê só elas; aplicam a máscara) | `src/views/gold_vw_*.sql` |
 | Painel AI/BI | `src/dashboards/*.lvdash.json`, `resources/dashboard.yml` |
 | Monitoramento (views `mon_*`, alerta de atraso) | `src/essentials/monitoramento_sql.py`, `resources/alertas.yml` |
 | Bundle, job e pipeline | `databricks.yml`, `resources/*.yml` |

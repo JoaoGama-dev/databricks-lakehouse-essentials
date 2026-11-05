@@ -9,8 +9,9 @@ gerais de dado pessoal em [`lgpd.md`](lgpd.md).
 | --- | --- | --- |
 | Landing | o arquivo original, inteiro | sim |
 | Bronze de snapshot | o arquivo inteiro, uma linha por arquivo (`value`) | sim |
-| Silver e histórico SCD2 | colunas do contrato; as sensíveis mascaradas ou marcadas com a tag `pii` | sim, nas colunas `sensivel` |
-| Gold | só com máscara de coluna para quem não é do grupo `grupo_dados_pessoais` | sim, mascarado |
+| Silver (SCD2, todas as versões) | colunas do contrato; as sensíveis mascaradas ou marcadas com a tag `pii` | sim, nas colunas `sensivel` |
+| Retrato (`silver_int_<fonte>_retrato`, privado do pipeline) | o último arquivo, limpo; não está no catálogo | sim, mas só dentro do pipeline |
+| Gold (fato e view) | máscara de coluna na fato e função de máscara na view, para quem não é do grupo `grupo_dados_pessoais` | sim, mascarado |
 | Views e tabelas `mon_*` | contagens, nomes de tabela, regra, nome do arquivo e motivo da falha | **não** |
 
 As `mon_*` não têm dado pessoal de propósito: `mon_falhas` guarda só o nome da regra
@@ -23,7 +24,7 @@ arquivo nunca pode ter dado pessoal.** Oriente quem envia arquivos a usar nomes 
 | Dado | Quanto tempo | Quem decide |
 | --- | --- | --- |
 | Landing e bronze de snapshot | só os últimos **N dias** (sugestão: 90) | o contrato com o cliente |
-| Histórico SCD2 | pelo prazo do contrato | o contrato com o cliente |
+| Silver SCD2 (histórico) | pelo prazo do contrato | o contrato com o cliente |
 | Time travel das tabelas Delta | `delta.deletedFileRetentionDuration` (7 dias) e `delta.logRetentionDuration` (30 dias), os padrões | decisão registrada para mudar |
 
 Por que reter menos na landing e na bronze: cada arquivo de snapshot repete a planilha
@@ -47,8 +48,12 @@ Pedido do titular (LGPD, art. 18): apagar os dados de uma pessoa.
 
    ```
    python scripts/gerar_exclusao_titular.py --fonte agenda --catalogo <catalogo> \
-       --schema <projeto> --schema-gold <projeto>_gold --saida exclusao.sql
+       --schema-bronze <projeto>_bronze --schema-silver <projeto>_silver \
+       --schema-gold <projeto>_gold --saida exclusao.sql
    ```
+
+   Em dev, os schemas levam o prefixo `dev_<usuário>_`. O argumento antigo `--schema` não
+   existe mais.
 
    O titular entra só como parâmetro nomeado (`:titular_<coluna>`), preenchido no SQL
    editor do Databricks. Não grave o valor no arquivo nem no chamado, e não versione o
@@ -58,11 +63,13 @@ Pedido do titular (LGPD, art. 18): apagar os dados de uma pessoa.
    pare: o valor pode estar casando com outra pessoa.
 5. **Os passos gerados**, em ordem:
    1. **Landing:** reescreva ou apague só os arquivos que citam o titular. Nunca apague a pasta.
-   2. **Bronze:** um `UPDATE` tira do texto bruto só as linhas do titular.
-   3. **Silver e histórico:** `DELETE` das linhas do titular.
+   2. **Bronze** (`<projeto>_bronze`): um `UPDATE` tira do texto bruto só as linhas do titular.
+   3. **Silver** (`<projeto>_silver`): `DELETE` das linhas do titular, em todas as versões
+      (a silver é a SCD2). O retrato privado é recalculado no passo 5.
    4. **Aviso de streaming:** veja a limitação abaixo.
-   5. **Atualização normal do pipeline:** recalcula o retrato e a gold (materialized
-      views). Nunca use full refresh.
+   5. **Atualização normal do pipeline:** recalcula o retrato e a fato da gold
+      (materialized views). A view `gold_vw_entrevistas` lê a fato e não guarda dado. Nunca
+      use full refresh.
    6. **`REORG TABLE ... APPLY (PURGE)`:** reescreve os arquivos sem as linhas apagadas.
    7. **`VACUUM DRY RUN`** e, **depois do prazo de retenção**, **`VACUUM`**. Até lá o dado
       ainda pode ser lido pelo time travel.

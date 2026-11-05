@@ -30,7 +30,10 @@ quase sempre, só acrescentar um item nele. Siga os passos na ordem. Regras de L
    - toda coluna que o perfil marcou como sensível com `mascarar` (a sugestão do perfil);
    - uma tabela de-para das colunas: nome na origem → nome padronizado → tipo;
    - se vai criar `silver_<nome>.sql` e o que ele fará;
-   - se há gold nova ou alterada.
+   - se há gold nova ou alterada (e a view `gold_vw_*` que o painel lê, com a máscara nas
+     colunas sensíveis);
+   - com `historico: true`, a `silver_<nome>` já é a SCD tipo 2 (não existe
+     `silver_<nome>_historico`) e o retrato do snapshot é privado do pipeline.
 
    **Pare aqui e espere meu OK.**
 
@@ -41,9 +44,12 @@ quase sempre, só acrescentar um item nele. Siga os passos na ordem. Regras de L
      nomes de coluna da origem; os padronizados vêm do YAML), marque
      `preparacao_sql: true` e inclua o arquivo nas `libraries` de `resources/pipeline.yml`;
    - gold nova ou alterada: use a skill `novo-indicador`;
-   - para tipo tabela no Free Edition, inclua a criação da tabela no schema
-     `essentials.<projeto>_origem` em `setup/00_setup_free_edition.sql` e use
-     `{catalogo}.{projeto}_origem.<tabela>` no YAML.
+   - tipo tabela: use em `nome_completo` o nome real da tabela (`catalogo.schema.tabela`).
+     Não há schema de origem no pacote nem tabela de origem no `setup/`; no Free Edition,
+     só faça uma fonte `tabela` se o João criar a tabela fictícia e pedir.
+   - cada camada tem o seu schema (`<projeto>_bronze`, `<projeto>_silver`, `<projeto>_gold`):
+     não escreva nome de schema fixo; a bronze e a silver saem do `fontes.yml`, e a gold
+     usa `${schema_gold}` e `${schema_silver}`.
 
 4. **Atualizar o resto:** testes específicos em `tests/test_projeto.py` (quando houver
    lógica nova), `docs/arquitetura.md` (fontes, tabelas geradas e regras),
