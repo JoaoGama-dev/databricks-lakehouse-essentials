@@ -779,7 +779,9 @@ CONDICAO_DE_ERRO = re.compile(r'(?:^|\n|\\n|: |"message":")\[([A-Z][A-Z0-9]*(?:[
 # sem o pacote: precisa terminar em Exception ou Error e ter algo antes.
 CLASSE_DE_EXCECAO = re.compile(r"(?<![\w$])(?:[\w$]+\.)*([A-Z][A-Za-z0-9]+(?:Exception|Error))(?![\w$])")
 ETAPA = re.compile(r"[A-Z][A-Z_]{1,60}")
-TAMANHO_MAXIMO_CLASSE = 120
+# Classes reais do Spark, do Delta e do Python cabem com folga; um texto maior que passasse pelo
+# formato da regex não é uma classe.
+TAMANHO_MAXIMO_CLASSE = 60
 
 
 def classe_do_erro(mensagem: str | None) -> str | None:

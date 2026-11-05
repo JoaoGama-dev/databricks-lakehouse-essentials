@@ -311,10 +311,12 @@ def main() -> None:
     from essentials.config_fontes import carregar_fontes
     from essentials.log_sql import decidir_encerramento
     from essentials.log_texto import configurar_log
-    from essentials.monitoramento_sql import motivo_seguro
+    from essentials.monitoramento_sql import motivo_seguro, regras_monitoradas
 
     log = configurar_log(args.fuso_horario)
     fontes = carregar_fontes(args.config)
+    # Só nomes de regra do fontes.yml podem sair do texto do erro (lista de permissões).
+    regras = {regra for _tabela, regra, _acao in regras_monitoradas(fontes)}
     spark = SparkSession.builder.getOrCreate()
     w = WorkspaceClient()
     estado: dict = {"motivos": {}}
@@ -325,10 +327,11 @@ def main() -> None:
             funcao()
         except (PySparkException, DatabricksError) as erro:
             # A mensagem do Spark pode citar um valor: só a parte que motivo_seguro deixa.
-            log.error("Etapa %s com erro: %s", nome, motivo_seguro(str(erro)))
+            log.error("Etapa %s com erro: %s", nome, motivo_seguro(str(erro), None, regras))
             etapas_com_erro.append(nome)
         except Exception as erro:  # noqa: BLE001 - qualquer outro erro: registra e segue para a próxima etapa
-            log.error("Etapa %s com erro inesperado: %s", nome, motivo_seguro(f"{type(erro).__name__}: {erro}"))
+            motivo = motivo_seguro(f"{type(erro).__name__}: {erro}", None, regras)
+            log.error("Etapa %s com erro inesperado: %s", nome, motivo)
             etapas_com_erro.append(nome)
 
     etapa("views da gold", lambda: criar_views_gold(spark, args, log))
