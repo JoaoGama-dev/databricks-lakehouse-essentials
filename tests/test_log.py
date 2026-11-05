@@ -333,7 +333,11 @@ def folhas() -> set[str]:
 
 def test_aviso_de_falha_sai_logo_depois_da_publicacao_e_o_job_fica_vermelho():
     avisar = tarefas()["avisar_falha"]
-    assert avisar["depends_on"] == [{"task_key": TAREFA_PROPRIA}]
+    # Depende das tarefas da carga (a falha delas dispara o aviso) e da publicação (o motivo já
+    # está gravado quando o alerta roda).
+    assert {d["task_key"] for d in avisar["depends_on"]} == {
+        "ingerir_fontes_externas", "preparar_governanca", TAREFA_PIPELINE, TAREFA_PROPRIA,
+    }
     assert avisar["run_if"] == "AT_LEAST_ONE_FAILED"
     assert avisar["alert_task"] == {"alert_id": "${resources.alerts.falha_carga.id}",
                                     "warehouse_id": "${var.warehouse_id}"}

@@ -290,10 +290,12 @@ def motivo_das_etapas(etapas_com_erro: list[str]) -> str | None:
 
 
 def decidir_encerramento(falhas: list[tuple[str, str]], etapas_com_erro: list[str]) -> str | None:
-    """Mensagem com que a publicar_monitoramento termina com erro; None se a carga foi bem.
+    """Mensagem de falha da carga que a publicar_monitoramento registra no log; None se a carga
+    foi bem.
 
-    falhas: (tarefa, motivo seguro) das tarefas que falharam. Terminar com erro deixa a
-    execução marcada como falha e dispara a tarefa avisar_falha (e-mail com o motivo).
+    falhas: (tarefa, motivo seguro) das tarefas que falharam. A tarefa só termina com erro
+    quando etapas_com_erro (dela mesma) não está vazia; a falha das outras é avisada pela
+    avisar_falha e deixa o job vermelho pela encerrar_com_falha.
     """
     partes = [f"{tarefa}: {motivo}" for tarefa, motivo in falhas]
     if etapas_com_erro:

@@ -112,13 +112,15 @@ resources:
     custo_teto:
       display_name: Essentials · ${var.projeto} · Custo perto do teto
       warehouse_id: ${var.warehouse_id}
+      # Só a linha total (a soma dos ambientes do projeto): a view tem uma linha por ambiente.
       query_text: |-
-        SELECT dt_mes, vl_custo_lista, vl_teto, pc_do_teto, sg_moeda
+        SELECT dt_mes, ds_ambiente, vl_custo_lista, vl_projecao_mes, vl_teto, pc_do_teto, sg_moeda
         FROM ${resources.schemas.monitoramento.catalog_name}.${resources.schemas.monitoramento.name}.mon_custo_mensal
-        WHERE dt_mes = date_trunc('MONTH', current_date())
+        WHERE dt_mes = date_trunc('MONTH', current_date()) AND ds_ambiente = 'total'
       custom_summary: "Essentials · ${var.projeto}: custo do Databricks perto do teto do mês"
       custom_description: |-
-        O custo do Databricks neste mês (preço de lista) passou de 80% do teto combinado:
+        O custo do Databricks neste mês (preço de lista, somando os ambientes do projeto) passou
+        de 80% do teto combinado. vl_projecao_mes é a estimativa do mês inteiro:
         {{QUERY_RESULT_TABLE}}
         Veja o painel Saúde da plataforma e o Budget da nuvem.
       evaluation:

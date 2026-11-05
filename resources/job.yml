@@ -93,7 +93,8 @@ resources:
             full_refresh: false
 
         # ALL_DONE: roda com qualquer resultado das anteriores, para registrar o que houve.
-        # Termina com erro de propósito quando algo falhou: tentar de novo só repetiria o registro.
+        # Só termina com erro se uma etapa dela falhar; a falha das outras tarefas vai para a
+        # avisar_falha e a encerrar_com_falha (assim o serverless não a repete).
         - task_key: publicar_monitoramento
           depends_on:
             - task_key: ingerir_fontes_externas
@@ -123,8 +124,16 @@ resources:
               - "{{job.id}}"
               - --run-id
               - "{{job.run_id}}"
-              - --pipeline-id
-              - ${resources.pipelines.essentials_pipeline.id}
+              # O custo é atribuído ao projeto pela tag projeto (todos os ambientes); o warehouse
+              # só entra quando é dedicado ao projeto.
+              - --projeto
+              - ${var.projeto}
+              - --ambiente
+              - ${bundle.target}
+              - --warehouse-id
+              - ${var.warehouse_id}
+              - --warehouse-dedicado
+              - ${var.warehouse_dedicado}
               - --limite-atraso-horas
               - ${var.limite_atraso_horas}
               - --limite-queda-volume-pct
@@ -134,12 +143,15 @@ resources:
               - --fuso-horario
               - ${var.fuso_horario}
 
-        # Só quando a publicar_monitoramento terminou com erro (a carga falhou): avalia o alerta
-        # falha_carga na hora, sem esperar o agendamento das 7h (que continua como rede de
-        # segurança). Sem subscribers aqui, avisa quem já está inscrito no alerta
-        # (usuario_alerta e, em prod, o destino do suporte).
+        # Só quando alguma tarefa falhou, depois de o motivo ser gravado pela
+        # publicar_monitoramento: avalia o alerta falha_carga na hora, sem esperar o agendamento
+        # das 7h (que continua como rede de segurança). Sem subscribers aqui, avisa quem já está
+        # inscrito no alerta (usuario_alerta e, em prod, o destino do suporte).
         - task_key: avisar_falha
           depends_on:
+            - task_key: ingerir_fontes_externas
+            - task_key: preparar_governanca
+            - task_key: processar_medalhao
             - task_key: publicar_monitoramento
           run_if: AT_LEAST_ONE_FAILED
           max_retries: 0

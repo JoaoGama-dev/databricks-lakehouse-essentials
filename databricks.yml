@@ -40,6 +40,12 @@ variables:
     description: SQL warehouse que executa as consultas do painel AI/BI (localizado pelo nome)
     lookup:
       warehouse: Serverless Starter Warehouse
+  warehouse_dedicado:
+    # O faturamento do warehouse não traz a tag projeto: o custo dele só pode ser atribuído ao
+    # projeto quando ninguém mais o usa. No Free Edition ele é compartilhado (false); no
+    # cliente, o recomendado é um warehouse só do projeto e true.
+    description: '"true" quando o warehouse_id é só deste projeto: o custo dele entra nas views de custo'
+    default: "false"
   alert_email:
     # Não versione o e-mail real: passe-o no deploy com --var="alert_email=..." ou com a
     # variável de ambiente BUNDLE_VAR_alert_email.

@@ -5,8 +5,9 @@ Roda depois do pipeline com qualquer resultado (run_if: ALL_DONE) e nunca é ten
 
   views da gold        src/views/gold_vw_*.sql, com a máscara nas colunas sensíveis
   tags pii             colunas sensíveis da silver e da gold (sensivel: true do fontes.yml)
-  views mon_*          qualidade, atualização, volume e estrutura, sobre o event log; custo e
-                       execuções, se houver acesso às tabelas de sistema (senão, só um aviso)
+  views mon_*          qualidade, atualização, volume e estrutura, sobre o event log; custo
+                       (diário, mensal e por carga) e execuções, se houver acesso às tabelas de
+                       sistema (senão, só um aviso)
   tags camada e tipo   copiadas das TBLPROPERTIES de cada tabela e view publicada
   falhas               o motivo de cada tarefa que falhou, por motivo_seguro (LGPD)
   log da carga         mon_log_execucao: job, tarefas e cada tabela que o pipeline gravou
@@ -33,9 +34,14 @@ def argumentos() -> argparse.Namespace:
     parser.add_argument("--schema-silver", required=True, help="também guarda a função de máscara")
     parser.add_argument("--schema-gold", required=True)
     parser.add_argument("--schema-monitoramento", required=True, help="event log, log da carga e views mon_*")
-    parser.add_argument("--job-id", required=True, help="ID do job ({{job.id}}), para as views de custo")
+    parser.add_argument("--job-id", required=True, help="ID do job ({{job.id}}), para a view mon_execucoes")
     parser.add_argument("--run-id", required=True, help="execução do job ({{job.run_id}})")
-    parser.add_argument("--pipeline-id", required=True, help="ID do pipeline, para a view de custo")
+    parser.add_argument("--projeto", required=True, help="variável projeto: a tag que atribui o custo")
+    parser.add_argument("--ambiente", required=True, help="target do bundle (dev, ci, prod)")
+    parser.add_argument("--warehouse-id", required=True, help="SQL warehouse do projeto (variável warehouse_id)")
+    parser.add_argument(
+        "--warehouse-dedicado", required=True, help="true: o custo do warehouse entra nas views de custo"
+    )
     parser.add_argument("--limite-atraso-horas", type=int, default=26, help="limite da view mon_atualizacao")
     parser.add_argument("--limite-queda-volume-pct", type=int, default=50, help="limite da view mon_volume")
     parser.add_argument("--teto-custo-mensal", type=float, default=0, help="teto da view mon_custo_mensal")
@@ -130,13 +136,22 @@ def criar_views_de_sistema(spark, args, log) -> None:
     """Custo e execuções dependem de acesso às tabelas de sistema: sem ele, só um aviso."""
     from pyspark.errors import PySparkException
 
-    from essentials.monitoramento_sql import sql_custo_diario, sql_custo_mensal, sql_execucoes
+    from essentials.monitoramento_sql import (
+        booleano_da_variavel,
+        sql_custo_diario,
+        sql_custo_mensal,
+        sql_custo_por_carga,
+        sql_execucoes,
+    )
 
     catalogo, monitoramento = args.catalogo, args.schema_monitoramento
+    # Valor inválido em warehouse_dedicado é erro da etapa (ValueError), não um false silencioso.
+    atribuicao = (args.projeto, args.ambiente, booleano_da_variavel(args.warehouse_dedicado), args.warehouse_id)
     for nome, comandos in (
-        ("mon_custo_diario e mon_custo_mensal", [
-            sql_custo_diario(catalogo, monitoramento, args.job_id, args.pipeline_id),
+        ("mon_custo_diario, mon_custo_mensal e mon_custo_por_carga", [
+            sql_custo_diario(catalogo, monitoramento, *atribuicao),
             sql_custo_mensal(catalogo, monitoramento, args.teto_custo_mensal),
+            sql_custo_por_carga(catalogo, monitoramento, *atribuicao),
         ]),
         ("mon_execucoes", [sql_execucoes(catalogo, monitoramento, args.job_id)]),
     ):
@@ -329,8 +344,14 @@ def main() -> None:
     encerramento = decidir_encerramento(falhas, etapas_com_erro)
     if encerramento:
         log.error(encerramento)
+    # Só termina com erro se uma etapa desta tarefa falhou. A falha de outra tarefa é avisada
+    # pela avisar_falha e deixa o job vermelho pela encerrar_com_falha: sair com erro aqui só
+    # faria o serverless repetir a tarefa inteira (as novas tentativas automáticas não respeitam
+    # max_retries: 0, que o bundle omite por ser zero).
+    if etapas_com_erro:
         sys.exit(encerramento)
-    log.info("Monitoramento publicado; a carga terminou sem falhas.")
+    if not encerramento:
+        log.info("Monitoramento publicado; a carga terminou sem falhas.")
 
 
 if __name__ == "__main__":
