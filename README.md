@@ -144,9 +144,8 @@ aplica a máscara de novo) e a tag `pii` no Unity Catalog, e o negócio só lê 
 Este repositório é o pacote **Essentials** completo; o que falta para fechá-lo está no
 [plano](docs/plano-padrao-senior.md), com a tabela de cobertura do pacote:
 
-- Base de produção (Fase 7): regra que para a carga, chave conferida sozinha, alerta de
-  volume, detecção de mudança na origem, aviso de falha com o motivo, taxa de sucesso,
-  teto de custo e leitura de planilhas Excel.
+- Feito: base de produção (Fase 7), testes por risco, exemplo medalhão enxuto, log de
+  execução, aviso de falha na hora e custo do projeto no painel de saúde.
 - Ambientes e esteira do cliente (Fase 8): `dev` e `prod` no workspace do cliente e
   deploy de produção no merge da `main`, com aprovação.
 - A fábrica (Fase 9): gerar o projeto de um cliente novo com `databricks bundle init`.
