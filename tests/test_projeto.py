@@ -685,9 +685,10 @@ def test_existe_view_da_gold_para_o_painel():
     assert "gold_vw_entrevistas.sql" in [arquivo.name for arquivo in arquivos_views()]
 
 
-def test_view_repassa_as_colunas_sensiveis_da_fato_sem_transformar():
-    # A máscara (MASK) vale na fato: a view só a preserva se ler a coluna como está, da fato.
-    # Uma expressão (hash, concat, coalesce...) ou a leitura da silver entregaria o dado sem máscara.
+def test_view_aplica_a_mascara_em_toda_coluna_sensivel():
+    # LGPD: a view é o que o painel lê. Cada coluna sensível passa pela função de máscara na
+    # própria view (avaliada para quem consulta), sobre a coluna da fato, que também tem MASK.
+    # Ler a silver ou expor a coluna sem a função entregaria o dado sem máscara.
     from essentials.config_fontes import carregar_fontes, colunas_sensiveis
 
     sensiveis = {c for f in carregar_fontes(RAIZ / "config" / "fontes.yml") for c in colunas_sensiveis(f)}
@@ -697,9 +698,11 @@ def test_view_repassa_as_colunas_sensiveis_da_fato_sem_transformar():
     na_view = sensiveis & colunas_gold
     assert na_view, "a view deveria expor as colunas sensíveis só pela fato"
     for coluna in na_view:
-        assert re.search(rf"^\s*f\.{coluna},$", corpo, re.MULTILINE), coluna
+        mascara = rf"^\s*\$\{{catalogo\}}\.\$\{{schema_silver\}}\.mascarar_dado_pessoal\(f\.{coluna}\) AS {coluna},$"
+        assert re.search(mascara, corpo, re.MULTILINE), coluna
     assert re.findall(r"\bFROM\s+(\S+)", corpo) == ["${catalogo}.${schema_gold}.gold_fato_entrevista"]
-    assert "JOIN" not in corpo.upper() and "silver" not in corpo.lower()
+    # Só lê a fato: nenhum JOIN com a silver, onde o dado pessoal não tem máscara.
+    assert "JOIN" not in corpo.upper()
 
 
 @pytest.mark.parametrize("arquivo", arquivos_views(), ids=lambda a: a.name)

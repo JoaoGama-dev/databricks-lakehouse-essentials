@@ -122,7 +122,7 @@ def main() -> None:
         return
 
     fontes = carregar_fontes(args.config)
-    views_gold = sqls_views_gold(args.codigo, catalogo, args.schema_gold)
+    views_gold = sqls_views_gold(args.codigo, catalogo, args.schema_gold, args.schema_silver)
     for comando in views_gold:
         spark.sql(comando)
     print(f"{len(views_gold)} view(s) da gold criada(s).")

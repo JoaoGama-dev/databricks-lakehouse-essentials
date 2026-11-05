@@ -130,8 +130,9 @@ def arquivos_views_gold(codigo: str | Path) -> list[Path]:
     return sorted((Path(codigo) / PASTA_VIEWS).glob(PADRAO_VIEW_GOLD))
 
 
-def sqls_views_gold(codigo: str | Path, catalogo: str, schema_gold: str) -> list[str]:
-    """Comandos das views da gold, com o catálogo e o schema gold do target.
+def sqls_views_gold(codigo: str | Path, catalogo: str, schema_gold: str, schema_silver: str) -> list[str]:
+    """Comandos das views da gold, com o catálogo e os schemas gold e silver (onde fica a
+    função de máscara) do target.
 
     Tira as linhas de comentário e separa os comandos pelo ";" no fim da linha (pode haver
     ";" dentro de um COMMENT).
@@ -141,6 +142,7 @@ def sqls_views_gold(codigo: str | Path, catalogo: str, schema_gold: str) -> list
         texto = "\n".join(
             linha for linha in arquivo.read_text(encoding="utf-8").splitlines() if not linha.lstrip().startswith("--")
         )
-        texto = texto.replace("${catalogo}", f"`{catalogo}`").replace("${schema_gold}", f"`{schema_gold}`")
+        for marcador, valor in (("catalogo", catalogo), ("schema_gold", schema_gold), ("schema_silver", schema_silver)):
+            texto = texto.replace(f"${{{marcador}}}", f"`{valor}`")
         comandos += [comando.strip() for comando in re.split(r";[ \t]*(?:\n|$)", texto) if comando.strip()]
     return comandos

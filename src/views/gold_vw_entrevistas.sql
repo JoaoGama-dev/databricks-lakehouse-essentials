@@ -2,8 +2,10 @@
 -- de hoje (que não podem ficar na materialized view sem impedir a atualização incremental).
 -- Criada pela tarefa governanca_depois, depois do pipeline: a view de pipeline (CREATE VIEW)
 -- não aplica o COMMENT de cada coluna, e o dicionário de dados exige descrição em todas.
--- ${catalogo} e ${schema_gold} são trocados pelo catálogo e pelo schema gold do target.
--- As colunas com dado pessoal chegam já mascaradas pela fato (MASK).
+-- ${catalogo}, ${schema_gold} e ${schema_silver} são trocados pelos nomes do target.
+-- As colunas com dado pessoal já têm MASK na fato e a view aplica a mesma função de novo
+-- (padrão de dynamic view): assim a máscara vale para quem consulta a view, sem depender de
+-- como o MASK da tabela é avaliado quando a leitura passa por uma view.
 CREATE OR REPLACE VIEW ${catalogo}.${schema_gold}.gold_vw_entrevistas (
   dt_entrevista COMMENT 'Data da entrevista.',
   dt_mes_entrevista COMMENT 'Primeiro dia do mês da entrevista, para agrupar por mês.',
@@ -24,12 +26,12 @@ AS SELECT
   f.dt_entrevista,
   f.dt_mes_entrevista,
   f.hr_entrevista,
-  f.nm_candidato,
+  ${catalogo}.${schema_silver}.mascarar_dado_pessoal(f.nm_candidato) AS nm_candidato,
   f.nm_vaga,
   f.nm_area,
   f.st_entrevista,
   f.st_situacao,
-  f.nr_telefone,
+  ${catalogo}.${schema_silver}.mascarar_dado_pessoal(f.nr_telefone) AS nr_telefone,
   f.fl_compareceu,
   f.fl_aprovado,
   -- A entrevista já passou e ninguém registrou o resultado.

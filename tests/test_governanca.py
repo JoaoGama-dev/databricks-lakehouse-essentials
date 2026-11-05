@@ -207,11 +207,13 @@ def test_governanca_aplica_as_tags_depois_das_views_nos_quatro_schemas():
 
 
 def test_views_da_gold_saem_do_arquivo_com_o_schema_do_target():
-    comandos = sqls_views_gold(RAIZ / "src", "essentials", "dev_x_portfolio_gold")
+    comandos = sqls_views_gold(RAIZ / "src", "essentials", "dev_x_portfolio_gold", "dev_x_portfolio_silver")
     assert comandos
     view = next(c for c in comandos if "gold_vw_entrevistas" in c)
     assert view.startswith("CREATE OR REPLACE VIEW `essentials`.`dev_x_portfolio_gold`.gold_vw_entrevistas (")
     assert "FROM `essentials`.`dev_x_portfolio_gold`.gold_fato_entrevista AS f" in view
+    # A função de máscara fica no schema silver do target: outro schema quebraria a view.
+    assert "`essentials`.`dev_x_portfolio_silver`.mascarar_dado_pessoal(f.nm_candidato)" in view
     # Sobrou marcador, comentário ou ";" no fim: o spark.sql recusaria ou leria o schema errado.
     assert all("${" not in c and "--" not in c and not c.endswith(";") for c in comandos)
 
