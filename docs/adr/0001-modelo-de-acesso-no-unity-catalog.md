@@ -1,6 +1,7 @@
 # 0001. Modelo de acesso no Unity Catalog
 
-- **Status:** aceita
+- **Status:** aceita, substituída em parte por [0018](0018-schemas-por-camada.md) (os dois
+  schemas viraram um por camada; o resto continua valendo)
 - **Data:** 2026-11-03
 
 ## Contexto

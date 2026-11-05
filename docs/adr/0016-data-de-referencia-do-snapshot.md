@@ -1,6 +1,8 @@
 # 0016. Data de referência do snapshot
 
-- **Status:** aceita
+- **Status:** aceita, complementada por [0019](0019-silver-unica-scd2-com-retrato-privado.md)
+  (o desempate passa a ser data de referência, `_ingerido_em`, `_modificado_em` e nome do
+  arquivo)
 - **Data:** 2026-11-04
 
 ## Contexto

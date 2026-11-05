@@ -6,13 +6,14 @@ description: Use quando eu pedir para adaptar o projeto a um novo cliente a part
 # Começar um novo projeto do pacote Essentials
 
 O objetivo é montar o projeto do cliente seguindo a estrutura do pacote (catálogo
-`essentials`, um schema por projeto, bundle `essentials_<projeto>`) e propor fontes,
+`essentials`, um schema por camada, bundle `essentials_<projeto>`) e propor fontes,
 regras e indicadores **antes de alterar qualquer arquivo**. Regras de LGPD em
 `docs/padroes/lgpd.md`.
 
-1. **Definir o nome do projeto** em snake_case (ex.: `clinica_vida`). Ele vira o schema
-   `essentials.<projeto>`, o bundle `essentials_<projeto>` e o repositório
-   `essentials-<projeto>`.
+1. **Definir o nome do projeto** em snake_case (ex.: `clinica_vida`). Ele vira os schemas
+   `essentials.<projeto>_bronze`, `_silver`, `_gold` e `_monitoramento`, o bundle
+   `essentials_<projeto>`, o job `<projeto>_job_carga_diaria`, o pipeline
+   `<projeto>_pipeline_medalhao` e o repositório `essentials-<projeto>`.
 
 2. **Levantar as fontes pelo perfil, nunca pelo conteúdo.**
    - Arquivos do cliente: ficam em `data/privado/` (ignorado pelo Git e bloqueado pelos
@@ -33,8 +34,11 @@ regras e indicadores **antes de alterar qualquer arquivo**. Regras de LGPD em
    - **regras de qualidade** por fonte, cada uma com `drop` ou `alerta` e o motivo (em
      snapshot e cdc, `nao_nulo` com `drop` em cada coluna da chave);
    - **dados pessoais**: toda coluna que o perfil marcou como sensível, com `mascarar`;
-   - **modelo da gold** em estrela: `gold_dim_*`, `gold_fato_*` e `gold_agg_*`, com 3 a 6
-     indicadores que respondem às perguntas do negócio e as junções entre fontes;
+   - **modelo da gold** em estrela: `gold_fato_*` e, quando houver cadastro de apoio,
+     `gold_dim_*`, mais a view `gold_vw_*` que o painel lê (com a máscara nas colunas
+     sensíveis e o que depende de hoje). Agregações ficam no painel, não numa `gold_agg_*`,
+     salvo decisão registrada. 3 a 6 indicadores que respondem às perguntas do negócio e as
+     junções entre fontes (sem função não determinística na materialized view);
    - **riscos**: dados insuficientes, chaves que não batem entre fontes, fontes que
      exigem acesso externo (banco e api só funcionam no Azure).
 
@@ -43,13 +47,14 @@ regras e indicadores **antes de alterar qualquer arquivo**. Regras de LGPD em
 4. **Aplicar, depois do OK:**
    - no `databricks.yml`, `bundle.name: essentials_<projeto>` e o `default` da variável
      `projeto`;
-   - em `setup/00_setup_free_edition.sql`, troque o nome do projeto anterior pelo novo e
-     inclua as tabelas de apoio em `essentials.<projeto>_origem`;
+   - o `setup/00_setup_free_edition.sql` não leva o nome do projeto (cria só o catálogo);
+     não há schema de origem a criar;
    - substitua `config/fontes.yml`;
    - crie os `src/pipeline/silver_<fonte>.sql` necessários e remova os do projeto anterior;
-   - substitua os `src/pipeline/gold_*.sql` (skill `novo-indicador`);
+   - substitua os `src/pipeline/gold_*.sql` e as views `src/views/gold_vw_*.sql` (skill
+     `novo-indicador`);
    - atualize as `libraries` de `resources/pipeline.yml`;
-   - ajuste os testes que citam fontes ou colunas pelo nome (`agenda`, `cargos`,
+   - ajuste os testes que citam fontes ou colunas pelo nome (`agenda`,
      `dt_entrevista`...) em `tests/test_projeto.py`;
    - atualize `README.md` (nome do projeto e exemplo), `docs/arquitetura.md` (fontes,
      tabelas e regras), `CLAUDE.md` e `docs/roteiro-de-operacao.md`.

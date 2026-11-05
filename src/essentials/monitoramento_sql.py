@@ -4,6 +4,9 @@ Funções puras, sem Spark, para serem testadas pelo pytest. Quem executa é
 src/governanca/governanca.py, na tarefa governanca_depois do job, depois do pipeline:
 o event log (mon_log_eventos) só existe depois da primeira atualização do pipeline.
 
+As views, o event log e a tabela mon_falhas ficam no schema de monitoramento
+(<projeto>_monitoramento); as views leem a bronze e a silver nos schemas de cada camada.
+
   mon_qualidade_diaria  por dia, tabela e regra: linhas aprovadas, descartadas e alertas
   mon_atualizacao       última atualização do pipeline e última ingestão de cada silver
   mon_custo_diario      DBUs e custo de lista do job e do pipeline, por dia e produto
@@ -13,7 +16,14 @@ from __future__ import annotations
 
 import re
 
-from essentials.config_fontes import COLUNAS_CDF, literal_sql, regras_efetivas, tabelas_da_fonte
+from essentials.config_fontes import (
+    COLUNAS_CDF,
+    COLUNAS_TECNICAS,
+    filtro_versao_atual,
+    literal_sql,
+    regras_efetivas,
+    tabelas_da_fonte,
+)
 from essentials.governanca_sql import nome_completo
 
 EVENT_LOG = "mon_log_eventos"
@@ -122,10 +132,10 @@ COLUNAS_ATUALIZACAO = {
 }
 
 
-def sql_atualizacao(catalogo: str, schema: str, fontes: list[dict], limite_horas: int) -> str:
+def sql_atualizacao(catalogo: str, schema: str, schema_silver: str, fontes: list[dict], limite_horas: int) -> str:
     ingestoes = "\n  UNION ALL\n  ".join(
         f"SELECT {literal_sql(tabelas_da_fonte(fonte)['silver'])} AS nm_tabela, max(_ingerido_em) AS dh_ultima_ingestao"
-        f" FROM {nome_completo(catalogo, schema, tabelas_da_fonte(fonte)['silver'])}"
+        f" FROM {nome_completo(catalogo, schema_silver, tabelas_da_fonte(fonte)['silver'])}"
         for fonte in fontes
     )
     log = nome_completo(catalogo, schema, EVENT_LOG)
@@ -269,7 +279,7 @@ def confere_colunas_da_bronze(fonte: dict) -> bool:
 def colunas_esperadas_na_bronze(fonte: dict) -> set[str]:
     """Colunas que a bronze pode ter: as origens do YAML e as técnicas do pipeline e do Delta."""
     origens = {configuracao["origem"] for configuracao in fonte["colunas"].values()}
-    return origens | {"_fonte", "_arquivo_origem", "_ingerido_em", "_rescued_data", *COLUNAS_CDF}
+    return origens | {*COLUNAS_TECNICAS, "_rescued_data", *COLUNAS_CDF}
 
 
 def colunas_novas_na_origem(fontes: list[dict], colunas_bronze: dict[str, list[str]]) -> list[tuple[str, str]]:
@@ -307,51 +317,68 @@ NOME_DO_ARQUIVO = "element_at(split(b._arquivo_origem, '/'), -1)"
 TEM_CARACTERE_INVALIDO = "NOT is_valid_utf8(b.value)"
 
 
-def arquivos_do_retrato(catalogo: str, schema: str, fonte: dict) -> str:
-    """Arquivos que estão no retrato (snapshot) ou, nos outros modos, os da última carga."""
+def arquivos_do_retrato(catalogo: str, schema_bronze: str, schema_silver: str, fonte: dict) -> str:
+    """Arquivos que estão no retrato (snapshot) ou, nos outros modos, os da última carga.
+
+    O retrato é privado do pipeline: os arquivos dele são os das versões vigentes da silver
+    (no SCD tipo 2, as colunas técnicas da versão vigente são atualizadas no lugar a cada
+    retrato; no SCD tipo 1, a silver é o próprio retrato).
+    """
     tabelas = tabelas_da_fonte(fonte)
     if fonte["modo_carga"] == "snapshot":
-        return f"SELECT DISTINCT _arquivo_origem FROM {nome_completo(catalogo, schema, tabelas['validada'])}"
-    bronze = nome_completo(catalogo, schema, tabelas["bronze"])
+        vigente = filtro_versao_atual(fonte)
+        filtro = f" WHERE {vigente}" if vigente else ""
+        return (
+            f"SELECT DISTINCT _arquivo_origem FROM {nome_completo(catalogo, schema_silver, tabelas['silver'])}{filtro}"
+        )
+    bronze = nome_completo(catalogo, schema_bronze, tabelas["bronze"])
     return (
         f"SELECT DISTINCT _arquivo_origem FROM {bronze} "
         f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {bronze})"
     )
 
 
-def sql_arquivo_ignorado(catalogo: str, schema: str, fonte: dict) -> str:
+def sql_arquivo_ignorado(catalogo: str, schema_bronze: str, schema_silver: str, fonte: dict) -> str:
     """Aviso quando o último arquivo recebido de um snapshot não virou o retrato.
 
     Ele perdeu para um arquivo com data de referência maior (data_referencia) ou não gerou
     nenhuma linha (ex.: só o cabeçalho).
     """
     bronze = tabelas_da_fonte(fonte)["bronze"]
-    tabela = nome_completo(catalogo, schema, bronze)
+    tabela = nome_completo(catalogo, schema_bronze, bronze)
+    retrato = arquivos_do_retrato(catalogo, schema_bronze, schema_silver, fonte)
     return (
         f"SELECT {literal_sql(bronze)} AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, "
         f"{NOME_DO_ARQUIVO} AS nm_coluna, CAST(NULL AS BIGINT) AS qt_linhas "
         f"FROM (SELECT DISTINCT _arquivo_origem FROM {tabela} "
         f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {tabela})) AS b "
-        f"LEFT ANTI JOIN ({arquivos_do_retrato(catalogo, schema, fonte)}) AS r ON b._arquivo_origem = r._arquivo_origem"
+        f"LEFT ANTI JOIN ({retrato}) AS r ON b._arquivo_origem = r._arquivo_origem"
     )
 
 
-def sql_codificacao_invalida(catalogo: str, schema: str, fonte: dict) -> str:
+def sql_codificacao_invalida(catalogo: str, schema_bronze: str, schema_silver: str, fonte: dict) -> str:
     """Aviso quando o arquivo que virou o retrato (formato texto) não é UTF-8 válido."""
     bronze = tabelas_da_fonte(fonte)["bronze"]
-    retrato = arquivos_do_retrato(catalogo, schema, fonte)
+    retrato = arquivos_do_retrato(catalogo, schema_bronze, schema_silver, fonte)
     return (
         f"SELECT DISTINCT {literal_sql(bronze)} AS nm_tabela, 'codificacao_invalida' AS ds_tipo, "
         f"{NOME_DO_ARQUIVO} AS nm_coluna, CAST(NULL AS BIGINT) AS qt_linhas "
-        f"FROM {nome_completo(catalogo, schema, bronze)} AS b "
+        f"FROM {nome_completo(catalogo, schema_bronze, bronze)} AS b "
         f"LEFT SEMI JOIN ({retrato}) AS r ON b._arquivo_origem = r._arquivo_origem "
         f"WHERE {TEM_CARACTERE_INVALIDO}"
     )
 
 
-def sql_estrutura(catalogo: str, schema: str, fontes: list[dict], colunas_bronze: dict[str, list[str]]) -> str:
+def sql_estrutura(
+    catalogo: str,
+    schema: str,
+    schema_bronze: str,
+    schema_silver: str,
+    fontes: list[dict],
+    colunas_bronze: dict[str, list[str]],
+) -> str:
     """Mudanças na origem: colunas novas, linhas com _rescued_data, arquivo ignorado e
-    codificação inválida.
+    codificação inválida. A view fica em schema (monitoramento).
 
     colunas_bronze: {tabela: [colunas]} da bronze, lido do information_schema quando a view é
     criada (a cada carga). Cada linha da view é um aviso; vazia, está tudo como esperado.
@@ -365,7 +392,7 @@ def sql_estrutura(catalogo: str, schema: str, fontes: list[dict], colunas_bronze
         bronze = tabelas_da_fonte(fonte)["bronze"]
         colunas = colunas_bronze.get(bronze, [])
         if "_rescued_data" in colunas:
-            tabela = nome_completo(catalogo, schema, bronze)
+            tabela = nome_completo(catalogo, schema_bronze, bronze)
             partes.append(
                 f"SELECT {literal_sql(bronze)} AS nm_tabela, 'dado_resgatado' AS ds_tipo, "
                 f"CAST(NULL AS STRING) AS nm_coluna, count(*) AS qt_linhas FROM {tabela} "
@@ -375,9 +402,9 @@ def sql_estrutura(catalogo: str, schema: str, fontes: list[dict], colunas_bronze
         if "_arquivo_origem" not in colunas:
             continue
         if fonte["modo_carga"] == "snapshot":
-            partes.append(sql_arquivo_ignorado(catalogo, schema, fonte))
+            partes.append(sql_arquivo_ignorado(catalogo, schema_bronze, schema_silver, fonte))
         if fonte.get("arquivo", {}).get("formato") == "texto" and "value" in colunas:
-            partes.append(sql_codificacao_invalida(catalogo, schema, fonte))
+            partes.append(sql_codificacao_invalida(catalogo, schema_bronze, schema_silver, fonte))
     return definicao_view(
         catalogo,
         schema,

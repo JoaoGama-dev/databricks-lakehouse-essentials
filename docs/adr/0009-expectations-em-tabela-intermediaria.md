@@ -1,6 +1,8 @@
 # 0009. Expectations em tabela intermediária, nunca na view do AUTO CDC
 
-- **Status:** aceita
+- **Status:** aceita, atualizada por [0019](0019-silver-unica-scd2-com-retrato-privado.md)
+  (o retrato do snapshot é uma materialized view privada do pipeline; as regras continuam
+  nele)
 - **Data:** 2026-10-30 (registrada em 2026-11-03)
 
 ## Contexto

@@ -1,22 +1,24 @@
 """Silver genérica: limpeza padrão e regras de qualidade de cada fonte do config/fontes.yml.
 
 Para cada fonte:
-  1. lê a bronze, ou a view silver_int_<nome>_preparada quando há src/pipeline/silver_<nome>.sql;
+  1. lê a bronze (schema_bronze), ou a view silver_int_<nome>_preparada quando há
+     src/pipeline/silver_<nome>.sql;
   2. aplica a limpeza padrão (TRIM, tipos, datas em mais de um formato, de-para, máscara)
      e dá às colunas os nomes padronizados do YAML (dt_, nm_, st_...);
   3. aplica as regras do YAML como expectations (drop descarta, alerta só conta, falhar
      para a carga), mais as regras padrão da chave (regras_efetivas);
   4. grava conforme o modo de carga:
        incremental -> streaming table silver_<nome>, com as regras, só acrescenta
-       snapshot    -> materialized view silver_int_<nome>_retrato, com as regras, e
-                      AUTO CDC FROM SNAPSHOT para silver_<nome> (estado atual) e, se
-                      historico: true, silver_<nome>_historico (SCD tipo 2)
+       snapshot    -> materialized view privada silver_int_<nome>_retrato (não publicada
+                      no catálogo), com as regras, e AUTO CDC FROM SNAPSHOT para
+                      silver_<nome>: SCD tipo 2 com historico: true, senão SCD tipo 1
        cdc         -> streaming table silver_int_<nome>_mudancas, com as regras, e
-                      AUTO CDC para os mesmos dois alvos
+                      AUTO CDC para o mesmo alvo
   5. regras "unico" viram a materialized view silver_int_<nome>_unico_<colunas>.
 
-Toda tabela da silver é criada com o schema do contrato (colunas declaradas no YAML e
-técnicas, na ordem), com COMMENT em cada coluna: é o dicionário de dados no Unity Catalog.
+A silver fica no schema padrão do pipeline (schema_silver). Toda tabela da silver é criada
+com o schema do contrato (colunas declaradas no YAML e técnicas, na ordem), com COMMENT em
+cada coluna: é o dicionário de dados no Unity Catalog.
 
 As regras ficam numa tabela intermediária, e não numa view, porque o AUTO CDC FROM
 SNAPSHOT lê a origem como um retrato e não aplica nem registra expectations de views.
@@ -36,6 +38,7 @@ sys.path.append(spark.conf.get("diretorio_codigo"))
 # O pacote essentials só fica importável depois do sys.path.append acima, que aponta
 # para a pasta src/ do bundle no workspace; por isso o import não está no topo.
 from essentials.config_fontes import (  # noqa: E402
+    ORDEM_DO_RETRATO,
     carregar_fontes,
     colunas_extras_cdc,
     colunas_silver,
@@ -43,14 +46,20 @@ from essentials.config_fontes import (  # noqa: E402
     expectations,
     expressao_data_referencia,
     expressoes_silver,
+    filtro_versao_atual,
     literal_sql,
     propriedades_tabela,
     regras_unico,
     schema_silver,
     tabelas_da_fonte,
+    tem_historico,
+    tipo_da_silver,
     tipo_sql,
+    validada_publicada,
 )
 
+CATALOGO = spark.conf.get("catalogo")
+SCHEMA_BRONZE = spark.conf.get("schema_bronze")
 FONTES = carregar_fontes(spark.conf.get("fontes_config"))
 
 
@@ -74,16 +83,19 @@ def manter_ultimo_arquivo(df: DataFrame, fonte: dict) -> DataFrame:
 
     Mais recente pela data de referência do fontes.yml (data_referencia), calculada por
     arquivo sobre as colunas já padronizadas; nulos por último. Empate, ou fonte sem
-    data_referencia, fica com o último ingerido. Arquivo que não gerou linha nenhuma
-    não entra na disputa (mon_estrutura avisa: arquivo_ignorado).
+    data_referencia, desempata por ORDEM_DO_RETRATO: último ingerido, arquivo modificado
+    por último e, por fim, o nome do arquivo (vários arquivos no mesmo micro-batch têm o
+    mesmo _ingerido_em). Arquivo que não gerou linha nenhuma não entra na disputa
+    (mon_estrutura avisa: arquivo_ignorado).
     """
     if "_arquivo_origem" not in df.columns:
         return df
     referencia = expressao_data_referencia(fonte)
-    arquivos = df.select("_arquivo_origem", "_ingerido_em").distinct()
-    ordem = [F.desc("_ingerido_em"), F.desc("_arquivo_origem")]
+    por_arquivo = list(ORDEM_DO_RETRATO)
+    arquivos = df.select(*por_arquivo).distinct()
+    ordem = [F.desc(coluna) for coluna in por_arquivo]
     if referencia:
-        arquivos = df.groupBy("_arquivo_origem", "_ingerido_em").agg(F.expr(referencia).alias("_data_referencia"))
+        arquivos = df.groupBy(*por_arquivo).agg(F.expr(referencia).alias("_data_referencia"))
         ordem.insert(0, F.col("_data_referencia").desc_nulls_last())
     ultimo = arquivos.orderBy(*ordem).limit(1)
     return df.join(ultimo.select("_arquivo_origem"), "_arquivo_origem", "left_semi")
@@ -105,50 +117,53 @@ def manter_versao_mais_recente(df: DataFrame, fonte: dict) -> DataFrame:
     )
 
 
-def criar_alvos_auto_cdc(fonte: dict) -> None:
+def criar_alvo_auto_cdc(fonte: dict) -> None:
+    """Um só alvo, a silver_<nome>: SCD tipo 2 com historico: true, senão SCD tipo 1."""
     tabelas = tabelas_da_fonte(fonte)
-    alvos = [(tabelas["silver"], 1, "atual", "estado atual de cada registro")]
-    if tabelas["historico"]:
-        alvos.append(
-            (tabelas["historico"], 2, "historico", "histórico de versões (SCD tipo 2, colunas __START_AT e __END_AT)")
-        )
+    nome = tabelas["silver"]
+    tipo_scd = 2 if tem_historico(fonte) else 1
+    if tipo_scd == 2:
+        descricao = "histórico de versões (SCD tipo 2; a versão vigente tem __END_AT vazio)"
+    else:
+        descricao = "estado atual de cada registro"
     # No snapshot, a vigência é o momento da carga; no cdc, o tipo da coluna de sequência.
     inicio_scd2 = "TIMESTAMP" if fonte["modo_carga"] == "snapshot" else tipo_sql(fonte, fonte["coluna_atualizacao"])
 
-    for nome, tipo_scd, tipo_tabela, descricao in alvos:
-        dp.create_streaming_table(
-            name=nome,
-            comment=f"Silver de {fonte['nome']}, {descricao}: {fonte['descricao']}",
-            # No histórico (SCD 2), propriedades_tabela também bloqueia o reset do full refresh.
-            table_properties=propriedades_tabela("silver", tipo_tabela, fonte),
-            schema=schema_silver(fonte, inicio_scd2 if tipo_scd == 2 else None),
+    dp.create_streaming_table(
+        name=nome,
+        comment=f"Silver de {fonte['nome']}, {descricao}: {fonte['descricao']}",
+        # Na SCD 2 (tipo historico), propriedades_tabela também bloqueia o reset do full refresh.
+        table_properties=propriedades_tabela("silver", tipo_da_silver(fonte), fonte),
+        schema=schema_silver(fonte, inicio_scd2 if tipo_scd == 2 else None),
+    )
+    # As colunas técnicas mudam a cada carga e não devem gerar nova versão no histórico: na
+    # versão vigente, são atualizadas no lugar.
+    ignorar_no_historico = [c for c in colunas_silver(fonte) if c.startswith("_")] if tipo_scd == 2 else None
+    if fonte["modo_carga"] == "snapshot":
+        dp.create_auto_cdc_from_snapshot_flow(
+            target=nome,
+            source=tabelas["validada"],
+            keys=fonte["chave_primaria"],
+            stored_as_scd_type=tipo_scd,
+            track_history_except_column_list=ignorar_no_historico,
         )
-        # As colunas técnicas mudam a cada carga e não devem gerar nova versão no histórico.
-        ignorar_no_historico = [c for c in colunas_silver(fonte) if c.startswith("_")] if tipo_scd == 2 else None
-        if fonte["modo_carga"] == "snapshot":
-            dp.create_auto_cdc_from_snapshot_flow(
-                target=nome,
-                source=tabelas["validada"],
-                keys=fonte["chave_primaria"],
-                stored_as_scd_type=tipo_scd,
-                track_history_except_column_list=ignorar_no_historico,
-            )
-        else:
-            cdc = fonte["cdc"]
-            dp.create_auto_cdc_flow(
-                target=nome,
-                source=tabelas["validada"],
-                keys=fonte["chave_primaria"],
-                sequence_by=F.col(fonte["coluna_atualizacao"]),
-                apply_as_deletes=F.expr(f"`{cdc['coluna_operacao']}` = {literal_sql(cdc['valor_exclusao'])}"),
-                except_column_list=colunas_extras_cdc(fonte),
-                stored_as_scd_type=tipo_scd,
-                track_history_except_column_list=ignorar_no_historico,
-            )
+    else:
+        cdc = fonte["cdc"]
+        dp.create_auto_cdc_flow(
+            target=nome,
+            source=tabelas["validada"],
+            keys=fonte["chave_primaria"],
+            sequence_by=F.col(fonte["coluna_atualizacao"]),
+            apply_as_deletes=F.expr(f"`{cdc['coluna_operacao']}` = {literal_sql(cdc['valor_exclusao'])}"),
+            except_column_list=colunas_extras_cdc(fonte),
+            stored_as_scd_type=tipo_scd,
+            track_history_except_column_list=ignorar_no_historico,
+        )
 
 
 def criar_checagem_unicidade(fonte: dict, regra: dict, nome: str) -> None:
     silver = tabelas_da_fonte(fonte)["silver"]
+    vigente = filtro_versao_atual(fonte)
     schema = ", ".join(
         [
             f"`{coluna}` {tipo_sql(fonte, coluna)} COMMENT {literal_sql(descricao_coluna(fonte, coluna))}"
@@ -158,7 +173,11 @@ def criar_checagem_unicidade(fonte: dict, regra: dict, nome: str) -> None:
     )
 
     def contagem_por_chave() -> DataFrame:
-        return spark.read.table(silver).groupBy(*regra["colunas"]).agg(F.count("*").alias("qt_registros"))
+        df = spark.read.table(silver)
+        # Na SCD 2, cada registro tem várias versões: conta só a vigente.
+        if vigente:
+            df = df.where(vigente)
+        return df.groupBy(*regra["colunas"]).agg(F.count("*").alias("qt_registros"))
 
     dp.materialized_view(
         name=nome,
@@ -171,7 +190,8 @@ def criar_checagem_unicidade(fonte: dict, regra: dict, nome: str) -> None:
 
 def criar_silver(fonte: dict) -> None:
     tabelas = tabelas_da_fonte(fonte)
-    origem = tabelas["preparada"] or tabelas["bronze"]
+    # A bronze fica no schema da bronze; a view preparada é temporária, só do pipeline.
+    origem = tabelas["preparada"] or f"{CATALOGO}.{SCHEMA_BRONZE}.{tabelas['bronze']}"
     modo = fonte["modo_carga"]
     contrato = colunas_silver(fonte)
 
@@ -194,14 +214,17 @@ def criar_silver(fonte: dict) -> None:
             df = manter_ultimo_arquivo(limpar(spark.read.table(origem), fonte), fonte)
             return manter_versao_mais_recente(df, fonte).select(*contrato)
 
+        # Privada: o retrato só existe dentro do pipeline (não aparece no catálogo); as
+        # expectations continuam nele, porque o AUTO CDC FROM SNAPSHOT as ignoraria numa view.
         dp.materialized_view(
             name=tabelas["validada"],
             comment=f"Último retrato de {fonte['nome']}, limpo e com as regras de qualidade aplicadas; "
             f"alimenta o AUTO CDC de {tabelas['silver']}.",
             table_properties=propriedades_tabela("silver", "intermediaria", fonte),
             schema=schema_silver(fonte),
+            private=not validada_publicada(fonte),
         )(com_expectations(retrato_validado, fonte))
-        criar_alvos_auto_cdc(fonte)
+        criar_alvo_auto_cdc(fonte)
 
     else:
 
@@ -219,7 +242,7 @@ def criar_silver(fonte: dict) -> None:
             f"alimentam o AUTO CDC de {tabelas['silver']}.",
             table_properties=propriedades_tabela("silver", "intermediaria", fonte),
         )(com_expectations(mudancas_validadas, fonte))
-        criar_alvos_auto_cdc(fonte)
+        criar_alvo_auto_cdc(fonte)
 
     for regra, nome in zip(regras_unico(fonte), tabelas["unicidade"], strict=True):
         criar_checagem_unicidade(fonte, regra, nome)

@@ -1,7 +1,8 @@
 name: Integração
 
 # Teste de ponta a ponta no Free Edition com os dados fictícios (docs/adr/0005): implanta
-# o target ci (schemas dev_<usuário>_<projeto>_ci*, separados do dev), carrega a agenda v1
+# o target ci (schemas dev_<usuário>_<projeto>_ci_bronze, _ci_silver, _ci_gold e
+# _ci_monitoramento, separados do dev), carrega a agenda v1
 # e a v2, confere os dados e apaga tudo no fim, mesmo quando algo falha.
 # Nunca roda em pull request: não há gatilho de PR, então código de fork não chega ao
 # token do workspace.
@@ -10,7 +11,7 @@ on:
     inputs:
       cenarios_de_falha:
         # Por enquanto só à mão: são mais sete cargas (docs/adr/0014 e 0015).
-        description: Rodar também os cenários de risco (reenvio, atrasado, só cabeçalho, full refresh, cp1252) e de falha (v3 queda de volume e coluna nova; v4 regra que para a carga)
+        description: Rodar também os cenários de risco (reenvio, atrasado, só cabeçalho, full refresh, cp1252) e de falha (v3 queda de volume; v4 regra que para a carga)
         type: boolean
         default: false
   schedule:
@@ -65,7 +66,7 @@ jobs:
       - name: Guardar os nomes dos recursos do ci
         run: databricks bundle summary -t ci -o json > "$INTEGRACAO_RECURSOS"
 
-      - name: Preparar origem simulada e landing vazia
+      - name: Preparar a landing vazia
         run: python scripts/integracao.py preparar
 
       # A gold usa a função de máscara: ela precisa existir antes de validar o grafo.
@@ -126,10 +127,10 @@ jobs:
         if: inputs.cenarios_de_falha
         run: INTEGRACAO_CENARIO=so_cabecalho pytest -m integracao tests/integracao/test_cenarios.py -v
 
-      # A bronze e o histórico têm pipelines.reset.allowed = false. O Databricks recusa o full
-      # refresh do grafo inteiro antes de apagar qualquer coisa: o histórico depende do retrato,
+      # A bronze e a silver SCD2 têm pipelines.reset.allowed = false. O Databricks recusa o full
+      # refresh do grafo inteiro antes de apagar qualquer coisa: a silver depende do retrato,
       # que seria recriado, e o streaming não aceita dado apagado na origem.
-      - name: "Cenário full refresh: recusado sem apagar a bronze nem o histórico"
+      - name: "Cenário full refresh: recusado sem apagar a bronze nem o histórico da silver"
         if: inputs.cenarios_de_falha
         run: |
           if databricks bundle run essentials_pipeline -t ci --full-refresh-all; then
@@ -152,11 +153,10 @@ jobs:
         if: inputs.cenarios_de_falha
         run: INTEGRACAO_CENARIO=cp1252 pytest -m integracao tests/integracao/test_cenarios.py -v
 
-      - name: "Cenário v3: queda de volume e coluna nova na origem"
+      - name: "Cenário v3: queda de volume"
         if: inputs.cenarios_de_falha
         run: |
           python scripts/integracao.py enviar --versao 3
-          python scripts/integracao.py alterar-origem
           databricks bundle run essentials_carga_diaria -t ci
 
       - name: Conferir os avisos do cenário v3
@@ -181,7 +181,7 @@ jobs:
         if: always()
         run: databricks bundle destroy -t ci --auto-approve
 
-      # O que o destroy não leva (event log, origem simulada). Só aceita schemas *_ci*.
+      # O que o destroy não leva (tabelas do pipeline e event log). Só aceita schemas do ci.
       - name: Apagar os schemas que sobrarem do ci
         if: always()
         run: |

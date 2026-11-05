@@ -1,6 +1,8 @@
 # 0008. Snapshot com AUTO CDC e histórico SCD tipo 2
 
-- **Status:** aceita
+- **Status:** aceita, atualizada por [0019](0019-silver-unica-scd2-com-retrato-privado.md)
+  (com `historico: true`, a `silver_<fonte>` é a própria SCD tipo 2; não há mais
+  `silver_<fonte>_historico`)
 - **Data:** 2026-10-30 (registrada em 2026-11-03)
 
 ## Contexto

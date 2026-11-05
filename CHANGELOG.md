@@ -10,6 +10,57 @@ só a versão menor.
 
 ## [Unreleased]
 
+### Simplificação do exemplo (PR 1)
+
+#### Adicionado
+
+- Um schema por camada no mesmo catálogo: `<projeto>_bronze` (com o volume `landing`),
+  `<projeto>_silver` (com a função de máscara), `<projeto>_gold` e
+  `<projeto>_monitoramento` (event log, `mon_falhas` e views `mon_*`). A engenharia acessa
+  todos; o negócio lê só a gold (ADR 0018).
+- View `gold_vw_entrevistas` (`src/views/`), criada pela tarefa `governanca_depois`, com
+  `COMMENT` em cada coluna e `fl_sem_retorno`; o painel lê só ela. Ela aplica a função de
+  máscara em `nm_candidato` e `nr_telefone` (ADR 0020).
+- Tags do Unity Catalog `camada` e `tipo` em toda tabela e view publicada, lidas das
+  `TBLPROPERTIES`; tipos novos `view` e `observabilidade`.
+- Teste que recusa UDF Python em `src/`.
+- ADRs 0018 (schemas por camada), 0019 (silver única SCD tipo 2 com retrato privado) e 0020
+  (exemplo sem cargos nem agregada, com view que aplica a máscara).
+
+#### Alterado
+
+- A `silver_agenda` é a única silver da fonte, em SCD tipo 2 (`__START_AT` e `__END_AT`); o
+  retrato `silver_int_agenda_retrato` é uma materialized view privada do pipeline, com as
+  expectations (ADR 0019).
+- Desempate do retrato: data de referência, `_ingerido_em`, `_modificado_em` e nome do
+  arquivo. `arquivo_ignorado` e `codificacao_invalida` acham o arquivo do retrato pelas
+  versões vigentes da silver.
+- A `gold_fato_entrevista` calcula a área por um de-para de prefixos numa CTE, sem função não
+  determinística; o refresh incremental foi confirmado no dev (`WINDOW_FUNCTION`).
+- Nomes visíveis: job `<projeto>_job_carga_diaria` e pipeline `<projeto>_pipeline_medalhao`
+  (as chaves internas no bundle não mudaram, para não recriar recursos).
+- `scripts/gerar_exclusao_titular.py` troca `--schema` por `--schema-bronze` e
+  `--schema-silver` (e continua com `--schema-gold`).
+- O cenário v3 da integração cobre só a queda de volume; a coluna nova na origem é conferida
+  por teste de unidade.
+- Documentação: padrões (nomes, camadas, LGPD, retenção), arquitetura, guias, roteiro de
+  operação, cenários, skills `nova-fonte` e `novo-cliente`, com os schemas por camada.
+  `levando-ao-azure.md` ganha a otimização preditiva (decisão do administrador) e a migração
+  de um ambiente existente com `unbind`.
+
+#### Removido
+
+- Fonte `cargos`, `gold_dim_cargo`, `gold_agg_entrevista_mensal` (vira cálculo do painel),
+  `silver_agenda_historico` e a silver atual separada, o schema `<projeto>_origem` e o setup
+  dele, e o comando `alterar-origem` do CI.
+
+#### Migração
+
+- Um ambiente que já existe **não migra sozinho**: solte do estado do bundle o schema antigo
+  e o volume com `databricks bundle deployment unbind` (plano com 0 deletes) antes do deploy,
+  e apague os objetos antigos só pelo nome exato.
+- Quem usa `gerar_exclusao_titular.py` precisa dos novos argumentos.
+
 ### Adicionado
 
 - Fase 7, base de produção: ação `falhar` nas regras (exemplo `data_plausivel`); regras

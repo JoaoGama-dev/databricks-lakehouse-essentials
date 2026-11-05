@@ -1,8 +1,9 @@
 """Bronze genérica: cria uma tabela bronze_<nome> para cada fonte do config/fontes.yml.
 
 A bronze guarda o dado exatamente como chegou (ELT): nenhuma limpeza, nenhum filtro.
-Só acrescenta as colunas técnicas _fonte, _arquivo_origem (quando há arquivo) e
-_ingerido_em.
+Só acrescenta as colunas técnicas _fonte, _arquivo_origem e _modificado_em (quando há
+arquivo) e _ingerido_em. É publicada no schema da bronze (schema_bronze), com o nome
+totalmente qualificado; o schema padrão do pipeline é o da silver.
 
   arquivo, banco, api -> streaming table com Auto Loader lendo a pasta da fonte na
                          landing (banco e api chegam lá pelos jobs de src/ingestao/)
@@ -32,6 +33,7 @@ from essentials.config_fontes import (  # noqa: E402
 
 CATALOGO = spark.conf.get("catalogo")
 PROJETO = spark.conf.get("projeto")
+SCHEMA_BRONZE = spark.conf.get("schema_bronze")
 LANDING = spark.conf.get("landing_path").rstrip("/")
 FONTES = carregar_fontes(spark.conf.get("fontes_config"))
 FORMATOS_AUTO_LOADER = {"csv": "csv", "json": "json", "parquet": "parquet", "texto": "text", "excel": "excel"}
@@ -39,7 +41,9 @@ FORMATOS_AUTO_LOADER = {"csv": "csv", "json": "json", "parquet": "parquet", "tex
 
 def com_colunas_tecnicas(df: DataFrame, fonte: dict) -> DataFrame:
     if fonte["tipo"] != "tabela":
-        df = df.withColumn("_arquivo_origem", F.col("_metadata.file_path"))
+        df = df.withColumn("_arquivo_origem", F.col("_metadata.file_path")).withColumn(
+            "_modificado_em", F.col("_metadata.file_modification_time")
+        )
     return df.withColumn("_fonte", F.lit(fonte["nome"])).withColumn("_ingerido_em", F.current_timestamp())
 
 
@@ -73,7 +77,7 @@ def ler_tabela_em_streaming(fonte: dict) -> DataFrame:
 
 
 def criar_bronze(fonte: dict) -> None:
-    nome = tabelas_da_fonte(fonte)["bronze"]
+    nome = f"{CATALOGO}.{SCHEMA_BRONZE}.{tabelas_da_fonte(fonte)['bronze']}"
     comentario = f"Bronze de {fonte['nome']}: {fonte['descricao']} Dado exatamente como chegou, sem transformação."
     propriedades = propriedades_tabela("bronze", "bruta", fonte)
 
@@ -82,7 +86,9 @@ def criar_bronze(fonte: dict) -> None:
         def copia_da_tabela() -> DataFrame:
             return com_colunas_tecnicas(spark.read.table(nome_tabela_origem(fonte, CATALOGO, PROJETO)), fonte)
 
-        dp.materialized_view(name=nome, comment=comentario, table_properties=propriedades)(copia_da_tabela)
+        dp.materialized_view(name=nome, comment=comentario, table_properties=propriedades, cluster_by_auto=True)(
+            copia_da_tabela
+        )
         return
 
     def leitura_incremental() -> DataFrame:
@@ -90,7 +96,7 @@ def criar_bronze(fonte: dict) -> None:
         return com_colunas_tecnicas(df, fonte)
 
     # Na bronze de arquivo, banco e api, propriedades_tabela já bloqueia o reset do full refresh.
-    dp.table(name=nome, comment=comentario, table_properties=propriedades)(leitura_incremental)
+    dp.table(name=nome, comment=comentario, table_properties=propriedades, cluster_by_auto=True)(leitura_incremental)
 
 
 for fonte in FONTES:

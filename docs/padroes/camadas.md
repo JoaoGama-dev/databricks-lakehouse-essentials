@@ -21,8 +21,10 @@
 
 ## Bronze
 
-- Dado exatamente como chegou, mais `_fonte`, `_arquivo_origem` (quando há arquivo) e
-  `_ingerido_em`. Nenhuma limpeza, nenhum filtro.
+- Dado exatamente como chegou, mais `_fonte`, `_arquivo_origem` e `_modificado_em` (quando
+  há arquivo) e `_ingerido_em`. Nenhuma limpeza, nenhum filtro.
+- Fica no schema `<projeto>_bronze`, junto do volume `landing` (ADR 0018). A agenda é lida
+  como texto, um arquivo por linha (coluna `value`).
 
 ## Silver
 
@@ -34,8 +36,15 @@
   SNAPSHOT ignora as regras de views sem avisar. Elas ficam em
   `silver_int_<fonte>_retrato` (MV, snapshot) ou `silver_int_<fonte>_mudancas`
   (streaming, cdc). No modo incremental, ficam na própria `silver_<fonte>`.
-- Modos `snapshot` e `cdc` usam AUTO CDC; `historico: true` cria
-  `silver_<fonte>_historico` (SCD tipo 2).
+- **O retrato do snapshot é privado do pipeline** (materialized view com `private`): não
+  aparece no catálogo nem recebe tag, mas as expectations continuam nele e chegam ao event
+  log com o nome dele ([ADR 0019](../adr/0019-silver-unica-scd2-com-retrato-privado.md)).
+  A tabela `silver_int_<fonte>_mudancas` (cdc) e as checagens `unico` são publicadas.
+- Modos `snapshot` e `cdc` usam AUTO CDC. **Há uma só silver por fonte:** com
+  `historico: true`, `silver_<fonte>` é a SCD tipo 2 (`__START_AT` e `__END_AT`; a versão
+  vigente tem `__END_AT` vazio); sem ele, é a SCD tipo 1. Não existe
+  `silver_<fonte>_historico`. Quem quer o estado atual filtra `__END_AT IS NULL`.
+- Fica no schema `<projeto>_silver` (ADR 0018), junto da função `mascarar_dado_pessoal`.
 - **A chave é conferida sozinha** (`regras_efetivas`): coluna da chave sem regra
   `nao_nulo` ganha uma com `drop`; no incremental, a chave inteira ganha `unico`. Nos
   modos snapshot e cdc, a regra `nao_nulo` da chave não pode ser só alerta.
@@ -45,7 +54,10 @@
   nova na origem não derruba a carga e aparece em `mon_estrutura` (ADR 0014).
 - **Data de referência (snapshot de arquivos):** o retrato é o arquivo com a maior
   `data_referencia` do `fontes.yml` (`ingestao`, padrão; `conteudo`, com uma expressão SQL
-  agregada; ou `nome_arquivo`, com regex de um grupo e formato), não o último ingerido. A
+  agregada; ou `nome_arquivo`, com regex de um grupo e formato), não o último ingerido. O
+  desempate é, em ordem: data de referência, `_ingerido_em`, `_modificado_em` e nome do
+  arquivo. Como o retrato é privado, os avisos acham o arquivo dele pelas versões vigentes
+  da silver. A
   `expressao` é código executável: revise como código no PR. O arquivo recebido que não
   virou retrato aparece em `mon_estrutura` como `arquivo_ignorado`, e texto que não é UTF-8 válido, como
   `codificacao_invalida` ([ADR 0016](../adr/0016-data-de-referencia-do-snapshot.md)).
@@ -61,17 +73,30 @@
 
 ## Gold
 
-- SQL em `src/pipeline/gold_*.sql`, em modelo estrela (dim, fato, agg).
-- Regra de negócio (ex.: situação concluído, em andamento, pendente) fica na gold, não no
-  painel.
+- SQL em `src/pipeline/gold_*.sql`, em modelo estrela (dim e fato; agregada só quando o
+  cálculo no painel ficar caro). Fica no schema `<projeto>_gold`, o único que o negócio lê.
+- Regra de negócio (ex.: situação concluído, em andamento, pendente; a área da vaga por
+  de-para) fica na gold, não no painel.
+- **Sem função não determinística** (`current_date`, `current_timestamp`...) fora do `WHERE`
+  numa materialized view: ela perde o refresh incremental. No exemplo, o refresh incremental
+  da fato foi confirmado no dev (`WINDOW_FUNCTION`).
+- **Sem UDF Python** em `src/`: um teste recusa. Use SQL e funções nativas.
+- **Views da gold** (`src/views/gold_vw_*.sql`) trazem o que depende de hoje e são o que o
+  painel lê. São criadas pela tarefa `governanca_depois`, com `COMMENT` por coluna, porque a
+  view de pipeline não aplica o `COMMENT` de cada coluna. Toda coluna sensível passa pela
+  função de máscara na view ([ADR 0020](../adr/0020-exemplo-sem-cargos-e-view-que-mascara.md)).
 
 ## Monitoramento
 
-- O pipeline publica o event log em `mon_log_eventos`. As views `mon_*` (qualidade
+- O pipeline publica o event log em `mon_log_eventos`, no schema
+  `<projeto>_monitoramento`. As views `mon_*` (qualidade
   diária, atualização, volume, estrutura, execuções e custo) são geradas por
   `src/essentials/monitoramento_sql.py` e criadas pela tarefa `governanca_depois`, fora
   do pipeline (ADR 0003). A tabela `mon_falhas` é criada pela `governanca_antes` e
   preenchida pela `registrar_falha` (ADR 0015).
+- As `mon_*` leem **metadados** (event log, `information_schema`, tabelas de sistema), com
+  duas exceções: `codificacao_invalida` e `arquivo_ignorado` leem a bronze (só um arquivo e
+  uma coluna) e nunca mostram dado de linha.
 - Mensagem de erro nunca sai do ambiente sem passar por `motivo_seguro` (LGPD).
 - Regra nova no `fontes.yml` entra sozinha em `mon_qualidade_diaria`, com a ação do YAML.
 - Fonte `banco` ou `api` nova: troque `ingerir_banco`/`ingerir_api` para `"true"` no
@@ -81,8 +106,10 @@
 
 - Toda coluna da silver tem `descricao` no `fontes.yml`; vira `COMMENT` pelo schema do
   contrato em `silver.py`.
-- Toda view da gold declara as colunas com tipo e `COMMENT`, na ordem do `SELECT`.
-- Toda tabela tem `COMMENT`.
+- Toda tabela da gold declara as colunas com tipo e `COMMENT`, na ordem do `SELECT`; toda
+  `gold_vw_*` declara `COMMENT` em cada coluna.
+- Toda tabela e view tem `COMMENT` e `TBLPROPERTIES ('camada', 'tipo')`; a governança copia
+  os dois para as tags do Unity Catalog.
 - As views `mon_*` também: `COMMENT` em cada coluna e `TBLPROPERTIES` com
   `'camada' = 'monitoramento'`.
 
@@ -90,5 +117,6 @@
 
 - `src/dashboards/*.lvdash.json` + `resources/dashboard.yml`. As consultas não citam
   catálogo nem schema (`dataset_catalog`/`dataset_schema` no bundle). O painel do negócio
-  lê só tabelas `gold_`; o de saúde da plataforma lê só as views `mon_*`, do schema do
-  projeto.
+  lê só views `gold_vw_*`; o de saúde da plataforma lê só as views `mon_*`, do schema
+  `<projeto>_monitoramento`. Agregações (por mês, por área) são calculadas nos datasets do
+  painel.

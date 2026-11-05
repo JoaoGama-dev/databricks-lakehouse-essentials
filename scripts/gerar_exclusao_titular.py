@@ -16,7 +16,8 @@ streaming, 5 atualização do pipeline (gold e retrato), 6 REORG ... APPLY (PURG
 
 Uso:
     python scripts/gerar_exclusao_titular.py --fonte agenda --catalogo essentials \\
-        --schema portfolio --schema-gold portfolio_gold [--saida exclusao.sql]
+        --schema-bronze portfolio_bronze --schema-silver portfolio_silver \\
+        --schema-gold portfolio_gold [--saida exclusao.sql]
 """
 
 from __future__ import annotations
@@ -36,14 +37,17 @@ from essentials.config_fontes import (  # noqa: E402
     nome_tabela_origem,
     pasta_landing,
     tabelas_da_fonte,
+    validada_publicada,
 )
 
 CONFIG = RAIZ / "config" / "fontes.yml"
 PASTA_PIPELINE = RAIZ / "src" / "pipeline"
-# Volume da landing em resources/governanca.yml.
+# Volume da landing em resources/governanca.yml (no schema da bronze).
 VOLUME_LANDING = "landing"
 IDENTIFICADOR = re.compile(r"[a-z0-9_]+")
-PADRAO_GOLD = re.compile(r"CREATE OR REFRESH MATERIALIZED VIEW\s+\$\{schema_gold\}\.(\w+)", re.IGNORECASE)
+PADRAO_GOLD = re.compile(
+    r"CREATE OR REFRESH MATERIALIZED VIEW\s+(?:\$\{catalogo\}\.)?\$\{schema_gold\}\.(\w+)", re.IGNORECASE
+)
 # Formatos em que a bronze tem as colunas da origem (o DELETE compara coluna a coluna).
 FORMATOS_COM_COLUNAS = {"csv", "json", "parquet", "excel"}
 # Separadores de campo aceitos numa linha de arquivo texto (a agenda usa ";"). O ";" vai como
@@ -135,7 +139,7 @@ def tabelas_gold() -> list[str]:
 # Passos ----------------------------------------------------------------------------
 
 
-def passo_landing(fonte: dict, catalogo: str, schema: str) -> list[str]:
+def passo_landing(fonte: dict, catalogo: str, schema_bronze: str) -> list[str]:
     linhas = ["-- PASSO 1. Landing: os arquivos originais que contêm o titular."]
     if fonte["tipo"] == "tabela":
         origem = nome_tabela_origem(fonte, catalogo, "<projeto>")
@@ -144,7 +148,7 @@ def passo_landing(fonte: dict, catalogo: str, schema: str) -> list[str]:
             f"-- A fonte é a tabela {origem} (sistema de origem): a exclusão nela é do dono do sistema.",
             "-- Sem isso, a próxima carga traz o titular de volta.",
         ]
-    pasta = f"/Volumes/{catalogo}/{schema}/{VOLUME_LANDING}/{pasta_landing(fonte)}/"
+    pasta = f"/Volumes/{catalogo}/{schema_bronze}/{VOLUME_LANDING}/{pasta_landing(fonte)}/"
     return [
         *linhas,
         f"-- Liste os arquivos da pasta {pasta} (no Catalog Explorer ou com LIST '{pasta}')",
@@ -155,10 +159,10 @@ def passo_landing(fonte: dict, catalogo: str, schema: str) -> list[str]:
     ]
 
 
-def passo_bronze(fonte: dict, catalogo: str, schema: str) -> tuple[list[str], list[str]]:
-    """Linhas do passo 2 e as tabelas alteradas por DML."""
+def passo_bronze(fonte: dict, catalogo: str, schema_bronze: str) -> tuple[list[str], list[tuple[str, str]]]:
+    """Linhas do passo 2 e as tabelas alteradas por DML, como (schema, tabela)."""
     bronze = tabelas_da_fonte(fonte)["bronze"]
-    tabela = nome_completo(catalogo, schema, bronze)
+    tabela = nome_completo(catalogo, schema_bronze, bronze)
     linhas = ["-- PASSO 2. Bronze."]
     formato = formato_landing(fonte)
     if fonte["tipo"] == "tabela" and fonte["modo_carga"] == "snapshot":
@@ -185,7 +189,7 @@ def passo_bronze(fonte: dict, catalogo: str, schema: str) -> tuple[list[str], li
             f"UPDATE {tabela}",
             f"SET value = array_join(filter(split(value, '\\n'), linha -> NOT ({condicao})), '\\n')",
             f"WHERE exists(split(value, '\\n'), linha -> {condicao});",
-        ], [bronze]
+        ], [(schema_bronze, bronze)]
     if fonte.get("preparacao_sql") or formato not in FORMATOS_COM_COLUNAS | {None}:
         return [
             *linhas,
@@ -198,23 +202,24 @@ def passo_bronze(fonte: dict, catalogo: str, schema: str) -> tuple[list[str], li
         f"-- {bronze} tem as colunas da origem: a mesma limpeza da silver dos dois lados.",
         f"SELECT count(*) AS qt_linhas FROM {tabela} WHERE {condicao};",
         f"DELETE FROM {tabela} WHERE {condicao};",
-    ], [bronze]
+    ], [(schema_bronze, bronze)]
 
 
-def passo_silver(fonte: dict, catalogo: str, schema: str) -> tuple[list[str], list[str]]:
+def passo_silver(fonte: dict, catalogo: str, schema_silver: str) -> tuple[list[str], list[tuple[str, str]]]:
     tabelas = tabelas_da_fonte(fonte)
     condicao = condicao_silver(fonte)
-    linhas = ["-- PASSO 3. Silver."]
-    alvos = [tabelas["silver"]] + ([tabelas["historico"]] if tabelas["historico"] else [])
+    linhas = ["-- PASSO 3. Silver (com historico: true, a silver guarda todas as versões do titular)."]
+    alvos = [tabelas["silver"]]
     if fonte["modo_carga"] == "snapshot":
+        privada = "" if validada_publicada(fonte) else " privada do pipeline (não está no catálogo)"
         linhas += [
-            f"-- {tabelas['validada']} é uma materialized view (o retrato): não aceita DELETE e é",
+            f"-- {tabelas['validada']} é uma materialized view{privada}, o retrato: não aceita DELETE e é",
             "-- recalculada da bronze corrigida no passo 5.",
         ]
     elif tabelas["validada"]:
         alvos.insert(0, tabelas["validada"])
     for tabela in alvos:
-        completo = nome_completo(catalogo, schema, tabela)
+        completo = nome_completo(catalogo, schema_silver, tabela)
         linhas += [
             f"-- {tabela}",
             f"SELECT count(*) AS qt_linhas FROM {completo} WHERE {condicao};",
@@ -222,10 +227,10 @@ def passo_silver(fonte: dict, catalogo: str, schema: str) -> tuple[list[str], li
         ]
     if tabelas["unicidade"]:
         linhas.append(f"-- {', '.join(tabelas['unicidade'])}: materialized views, recalculadas no passo 5.")
-    return linhas, alvos
+    return linhas, [(schema_silver, tabela) for tabela in alvos]
 
 
-def passo_streaming(fonte: dict, alteradas: list[str]) -> list[str]:
+def passo_streaming(fonte: dict, alteradas: list[tuple[str, str]]) -> list[str]:
     tabelas = tabelas_da_fonte(fonte)
     linhas = [
         "-- PASSO 4. Aviso: leituras em streaming de tabelas alteradas por DML.",
@@ -233,10 +238,9 @@ def passo_streaming(fonte: dict, alteradas: list[str]) -> list[str]:
         "-- leitura, a menos que leia com a opção skipChangeCommits (docs.databricks.com/aws/en/ldp/gdpr).",
     ]
     if fonte["modo_carga"] == "snapshot":
-        alvos = [tabelas["silver"]] + ([tabelas["historico"]] if tabelas["historico"] else [])
         linhas += [
             f"-- Neste pipeline: {tabelas['bronze']} é lida em lote pelo retrato (materialized view), e",
-            f"-- {', '.join(alvos)} são alvo do AUTO CDC e lidas em lote pela gold: nenhuma leitura em",
+            f"-- {tabelas['silver']} é alvo do AUTO CDC e lida em lote pela gold: nenhuma leitura em",
             "-- streaming do próprio pipeline quebra.",
         ]
     else:
@@ -252,7 +256,7 @@ def passo_streaming(fonte: dict, alteradas: list[str]) -> list[str]:
     return [
         *linhas,
         "-- Fora do pipeline: confira se algum job ou notebook lê estas tabelas em streaming:",
-        f"-- {', '.join(alteradas)}.",
+        f"-- {', '.join(tabela for _, tabela in alteradas)}.",
     ]
 
 
@@ -262,22 +266,22 @@ def passo_pipeline(fonte: dict) -> list[str]:
                                 *tabelas["unicidade"]] if t]
     return [
         "-- PASSO 5. Gold e materialized views: rode uma atualização normal do pipeline",
-        "-- essentials_<projeto> (a carga diária ou o botão Start; não use full refresh). As",
+        "-- <projeto>_pipeline_medalhao (a carga diária ou o botão Start; não use full refresh). As",
         "-- materialized views tratam as exclusões sozinhas, mas só no próximo recálculo:",
         f"-- {', '.join([*recalculadas, *tabelas_gold()])}.",
         "-- Depois, confira na gold que o titular sumiu (com o mesmo parâmetro, como no passo 3).",
     ]
 
 
-def passo_reorg(alteradas: list[str], catalogo: str, schema: str) -> list[str]:
+def passo_reorg(alteradas: list[tuple[str, str]], catalogo: str) -> list[str]:
     return [
         "-- PASSO 6. Tirar o dado dos arquivos de dados: com deletion vectors, o DELETE e o UPDATE só",
         "-- marcam as linhas como apagadas; o REORG reescreve os arquivos sem elas.",
-        *(f"REORG TABLE {nome_completo(catalogo, schema, tabela)} APPLY (PURGE);" for tabela in alteradas),
+        *(f"REORG TABLE {nome_completo(catalogo, schema, tabela)} APPLY (PURGE);" for schema, tabela in alteradas),
     ]
 
 
-def passo_vacuum(alteradas: list[str], catalogo: str, schema: str) -> list[str]:
+def passo_vacuum(alteradas: list[tuple[str, str]], catalogo: str) -> list[str]:
     return [
         "-- PASSO 7. Apagar de vez os arquivos antigos. Até aqui, o dado apagado ainda pode ser lido",
         "-- pelo time travel (versões anteriores da tabela). O VACUUM só remove arquivos fora do prazo",
@@ -288,21 +292,26 @@ def passo_vacuum(alteradas: list[str], catalogo: str, schema: str) -> list[str]:
         "-- exclusão só termina depois deste passo. Rode antes o DRY RUN para ver o que será apagado.",
         "-- As materialized views (passo 5) dependem da manutenção do próprio pipeline (otimização",
         "-- preditiva) para limpar os arquivos antigos.",
-        *(f"VACUUM {nome_completo(catalogo, schema, tabela)} DRY RUN;" for tabela in alteradas),
-        *(f"VACUUM {nome_completo(catalogo, schema, tabela)};" for tabela in alteradas),
+        *(f"VACUUM {nome_completo(catalogo, schema, tabela)} DRY RUN;" for schema, tabela in alteradas),
+        *(f"VACUUM {nome_completo(catalogo, schema, tabela)};" for schema, tabela in alteradas),
     ]
 
 
-def gerar_sql(fonte: dict, catalogo: str, schema: str, schema_gold: str) -> str:
-    for valor, nome in ((catalogo, "catálogo"), (schema, "schema"), (schema_gold, "schema da gold")):
+def gerar_sql(fonte: dict, catalogo: str, schema_bronze: str, schema_silver: str, schema_gold: str) -> str:
+    for valor, nome in (
+        (catalogo, "catálogo"),
+        (schema_bronze, "schema da bronze"),
+        (schema_silver, "schema da silver"),
+        (schema_gold, "schema da gold"),
+    ):
         validar_identificador(valor, nome)
     colunas = colunas_do_titular(fonte)
-    bronze, alteradas_bronze = passo_bronze(fonte, catalogo, schema)
-    silver, alteradas_silver = passo_silver(fonte, catalogo, schema)
+    bronze, alteradas_bronze = passo_bronze(fonte, catalogo, schema_bronze)
+    silver, alteradas_silver = passo_silver(fonte, catalogo, schema_silver)
     alteradas = alteradas_bronze + alteradas_silver
     cabecalho = [
         f"-- Exclusão dos dados de um titular na fonte {fonte['nome']}",
-        f"-- ({catalogo}.{schema} e {catalogo}.{schema_gold}).",
+        f"-- ({catalogo}.{schema_bronze}, {catalogo}.{schema_silver} e {catalogo}.{schema_gold}).",
         "-- Gerado por scripts/gerar_exclusao_titular.py para REVISÃO HUMANA: nada foi executado.",
         "-- Rode passo a passo no SQL editor, conferindo cada SELECT antes do DELETE ou UPDATE.",
         "-- Parâmetros (o editor abre um campo para cada um; o valor como veio na origem):",
@@ -311,13 +320,13 @@ def gerar_sql(fonte: dict, catalogo: str, schema: str, schema_gold: str) -> str:
     ]
     blocos = [
         cabecalho,
-        passo_landing(fonte, catalogo, schema),
+        passo_landing(fonte, catalogo, schema_bronze),
         bronze,
         silver,
         passo_streaming(fonte, alteradas),
         passo_pipeline(fonte),
-        passo_reorg(alteradas, catalogo, schema),
-        passo_vacuum(alteradas, catalogo, schema),
+        passo_reorg(alteradas, catalogo),
+        passo_vacuum(alteradas, catalogo),
     ]
     return "\n\n".join("\n".join(bloco) for bloco in blocos) + "\n"
 
@@ -326,7 +335,8 @@ def argumentos(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--fonte", required=True, help="nome da fonte no config/fontes.yml")
     parser.add_argument("--catalogo", required=True)
-    parser.add_argument("--schema", required=True, help="schema de bronze e silver do projeto")
+    parser.add_argument("--schema-bronze", required=True, help="schema da bronze (e da landing) do projeto")
+    parser.add_argument("--schema-silver", required=True, help="schema da silver do projeto")
     parser.add_argument("--schema-gold", required=True)
     parser.add_argument("--config", default=str(CONFIG), help="caminho do config/fontes.yml")
     parser.add_argument("--saida", help="grava o SQL neste arquivo em vez de mostrar na tela")
@@ -339,7 +349,9 @@ def main(args: list[str] | None = None) -> None:
     fontes = {fonte["nome"]: fonte for fonte in carregar_fontes(opcoes.config)}
     if opcoes.fonte not in fontes:
         raise SystemExit(f"fonte {opcoes.fonte!r} não está no config/fontes.yml ({', '.join(fontes)})")
-    sql = gerar_sql(fontes[opcoes.fonte], opcoes.catalogo, opcoes.schema, opcoes.schema_gold)
+    sql = gerar_sql(
+        fontes[opcoes.fonte], opcoes.catalogo, opcoes.schema_bronze, opcoes.schema_silver, opcoes.schema_gold
+    )
     if opcoes.saida:
         Path(opcoes.saida).write_text(sql, encoding="utf-8")
         print(f"SQL de exclusão gravado em {opcoes.saida}, para revisão. Nada foi executado.")

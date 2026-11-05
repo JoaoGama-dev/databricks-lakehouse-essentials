@@ -35,21 +35,29 @@ caminho de dados, escreva a mensagem num arquivo e use `git commit -F`.
 
 ## Mascaramento
 
-Três camadas, decididas no ADR 0002 (`docs/adr/0002-dados-pessoais-no-unity-catalog.md`):
+Quatro defesas, decididas nos ADRs 0002 e 0020
+(`docs/adr/0002-dados-pessoais-no-unity-catalog.md` e
+`docs/adr/0020-exemplo-sem-cargos-e-view-que-mascara.md`):
 
 1. **`sensivel: true`** no `fontes.yml` em toda coluna com dado pessoal. Toda coluna com
    `mascarar` precisa dela (a validação recusa o contrário).
 2. **Mascaramento fixo na silver**: `mascarar` no `fontes.yml` (`telefone` deixa DDD e 4
    últimos dígitos; `hash` usa sha256). O dado completo nem chega à silver.
-3. **Máscara de coluna na gold**: toda coluna sensível da gold declara
-   `MASK ${catalogo}.${schema_projeto}.mascarar_dado_pessoal`. Só o grupo
+3. **Máscara de coluna na gold**: toda coluna sensível da fato declara
+   `MASK ${catalogo}.${schema_silver}.mascarar_dado_pessoal`. Só o grupo
    `grupo_dados_pessoais` vê o valor; os demais veem `****`. A função é criada pela tarefa
-   `governanca_antes` do job (máscaras só podem ser declaradas na definição da tabela do
-   pipeline; `ALTER ... SET MASK` é recusado).
+   `governanca_antes` do job, no schema `<projeto>_silver` (máscaras só podem ser declaradas
+   na definição da tabela do pipeline; `ALTER ... SET MASK` é recusado).
+4. **A view da gold aplica a mesma função** nas colunas sensíveis
+   (`gold_vw_entrevistas`: `nm_candidato` e `nr_telefone`), no padrão dynamic view. Não há
+   garantia documentada de que o `MASK` da fato valha para quem lê por uma view, e o painel
+   lê só a view. Coluna sensível nova na gold precisa do `MASK` na fato **e** da função na
+   view; testes conferem.
 
 Além disso, a tarefa `governanca_depois` aplica a tag `pii` = `true` nas colunas
-sensíveis da silver e da gold, para localizar todo dado pessoal pelo
-`information_schema.column_tags`.
+sensíveis da silver, da fato e da view, para localizar todo dado pessoal pelo
+`information_schema.column_tags`. O retrato privado do pipeline não está no catálogo e não
+recebe tag.
 
 ## Nome de arquivo e monitoramento
 
@@ -67,7 +75,8 @@ retenção e o passo a passo para atender o pedido de um titular (com o script
 
 ## Quem acessa o quê
 
-O modelo de acesso está no ADR 0001 e em `resources/governanca.yml`: a bronze, a silver e
-a landing ficam no schema do projeto, só da engenharia; o negócio lê apenas o schema
-`<projeto>_gold`. Os grupos são variáveis do bundle (`grupo_engenharia`,
-`grupo_leitura_gold`, `grupo_dados_pessoais`).
+O modelo de acesso está no ADR 0018 (que substitui em parte o 0001) e em
+`resources/governanca.yml`: cada camada tem o seu schema. A engenharia acessa todos
+(`<projeto>_bronze`, com a landing, `<projeto>_silver`, `<projeto>_gold` e
+`<projeto>_monitoramento`); o negócio lê apenas `<projeto>_gold`. Os grupos são variáveis do
+bundle (`grupo_engenharia`, `grupo_leitura_gold`, `grupo_dados_pessoais`).

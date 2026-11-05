@@ -3,15 +3,18 @@
 # gera automaticamente as tabelas bronze e silver (src/pipeline/bronze.py e silver.py).
 # O formato é validado por config/fontes.schema.json.
 #
-# NOMES DAS TABELAS (padrão camada_tipo_nome)
-#   bronze_<nome>                     dado bruto, exatamente como chegou
-#   silver_int_<nome>_preparada       view temporária de silver_<nome>.sql (se houver)
-#   silver_int_<nome>_retrato         snapshot: último retrato limpo, onde ficam as regras
-#   silver_int_<nome>_mudancas        cdc: mudanças limpas, onde ficam as regras
-#   silver_int_<nome>_unico_<cols>    checagem das regras "unico"
-#   silver_<nome>                     estado atual (no incremental, também onde ficam as regras)
-#   silver_<nome>_historico           histórico SCD tipo 2 (se historico: true)
-#   gold_dim_* / gold_fato_* / gold_agg_*   escritas à mão em src/pipeline/gold_*.sql
+# NOMES DAS TABELAS (padrão camada_tipo_nome), cada camada no seu schema
+#   <projeto>_bronze  bronze_<nome>                  dado bruto, exatamente como chegou
+#   (só no pipeline)  silver_int_<nome>_preparada    view temporária de silver_<nome>.sql (se houver)
+#   (só no pipeline)  silver_int_<nome>_retrato      snapshot: último retrato limpo, onde ficam as
+#                                                    regras; privado, não aparece no catálogo
+#   <projeto>_silver  silver_int_<nome>_mudancas     cdc: mudanças limpas, onde ficam as regras
+#   <projeto>_silver  silver_int_<nome>_unico_<cols> checagem das regras "unico"
+#   <projeto>_silver  silver_<nome>                  com historico: true, SCD tipo 2 (__START_AT e
+#                                                    __END_AT); sem, o estado atual (no
+#                                                    incremental, também onde ficam as regras)
+#   <projeto>_gold    gold_dim_* / gold_fato_* / gold_agg_*   escritas à mão em src/pipeline/gold_*.sql
+#   <projeto>_gold    gold_vw_*                      views da gold em src/views/gold_vw_*.sql
 #
 # CAMPOS DE CADA FONTE
 #   nome               snake_case; entra no nome das tabelas
@@ -29,8 +32,9 @@
 #                                       retrato mais recente (AUTO CDC FROM SNAPSHOT)
 #                        cdc         -> a fonte envia inclusões, alterações e exclusões;
 #                                       a silver aplica as mudanças (AUTO CDC)
-#   historico          true cria também silver_<nome>_historico (SCD tipo 2, com
-#                      __START_AT e __END_AT). Só para snapshot e cdc.
+#   historico          true faz da silver_<nome> uma SCD tipo 2 (uma linha por versão, com
+#                      __START_AT e __END_AT; a versão vigente tem __END_AT vazio). Sem ele,
+#                      SCD tipo 1 (só o estado atual). Só para snapshot e cdc.
 #   chave_primaria     colunas que identificam um registro, com os nomes padronizados.
 #                      A chave é conferida sozinha: cada coluna sem regra nao_nulo ganha
 #                      uma com drop (chave_<coluna>_preenchida) e, no modo incremental, a
@@ -45,7 +49,8 @@
 #   data_referencia    (só snapshot de arquivos; opcional) como escolher o arquivo que vira
 #                      o retrato, para um arquivo antigo que chega depois não "voltar no
 #                      tempo". Vence a maior data; empate ou data vazia desempata pelo último
-#                      ingerido. O arquivo que não vira retrato aparece em mon_estrutura
+#                      ingerido, depois pelo arquivo modificado por último e pelo nome do
+#                      arquivo. O arquivo que não vira retrato aparece em mon_estrutura
 #                      como arquivo_ignorado.
 #                        tipo: ingestao     -> (padrão) o último arquivo ingerido
 #                        tipo: conteudo     -> expressao: SQL agregado sobre as colunas
@@ -82,7 +87,8 @@
 #   O prefixo precisa combinar com o tipo (ex.: dt_ só com data); a validação recusa o contrário.
 #   Toda coluna de texto recebe TRIM e perde espaços repetidos; texto vazio vira nulo.
 #   A silver tem contrato explícito: só entram as colunas listadas aqui (mais as técnicas
-#   _fonte, _arquivo_origem e _ingerido_em). O que não for listado fica só na bronze.
+#   _fonte, _arquivo_origem, _modificado_em e _ingerido_em). O que não for listado fica só
+#   na bronze.
 #     origem               nome da coluna de entrada
 #     descricao            o que a coluna significa para o negócio; vira o COMMENT da coluna
 #                          no Unity Catalog (dicionário de dados). Obrigatória.
@@ -207,60 +213,3 @@ fontes:
         tipo: expressao
         expressao: "dt_entrevista IS NULL OR dt_entrevista >= DATE'2020-01-01'"
         acao: falhar
-
-  # Cadastro de cargos: liga o começo do nome da vaga a uma área da empresa.
-  # No Free Edition, a tabela é criada por setup/00_setup_free_edition.sql.
-  - nome: cargos
-    descricao: Cadastro de cargos do RH, que liga o nome da vaga a uma área.
-    tipo: tabela
-    tabela:
-      nome_completo: "{catalogo}.{projeto}_origem.cadastro_cargos"
-    modo_carga: snapshot
-    historico: false
-    chave_primaria: [id_cargo]
-    coluna_atualizacao: dh_atualizacao
-    colunas:
-      id_cargo:
-        origem: id_cargo
-        descricao: Identificador do cargo no cadastro do RH.
-        tipo: inteiro
-      ds_prefixo_vaga:
-        origem: prefixo_vaga
-        descricao: Começo do nome da vaga, em minúsculas; o prefixo mais longo que combinar define o cargo.
-        tipo: texto
-        caixa: minuscula
-      nm_area:
-        origem: area
-        descricao: Área da empresa à qual o cargo pertence.
-        tipo: texto
-      dh_atualizacao:
-        origem: atualizado_em
-        descricao: Data e hora da última alteração do cargo no cadastro de origem.
-        tipo: timestamp
-    regras:
-      - nome: id_cargo_preenchido
-        tipo: nao_nulo
-        coluna: id_cargo
-        acao: drop
-      - nome: prefixo_preenchido
-        tipo: nao_nulo
-        coluna: ds_prefixo_vaga
-        acao: drop
-      - nome: area_conhecida
-        tipo: valores_aceitos
-        coluna: nm_area
-        valores:
-          - Cozinha
-          - Atendimento
-          - Recepção
-          - Limpeza e conservação
-          - Administrativo
-          - Financeiro
-          - Logística e produção
-          - Vendas
-          - Serviços especializados
-        acao: alerta
-      - nome: prefixo_unico
-        tipo: unico
-        colunas: [ds_prefixo_vaga]
-        acao: alerta

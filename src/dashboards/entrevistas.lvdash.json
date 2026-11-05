@@ -4,9 +4,13 @@
       "name": "ds_indicadores",
       "displayName": "Indicadores mensais",
       "queryLines": [
-        "SELECT dt_mes_entrevista, nm_area, st_situacao, st_entrevista, qt_entrevistas,\n",
-        "  qt_compareceram, qt_aprovados, qt_sem_retorno\n",
-        "FROM gold_agg_entrevista_mensal"
+        "SELECT dt_mes_entrevista, nm_area, st_situacao, st_entrevista,\n",
+        "  count(*) AS qt_entrevistas,\n",
+        "  count_if(fl_compareceu) AS qt_compareceram,\n",
+        "  count_if(fl_aprovado) AS qt_aprovados,\n",
+        "  count_if(fl_sem_retorno) AS qt_sem_retorno\n",
+        "FROM gold_vw_entrevistas\n",
+        "GROUP BY dt_mes_entrevista, nm_area, st_situacao, st_entrevista"
       ]
     },
     {
@@ -14,20 +18,17 @@
       "displayName": "Entrevistas (detalhe)",
       "queryLines": [
         "SELECT\n",
-        "  f.dt_entrevista,\n",
-        "  f.dt_mes_entrevista,\n",
-        "  f.hr_entrevista,\n",
-        "  f.nm_candidato,\n",
-        "  f.nm_vaga,\n",
-        "  d.nm_area,\n",
-        "  f.st_entrevista,\n",
-        "  f.st_situacao,\n",
-        "  f.nr_telefone,\n",
-        "  f.id_cargo,\n",
-        "  f.fl_sem_retorno\n",
-        "FROM gold_fato_entrevista AS f\n",
-        "JOIN gold_dim_cargo AS d\n",
-        "  ON f.id_cargo = d.id_cargo"
+        "  dt_entrevista,\n",
+        "  dt_mes_entrevista,\n",
+        "  hr_entrevista,\n",
+        "  nm_candidato,\n",
+        "  nm_vaga,\n",
+        "  nm_area,\n",
+        "  st_entrevista,\n",
+        "  st_situacao,\n",
+        "  nr_telefone,\n",
+        "  fl_sem_retorno\n",
+        "FROM gold_vw_entrevistas"
       ]
     },
     {
@@ -35,21 +36,9 @@
       "displayName": "Pendências",
       "queryLines": [
         "WITH entrevistas AS (\n",
-        "SELECT\n",
-        "  f.dt_entrevista,\n",
-        "  f.dt_mes_entrevista,\n",
-        "  f.hr_entrevista,\n",
-        "  f.nm_candidato,\n",
-        "  f.nm_vaga,\n",
-        "  d.nm_area,\n",
-        "  f.st_entrevista,\n",
-        "  f.st_situacao,\n",
-        "  f.nr_telefone,\n",
-        "  f.id_cargo,\n",
-        "  f.fl_sem_retorno\n",
-        "FROM gold_fato_entrevista AS f\n",
-        "JOIN gold_dim_cargo AS d\n",
-        "  ON f.id_cargo = d.id_cargo\n",
+        "SELECT dt_entrevista, hr_entrevista, nm_candidato, nm_vaga, nm_area, st_entrevista,\n",
+        "  st_situacao, nr_telefone, fl_sem_retorno\n",
+        "FROM gold_vw_entrevistas\n",
         ")\n",
         "SELECT 'Sem retorno' AS ds_motivo, dt_entrevista, hr_entrevista, nm_candidato, nm_vaga,\n",
         "  nm_area, st_entrevista, nr_telefone\n",
@@ -61,7 +50,7 @@
         "UNION ALL\n",
         "SELECT 'Vaga sem área cadastrada', dt_entrevista, hr_entrevista, nm_candidato, nm_vaga,\n",
         "  nm_area, st_entrevista, nr_telefone\n",
-        "FROM entrevistas WHERE id_cargo = -1"
+        "FROM entrevistas WHERE nm_area = 'Não classificada'"
       ]
     }
   ],
@@ -763,7 +752,7 @@
             "multilineTextboxSpec": {
               "lines": [
                 "## Pendências\n",
-                "Lista de trabalho do RH: entrevistas sem retorno, status que o sistema não reconheceu e vagas que ainda não têm área no cadastro de cargos."
+                "Lista de trabalho do RH: entrevistas sem retorno, status que o sistema não reconheceu e vagas que ainda não têm área no de-para de prefixos da gold."
               ]
             }
           },

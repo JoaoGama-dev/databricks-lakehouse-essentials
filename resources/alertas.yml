@@ -1,4 +1,4 @@
-# Alertas SQL da carga diária, todos sobre as views mon_* do schema do projeto. Em dev e no
+# Alertas SQL da carga diária, todos sobre as views mon_* do schema de monitoramento. Em dev e no
 # ci ficam pausados; em prod também avisam o suporte da Logos (databricks.yml).
 #   falha_carga      7h: falhas das últimas 24 horas, com o motivo (docs/adr/0015)
 #   qualidade_carga  7h: queda de volume e mudança na origem, inclusive arquivo ignorado e
@@ -12,7 +12,7 @@ resources:
       warehouse_id: ${var.warehouse_id}
       query_text: |-
         SELECT dh_falha, nm_tarefa, ds_motivo, ds_link
-        FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_falhas
+        FROM ${resources.schemas.monitoramento.catalog_name}.${resources.schemas.monitoramento.name}.mon_falhas
         WHERE dh_falha >= current_timestamp() - INTERVAL 24 HOURS
         ORDER BY dh_falha DESC
       custom_summary: "Essentials · ${var.projeto}: a carga diária falhou"
@@ -47,12 +47,12 @@ resources:
           concat(qt_linhas, ' linhas (antes ', coalesce(qt_linhas_anterior, 0), ')') AS ds_detalhe
         FROM (
           SELECT *, row_number() OVER (PARTITION BY nm_tabela ORDER BY dh_carga DESC) AS nr_ordem
-          FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_volume
+          FROM ${resources.schemas.monitoramento.catalog_name}.${resources.schemas.monitoramento.name}.mon_volume
         )
         WHERE nr_ordem = 1 AND fl_alerta
         UNION ALL
         SELECT ds_tipo, nm_tabela, coalesce(nm_coluna, concat(qt_linhas, ' linhas com dado resgatado'))
-        FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_estrutura
+        FROM ${resources.schemas.monitoramento.catalog_name}.${resources.schemas.monitoramento.name}.mon_estrutura
       custom_summary: "Essentials · ${var.projeto}: volume ou estrutura da origem mudou"
       custom_description: |-
         A última carga trouxe uma mudança que precisa de atenção:
@@ -84,7 +84,7 @@ resources:
       warehouse_id: ${var.warehouse_id}
       query_text: |-
         SELECT count_if(fl_atrasada) AS qt_tabelas_atrasadas
-        FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_atualizacao
+        FROM ${resources.schemas.monitoramento.catalog_name}.${resources.schemas.monitoramento.name}.mon_atualizacao
       evaluation:
         source:
           name: qt_tabelas_atrasadas
@@ -108,7 +108,7 @@ resources:
       warehouse_id: ${var.warehouse_id}
       query_text: |-
         SELECT dt_mes, vl_custo_lista, vl_teto, pc_do_teto, sg_moeda
-        FROM ${resources.schemas.projeto.catalog_name}.${resources.schemas.projeto.name}.mon_custo_mensal
+        FROM ${resources.schemas.monitoramento.catalog_name}.${resources.schemas.monitoramento.name}.mon_custo_mensal
         WHERE dt_mes = date_trunc('MONTH', current_date())
       custom_summary: "Essentials · ${var.projeto}: custo do Databricks perto do teto do mês"
       custom_description: |-

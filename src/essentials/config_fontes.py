@@ -40,12 +40,29 @@ PREFIXOS_POR_TIPO = {
     "fl": {"booleano"},  # flag
 }
 
-# Tipo de cada tabela, gravado em TBLPROPERTIES ('tipo' = ...).
-TIPOS_DE_TABELA = {"bruta", "intermediaria", "atual", "historico", "dimensao", "fato", "agregada"}
+# Tipo de cada tabela, gravado em TBLPROPERTIES ('tipo' = ...) e copiado para a tag "tipo"
+# do Unity Catalog pela tarefa governanca_depois. A silver com historico: true é do tipo
+# historico (SCD tipo 2); sem historico, atual (SCD tipo 1).
+TIPOS_DE_TABELA = {
+    "bruta",
+    "intermediaria",
+    "atual",
+    "historico",
+    "dimensao",
+    "fato",
+    "agregada",
+    "view",
+    "observabilidade",
+}
 
 # Tabelas que um full refresh do pipeline não pode esvaziar: a bronze que lê a landing
-# (o arquivo pode já ter saído de lá) e o histórico SCD tipo 2 (não dá para refazer).
+# (o arquivo pode já ter saído de lá) e a silver SCD tipo 2 (não dá para refazer).
 TIPOS_DE_FONTE_SEM_RESET_NA_BRONZE = {"arquivo", "banco", "api"}
+
+# O retrato do snapshot (silver_int_<nome>_retrato) é uma materialized view privada do
+# pipeline: não é publicada no catálogo, só alimenta o AUTO CDC. Plano B, se o AUTO CDC FROM
+# SNAPSHOT não aceitar a origem privada: False, e o retrato volta a ser publicado na silver.
+RETRATO_PRIVADO = True
 
 # Dicionário de dados: tipo SQL de cada tipo do fontes.yml e descrição das colunas que o
 # pipeline cria. Viram o schema (com COMMENT por coluna) das tabelas da silver.
@@ -60,8 +77,11 @@ TIPOS_SQL = {
 COLUNAS_TECNICAS = {
     "_fonte": ("STRING", "Nome da fonte no config/fontes.yml que originou o registro."),
     "_arquivo_origem": ("STRING", "Caminho do arquivo na landing zone de onde o registro veio."),
+    "_modificado_em": ("TIMESTAMP", "Data e hora da última modificação do arquivo na landing zone."),
     "_ingerido_em": ("TIMESTAMP", "Momento em que o registro foi carregado na bronze."),
 }
+# Colunas técnicas que só existem quando o dado chega por arquivo (não na fonte tabela).
+COLUNAS_TECNICAS_DE_ARQUIVO = {"_arquivo_origem", "_modificado_em"}
 # Colunas do change data feed do Delta (fonte tabela em modo cdc); não entram na silver.
 COLUNAS_CDF = {"_change_type": "STRING", "_commit_version": "BIGINT", "_commit_timestamp": "TIMESTAMP"}
 COLUNAS_SCD2 = {
@@ -196,6 +216,8 @@ def tabelas_da_fonte(fonte: dict) -> dict:
     validada: tabela intermediária onde as regras de qualidade são aplicadas antes do
     AUTO CDC (retrato no modo snapshot, mudanças no modo cdc). No modo incremental as
     regras ficam na própria silver_<nome>.
+    silver: com historico: true, a silver_<nome> é a SCD tipo 2 (__START_AT e __END_AT);
+    sem historico, SCD tipo 1 (estado atual).
     """
     nome = fonte["nome"]
     validada = {"snapshot": f"silver_int_{nome}_retrato", "cdc": f"silver_int_{nome}_mudancas"}
@@ -204,14 +226,35 @@ def tabelas_da_fonte(fonte: dict) -> dict:
         "preparada": f"silver_int_{nome}_preparada" if fonte.get("preparacao_sql") else None,
         "validada": validada.get(fonte["modo_carga"]),
         "silver": f"silver_{nome}",
-        "historico": f"silver_{nome}_historico" if fonte.get("historico") else None,
         "unicidade": [f"silver_int_{nome}_unico_{'_'.join(regra['colunas'])}" for regra in regras_unico(fonte)],
     }
 
 
+def validada_publicada(fonte: dict) -> bool:
+    """A tabela intermediária das regras aparece no catálogo? O retrato do snapshot, não."""
+    return fonte["modo_carga"] == "cdc" or (fonte["modo_carga"] == "snapshot" and not RETRATO_PRIVADO)
+
+
+def tem_historico(fonte: dict) -> bool:
+    """historico: true faz da silver_<nome> uma SCD tipo 2 (só nos modos snapshot e cdc)."""
+    return bool(fonte.get("historico")) and fonte["modo_carga"] in ("snapshot", "cdc")
+
+
+def tipo_da_silver(fonte: dict) -> str:
+    """Tipo da silver_<nome> em TBLPROPERTIES: historico (SCD tipo 2) ou atual."""
+    return "historico" if tem_historico(fonte) else "atual"
+
+
+def filtro_versao_atual(fonte: dict) -> str | None:
+    """Condição que deixa só a versão vigente de cada registro na silver SCD tipo 2."""
+    return "__END_AT IS NULL" if tem_historico(fonte) else None
+
+
 def colunas_tecnicas(fonte: dict) -> list[str]:
     """Colunas técnicas que seguem da bronze até a silver (fonte tabela não tem arquivo)."""
-    return [coluna for coluna in COLUNAS_TECNICAS if coluna != "_arquivo_origem" or fonte["tipo"] != "tabela"]
+    return [
+        coluna for coluna in COLUNAS_TECNICAS if coluna not in COLUNAS_TECNICAS_DE_ARQUIVO or fonte["tipo"] != "tabela"
+    ]
 
 
 def colunas_silver(fonte: dict) -> list[str]:
@@ -253,7 +296,7 @@ def descricao_coluna(fonte: dict, coluna: str) -> str:
 def schema_silver(fonte: dict, inicio_scd2: str | None = None) -> str:
     """Schema DDL da silver com COMMENT em cada coluna: o dicionário de dados no Unity Catalog.
 
-    inicio_scd2: tipo SQL de __START_AT/__END_AT, para tabelas de histórico (SCD tipo 2).
+    inicio_scd2: tipo SQL de __START_AT/__END_AT, para a silver SCD tipo 2 (historico: true).
     """
     partes = [
         f"`{coluna}` {tipo_sql(fonte, coluna)} COMMENT {literal_sql(descricao_coluna(fonte, coluna))}"
@@ -283,7 +326,7 @@ def nome_tabela_origem(fonte: dict, catalogo: str, projeto: str) -> str:
 
 
 def bloqueia_reset(camada: str, tipo: str, fonte: dict) -> bool:
-    """Bronze de arquivo, banco ou api e histórico SCD 2: um full refresh não as esvazia."""
+    """Bronze de arquivo, banco ou api e silver SCD 2: um full refresh não as esvazia."""
     bronze_da_landing = camada == "bronze" and fonte["tipo"] in TIPOS_DE_FONTE_SEM_RESET_NA_BRONZE
     return bronze_da_landing or tipo == "historico"
 
@@ -300,12 +343,18 @@ def propriedades_tabela(camada: str, tipo: str, fonte: dict) -> dict:
 # Data de referência do snapshot ----------------------------------------------------
 
 
+# Desempate do retrato depois da data de referência, do mais recente para o mais antigo:
+# determinístico mesmo quando vários arquivos chegam no mesmo micro-batch (mesmo _ingerido_em).
+ORDEM_DO_RETRATO = ("_ingerido_em", "_modificado_em", "_arquivo_origem")
+
+
 def expressao_data_referencia(fonte: dict) -> str | None:
     """Expressão SQL agregada que dá a data de referência de cada arquivo de um snapshot.
 
     É calculada por arquivo (agrupando por _arquivo_origem), sobre as colunas já com os
     nomes padronizados. O retrato é o arquivo com a maior data; empate ou data nula
-    (nulos por último) desempata pelo momento da ingestão e pelo nome do arquivo.
+    (nulos por último) desempata pelo momento da ingestão, pela modificação do arquivo e
+    pelo nome do arquivo (ORDEM_DO_RETRATO).
       ingestao (padrão) -> None: vale o último arquivo ingerido, como antes
       conteudo          -> a expressão do YAML, ex.: max(dt_entrevista)
       nome_arquivo      -> a data extraída do nome do arquivo (grupo 1 da regex) no formato

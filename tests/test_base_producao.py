@@ -24,6 +24,7 @@ from essentials.monitoramento_sql import (
     sql_volume,
     tabela_do_volume,
 )
+from fontes_ficticias import CADASTRO, cadastro
 
 RAIZ = Path(__file__).resolve().parents[1]
 FONTES = carregar_fontes(RAIZ / "config" / "fontes.yml")
@@ -56,7 +57,7 @@ def test_volume_e_medido_no_retrato_ou_na_silver():
 
 
 def test_volume_so_alerta_no_snapshot_com_retrato_vazio_ou_queda_acima_do_limite():
-    sql = sql_volume("essentials", "portfolio", FONTES, 40)
+    sql = sql_volume("essentials", "portfolio_monitoramento", FONTES, 40)
     assert "('silver_int_agenda_retrato', 'snapshot')" in sql
     assert "details:flow_progress:metrics:num_output_rows" in sql
     assert "ds_modo = 'snapshot' AND (qt_linhas = 0 OR coalesce(" in sql
@@ -70,24 +71,52 @@ def test_volume_e_valido_sem_fontes():
 # 7.3 Estrutura da origem ----------------------------------------------------------------
 
 
+# Coluna nova na origem: antes conferida na integração (cargos ganhava uma coluna), agora só
+# aqui, com a fonte fictícia do tipo tabela, cuja bronze tem as colunas da origem.
+COLUNAS_BRONZE_CADASTRO = ["id_item", "prefixo", "area", "atualizado_em", "_fonte", "_ingerido_em"]
+
+
 def test_coluna_nova_na_origem_e_detectada_so_onde_a_bronze_tem_as_colunas_da_origem():
     colunas = {
-        "bronze_cargos": ["id_cargo", "prefixo_vaga", "area", "atualizado_em", "_fonte", "_ingerido_em", "cd_novo"],
+        "bronze_cadastro": [*COLUNAS_BRONZE_CADASTRO, "cd_centro_custo"],
         # A agenda é texto com preparação: a bronze tem só "value", e isso não é coluna nova.
-        "bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_ingerido_em"],
+        "bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"],
     }
-    assert colunas_novas_na_origem(FONTES, colunas) == [("bronze_cargos", "cd_novo")]
+    assert colunas_novas_na_origem([*FONTES, CADASTRO], colunas) == [("bronze_cadastro", "cd_centro_custo")]
+
+
+def test_colunas_tecnicas_e_do_delta_nao_sao_coluna_nova():
+    # Falso alarme todo dia se a coluna técnica nova (_modificado_em) ou o change data feed
+    # contassem como mudança na origem.
+    tecnicas = ["_arquivo_origem", "_modificado_em", "_rescued_data", "_change_type", "_commit_version"]
+    colunas = {"bronze_cadastro": [*COLUNAS_BRONZE_CADASTRO, *tecnicas]}
+    assert colunas_novas_na_origem([CADASTRO], colunas) == []
+    csv = cadastro(tipo="arquivo", arquivo={"formato": "csv", "caminho": "cadastro"})
+    assert colunas_novas_na_origem([csv], {"bronze_cadastro": [*COLUNAS_BRONZE_CADASTRO, "x"]}) == [
+        ("bronze_cadastro", "x")
+    ]
+
+
+def estrutura(fontes: list[dict], colunas: dict) -> str:
+    schemas = ("portfolio_monitoramento", "portfolio_bronze", "portfolio_silver")
+    return sql_estrutura("essentials", *schemas, fontes, colunas)
+
+
+def test_coluna_nova_vira_aviso_em_mon_estrutura():
+    sql = estrutura([CADASTRO], {"bronze_cadastro": [*COLUNAS_BRONZE_CADASTRO, "cd_centro_custo"]})
+    assert "SELECT 'bronze_cadastro' AS nm_tabela, 'coluna_nova' AS ds_tipo, 'cd_centro_custo' AS nm_coluna" in sql
 
 
 def test_estrutura_conta_dado_resgatado_e_e_valida_sem_aviso():
-    colunas = {"bronze_cargos": ["id_cargo", "prefixo_vaga", "area", "atualizado_em", "_rescued_data"]}
-    sql = sql_estrutura("essentials", "portfolio", FONTES, colunas)
+    colunas = {"bronze_cadastro": [*COLUNAS_BRONZE_CADASTRO, "_rescued_data"]}
+    sql = estrutura([CADASTRO], colunas)
     assert "'dado_resgatado' AS ds_tipo" in sql and "WHERE _rescued_data IS NOT NULL" in sql
-    vazia = sql_estrutura("essentials", "portfolio", FONTES, {})
+    assert "FROM `essentials`.`portfolio_bronze`.`bronze_cadastro`" in sql
+    vazia = estrutura(FONTES, {})
     assert vazia.rstrip().endswith("WHERE false")
 
 
-COLUNAS_BRONZE_AGENDA = {"bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_ingerido_em"]}
+COLUNAS_BRONZE_AGENDA = {"bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"]}
 
 
 def partes_da_estrutura(sql: str) -> list[str]:
@@ -98,23 +127,34 @@ def parte_do_tipo(sql: str, tipo: str) -> str:
     return next(parte for parte in partes_da_estrutura(sql) if f"'{tipo}' AS ds_tipo" in parte)
 
 
+RETRATO_DA_AGENDA = (
+    "(SELECT DISTINCT _arquivo_origem FROM `essentials`.`portfolio_silver`.`silver_agenda` WHERE __END_AT IS NULL)"
+)
+
+
 def test_arquivo_ignorado_compara_o_ultimo_arquivo_da_bronze_com_o_retrato():
-    sql = sql_estrutura("essentials", "portfolio", FONTES, COLUNAS_BRONZE_AGENDA)
+    # O retrato é privado do pipeline: os arquivos dele são os das versões vigentes da silver.
+    sql = estrutura(FONTES, COLUNAS_BRONZE_AGENDA)
     parte = parte_do_tipo(sql, "arquivo_ignorado")
     assert parte.startswith("SELECT 'bronze_agenda' AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, ")
-    bronze = "`essentials`.`portfolio`.`bronze_agenda`"
+    bronze = "`essentials`.`portfolio_bronze`.`bronze_agenda`"
     assert f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {bronze})) AS b" in parte
-    assert (
-        "LEFT ANTI JOIN (SELECT DISTINCT _arquivo_origem FROM `essentials`.`portfolio`.`silver_int_agenda_retrato`) "
-        "AS r ON b._arquivo_origem = r._arquivo_origem"
-    ) in parte
+    assert f"LEFT ANTI JOIN {RETRATO_DA_AGENDA} AS r ON b._arquivo_origem = r._arquivo_origem" in parte
+    assert "silver_int_agenda_retrato" not in sql
+
+
+def test_retrato_de_snapshot_sem_historico_e_a_propria_silver():
+    csv = cadastro(tipo="arquivo", arquivo={"formato": "csv", "caminho": "cadastro"})
+    sql = estrutura([csv], {"bronze_cadastro": ["prefixo", "_arquivo_origem", "_ingerido_em"]})
+    silver = "`essentials`.`portfolio_silver`.`silver_cadastro`"
+    assert f"LEFT ANTI JOIN (SELECT DISTINCT _arquivo_origem FROM {silver}) " in sql
 
 
 def test_codificacao_invalida_olha_so_o_arquivo_do_retrato_da_fonte_texto():
-    sql = sql_estrutura("essentials", "portfolio", FONTES, COLUNAS_BRONZE_AGENDA)
+    sql = estrutura(FONTES, COLUNAS_BRONZE_AGENDA)
     parte = parte_do_tipo(sql, "codificacao_invalida")
     assert parte.startswith("SELECT DISTINCT 'bronze_agenda' AS nm_tabela, 'codificacao_invalida' AS ds_tipo, ")
-    assert "LEFT SEMI JOIN (SELECT DISTINCT _arquivo_origem FROM `essentials`.`portfolio`." in parte
+    assert f"LEFT SEMI JOIN {RETRATO_DA_AGENDA} AS r" in parte
     # Risco: procurar U+FFFD nunca dispara, porque a bronze guarda os bytes cp1252 como chegaram
     # (visto na integração de 2026-11-04). Só a validação do UTF-8 acha o arquivo.
     assert parte.endswith("WHERE NOT is_valid_utf8(b.value)")
@@ -123,7 +163,7 @@ def test_codificacao_invalida_olha_so_o_arquivo_do_retrato_da_fonte_texto():
 
 def test_avisos_de_arquivo_mostram_so_o_nome_do_arquivo():
     # LGPD: nunca o conteúdo (value) nem a pasta da landing, só o nome do arquivo.
-    sql = sql_estrutura("essentials", "portfolio", FONTES, COLUNAS_BRONZE_AGENDA)
+    sql = estrutura(FONTES, COLUNAS_BRONZE_AGENDA)
     for tipo in ("arquivo_ignorado", "codificacao_invalida"):
         selecao = parte_do_tipo(sql, tipo).split(" FROM ", 1)[0]
         assert "element_at(split(b._arquivo_origem, '/'), -1) AS nm_coluna" in selecao, tipo
@@ -132,21 +172,22 @@ def test_avisos_de_arquivo_mostram_so_o_nome_do_arquivo():
 
 def test_avisos_de_arquivo_so_onde_fazem_sentido():
     # Sem a bronze no information_schema, nenhum aviso (a view não pode citar tabela que não existe).
-    assert sql_estrutura("essentials", "portfolio", FONTES, {}).rstrip().endswith("WHERE false")
-    # A fonte tabela (cargos) não tem arquivo: nenhum dos dois avisos.
-    sem_arquivo = sql_estrutura("essentials", "portfolio", FONTES, {"bronze_cargos": ["id_cargo", "_ingerido_em"]})
+    assert estrutura(FONTES, {}).rstrip().endswith("WHERE false")
+    # A fonte tabela não tem arquivo: nenhum dos dois avisos.
+    sem_arquivo = estrutura([CADASTRO], {"bronze_cadastro": ["id_item", "_ingerido_em"]})
     assert "arquivo_ignorado" not in sem_arquivo.split("\nAS\n", 1)[1]
     # CSV em snapshot: arquivo ignorado sim; codificação não (o CSV tem a opção encoding).
     csv = {"nome": "metas", "tipo": "arquivo", "modo_carga": "snapshot", "colunas": {"nm_meta": {"origem": "meta"}},
            "arquivo": {"formato": "csv", "caminho": "metas"}}
-    consulta = sql_estrutura("c", "s", [csv], {"bronze_metas": ["meta", "_arquivo_origem", "_ingerido_em"]})
+    consulta = sql_estrutura("c", "m", "b", "s", [csv], {"bronze_metas": ["meta", "_arquivo_origem", "_ingerido_em"]})
     tipos = [parte.split("'")[3] for parte in partes_da_estrutura(consulta)]
     assert tipos == ["arquivo_ignorado"]
     # Texto em modo incremental: sem retrato, a codificação é vista no arquivo da última carga.
     texto = {**csv, "modo_carga": "incremental", "arquivo": {"formato": "texto", "caminho": "metas"}}
-    consulta = sql_estrutura("c", "s", [texto], {"bronze_metas": ["value", "_arquivo_origem", "_ingerido_em"]})
+    colunas = {"bronze_metas": ["value", "_arquivo_origem", "_ingerido_em"]}
+    consulta = sql_estrutura("c", "m", "b", "s", [texto], colunas)
     assert [parte.split("'")[3] for parte in partes_da_estrutura(consulta)] == ["codificacao_invalida"]
-    assert "LEFT SEMI JOIN (SELECT DISTINCT _arquivo_origem FROM `c`.`s`.`bronze_metas` WHERE _ingerido_em" in consulta
+    assert "LEFT SEMI JOIN (SELECT DISTINCT _arquivo_origem FROM `c`.`b`.`bronze_metas` WHERE _ingerido_em" in consulta
 
 
 def test_alerta_de_qualidade_le_todos_os_avisos_de_mon_estrutura():
@@ -220,8 +261,8 @@ def test_motivo_tem_tamanho_limitado_e_nunca_vem_vazio():
 
 
 def test_tabela_de_falhas_segue_o_dicionario():
-    sql = sql_tabela_falhas("essentials", "portfolio")
-    assert sql.startswith("CREATE TABLE IF NOT EXISTS `essentials`.`portfolio`.`mon_falhas`")
+    sql = sql_tabela_falhas("essentials", "portfolio_monitoramento")
+    assert sql.startswith("CREATE TABLE IF NOT EXISTS `essentials`.`portfolio_monitoramento`.`mon_falhas`")
     assert "`ds_motivo` STRING COMMENT" in sql and "`dh_falha` TIMESTAMP COMMENT" in sql
     assert "TBLPROPERTIES ('camada' = 'monitoramento', 'tipo' = 'falha')" in sql
 
@@ -233,6 +274,8 @@ def test_registrar_falha_roda_so_quando_algo_falha_e_depende_de_todas_as_tarefas
     assert {d["task_key"] for d in tarefa["depends_on"]} == outras
     parametros = tarefa["spark_python_task"]["parameters"]
     assert parametros[parametros.index("--run-id") + 1] == "{{job.run_id}}"
+    # mon_falhas e o event log ficam no schema de monitoramento.
+    assert parametros[parametros.index("--schema-monitoramento") + 1] == "${resources.schemas.monitoramento.name}"
     assert (RAIZ / "resources" / tarefa["spark_python_task"]["python_file"]).resolve().is_file()
 
 
