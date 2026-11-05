@@ -31,6 +31,11 @@ resources:
         landing_path: /Volumes/${resources.volumes.landing.catalog_name}/${resources.volumes.landing.schema_name}/${resources.volumes.landing.name}
         fontes_config: ${workspace.file_path}/config/fontes.yml
         diretorio_codigo: ${workspace.file_path}/src
+        # Novas tentativas automáticas numa falha. O padrão (5 da atualização inteira) fazia uma
+        # regra que para a carga rodar 6 vezes, ~14 min e ~6x o custo, sem chance de passar:
+        # o arquivo é o mesmo. Uma tentativa cobre falha passageira da plataforma.
+        pipelines.numUpdateRetryAttempts: "1"
+        pipelines.maxFlowRetryAttempts: "1"
       environment:
         # Versões fixas, num único lugar: requirements-runtime.txt.
         dependencies:

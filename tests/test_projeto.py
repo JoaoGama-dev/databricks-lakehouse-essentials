@@ -531,6 +531,14 @@ def test_pipeline_serverless_com_configuracao():
     } <= set(configuracao["configuration"])
 
 
+def test_pipeline_limita_as_novas_tentativas_numa_falha():
+    # Custo: sem o limite, a plataforma repete a atualização inteira 5 vezes (visto no dev em
+    # 2026-11-05: uma regra que para a carga gerou 6 atualizações, ~14 min, ~6x o custo).
+    configuracao = pipeline()["configuration"]
+    assert int(configuracao["pipelines.numUpdateRetryAttempts"]) <= 1
+    assert int(configuracao["pipelines.maxFlowRetryAttempts"]) <= 1
+
+
 def test_estrutura_do_pacote_essentials():
     """Catálogo do pacote, schemas e landing do projeto no bundle, bundle com o nome do projeto."""
     bundle = carregar_yaml(RAIZ / "databricks.yml")
