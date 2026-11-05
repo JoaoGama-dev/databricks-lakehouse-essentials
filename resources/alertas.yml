@@ -1,6 +1,8 @@
-# Alertas SQL da carga diária, todos sobre as views mon_* do schema de monitoramento. Em dev e no
-# ci ficam pausados; em prod também avisam o suporte da Logos (databricks.yml).
-#   falha_carga      7h: falhas das últimas 24 horas, com o motivo (docs/adr/0015)
+# Alertas SQL da carga diária, todos sobre as views mon_* do schema de monitoramento. No ci
+# ficam pausados; em dev também, menos o falha_carga; em prod também avisam o suporte da Logos
+# (databricks.yml).
+#   falha_carga      logo depois da falha (tarefa avisar_falha do job) e às 7h, como rede de
+#                    segurança: falhas das últimas 24 horas, com o motivo (docs/adr/0015)
 #   qualidade_carga  7h: queda de volume e mudança na origem, inclusive arquivo ignorado e
 #                    codificação inválida (todas as linhas de mon_estrutura; docs/adr/0014)
 #   atraso_carga     9h: última atualização do pipeline acima de limite_atraso_horas
@@ -32,6 +34,10 @@ resources:
         empty_result_state: OK
         notification:
           notify_on_ok: false
+          # Sem isto, o alerta só avisa a primeira vez que dispara: uma falha no dia seguinte,
+          # ainda com a de ontem nas 24 horas, não mandaria e-mail. Uma hora evita repetir às 7h
+          # o e-mail que a avisar_falha mandou às 6h.
+          retrigger_seconds: 3600
           subscriptions:
             - user_email: ${var.usuario_alerta}
       schedule:

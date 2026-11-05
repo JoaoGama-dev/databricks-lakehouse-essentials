@@ -1,8 +1,14 @@
-# Carga diária às 6h (horário de Brasília).
-# Ordem: os jobs de ingestão trazem bancos e APIs para a landing; depois o pipeline
-# atualiza bronze, silver e gold. As ingestões só rodam quando o fontes.yml tem fonte
-# daquele tipo (variáveis ingerir_banco e ingerir_api, docs/adr/0004): a condição não usa
-# computação, e a tarefa pulada não custa nada.
+# Carga diária às 6h (horário de Brasília). Ordem das tarefas:
+#   tem_fonte_externa        condição (sem computação): o fontes.yml tem fonte banco ou api?
+#   ingerir_fontes_externas  traz bancos e APIs para a landing; pulada (Excluded, sem custo)
+#                            quando a variável ingerir_fontes_externas é "false" (docs/adr/0004)
+#   preparar_governanca      função de máscara, tabela mon_log_execucao e view mon_falhas
+#   processar_medalhao       o pipeline: bronze, silver e gold
+#   publicar_monitoramento   views da gold, tags, views mon_*, log da carga e, se algo falhou,
+#                            o motivo seguro; termina com erro quando a carga falhou
+#   avisar_falha             só quando a carga falhou: avalia o alerta falha_carga na hora,
+#                            e o e-mail sai com o motivo (docs/adr/0015)
+#   encerrar_com_falha       só depois do aviso: deixa a execução marcada como falha
 resources:
   jobs:
     essentials_carga_diaria:
@@ -33,19 +39,19 @@ resources:
             dependencies:
               - -r ${workspace.file_path}/requirements-runtime.txt
       tasks:
-        - task_key: tem_fonte_api
+        - task_key: tem_fonte_externa
           condition_task:
             op: EQUAL_TO
-            left: ${var.ingerir_api}
+            left: ${var.ingerir_fontes_externas}
             right: "true"
 
-        - task_key: ingestao_api
+        - task_key: ingerir_fontes_externas
           depends_on:
-            - task_key: tem_fonte_api
+            - task_key: tem_fonte_externa
               outcome: "true"
           environment_key: ingestao
           spark_python_task:
-            python_file: ../src/ingestao/api_para_landing.py
+            python_file: ../src/ingestao/ingerir_fontes_externas.py
             parameters:
               - --config
               - ${workspace.file_path}/config/fontes.yml
@@ -53,75 +59,52 @@ resources:
               - /Volumes/${resources.volumes.landing.catalog_name}/${resources.volumes.landing.schema_name}/${resources.volumes.landing.name}
               - --codigo
               - ${workspace.file_path}/src
+              - --fuso-horario
+              - ${var.fuso_horario}
 
-        - task_key: tem_fonte_banco
-          condition_task:
-            op: EQUAL_TO
-            left: ${var.ingerir_banco}
-            right: "true"
-
-        - task_key: ingestao_banco
-          depends_on:
-            - task_key: tem_fonte_banco
-              outcome: "true"
-          environment_key: ingestao
-          spark_python_task:
-            python_file: ../src/ingestao/banco_para_landing.py
-            parameters:
-              - --config
-              - ${workspace.file_path}/config/fontes.yml
-              - --landing
-              - /Volumes/${resources.volumes.landing.catalog_name}/${resources.volumes.landing.schema_name}/${resources.volumes.landing.name}
-              - --codigo
-              - ${workspace.file_path}/src
-
-        # Cria a função de máscara de dados pessoais, usada pelas colunas sensíveis da gold.
-        - task_key: governanca_antes
+        # A gold usa a função de máscara: ela precisa existir antes do pipeline.
+        - task_key: preparar_governanca
           environment_key: ingestao
           spark_python_task:
             python_file: ../src/governanca/governanca.py
             parameters:
-              - --etapa
-              - antes
-              - --config
-              - ${workspace.file_path}/config/fontes.yml
               - --codigo
               - ${workspace.file_path}/src
               - --catalogo
               - ${resources.schemas.silver.catalog_name}
-              - --schema-bronze
-              - ${resources.schemas.bronze.name}
               - --schema-silver
               - ${resources.schemas.silver.name}
-              - --schema-gold
-              - ${resources.schemas.gold.name}
               - --schema-monitoramento
               - ${resources.schemas.monitoramento.name}
               - --grupo-dados-pessoais
               - ${var.grupo_dados_pessoais}
+              - --fuso-horario
+              - ${var.fuso_horario}
 
-        # NONE_FAILED: roda mesmo com as ingestões puladas, mas não se alguma falhar.
-        - task_key: atualizar_lakehouse
+        # NONE_FAILED: roda com a ingestão pulada, mas não se ela ou a preparação falharem.
+        # full_refresh false: um full refresh apagaria o histórico SCD2 (docs/adr/0017).
+        - task_key: processar_medalhao
           depends_on:
-            - task_key: ingestao_api
-            - task_key: ingestao_banco
-            - task_key: governanca_antes
+            - task_key: ingerir_fontes_externas
+            - task_key: preparar_governanca
           run_if: NONE_FAILED
           pipeline_task:
             pipeline_id: ${resources.pipelines.essentials_pipeline.id}
             full_refresh: false
 
-        # Aplica a tag pii nas colunas sensíveis da silver e da gold (config/fontes.yml) e
-        # cria as views mon_* de monitoramento sobre o event log (docs/adr/0003).
-        - task_key: governanca_depois
+        # ALL_DONE: roda com qualquer resultado das anteriores, para registrar o que houve.
+        # Termina com erro de propósito quando algo falhou: tentar de novo só repetiria o registro.
+        - task_key: publicar_monitoramento
           depends_on:
-            - task_key: atualizar_lakehouse
+            - task_key: ingerir_fontes_externas
+            - task_key: preparar_governanca
+            - task_key: processar_medalhao
+          run_if: ALL_DONE
+          max_retries: 0
           environment_key: ingestao
           spark_python_task:
-            python_file: ../src/governanca/governanca.py
+            python_file: ../src/governanca/publicar_monitoramento.py
             parameters:
-              - --etapa
-              - depois
               - --config
               - ${workspace.file_path}/config/fontes.yml
               - --codigo
@@ -136,10 +119,10 @@ resources:
               - ${resources.schemas.gold.name}
               - --schema-monitoramento
               - ${resources.schemas.monitoramento.name}
-              - --grupo-dados-pessoais
-              - ${var.grupo_dados_pessoais}
               - --job-id
               - "{{job.id}}"
+              - --run-id
+              - "{{job.run_id}}"
               - --pipeline-id
               - ${resources.pipelines.essentials_pipeline.id}
               - --limite-atraso-horas
@@ -148,28 +131,32 @@ resources:
               - ${var.limite_queda_volume_pct}
               - --teto-custo-mensal
               - ${var.teto_custo_mensal_usd}
+              - --fuso-horario
+              - ${var.fuso_horario}
 
-        # Só roda quando alguma tarefa falha: grava o motivo (sem dados do registro) em
-        # mon_falhas para o alerta falha_carga, e termina com erro (docs/adr/0015).
-        - task_key: registrar_falha
+        # Só quando a publicar_monitoramento terminou com erro (a carga falhou): avalia o alerta
+        # falha_carga na hora, sem esperar o agendamento das 7h (que continua como rede de
+        # segurança). Sem subscribers aqui, avisa quem já está inscrito no alerta
+        # (usuario_alerta e, em prod, o destino do suporte).
+        - task_key: avisar_falha
           depends_on:
-            - task_key: ingestao_api
-            - task_key: ingestao_banco
-            - task_key: governanca_antes
-            - task_key: atualizar_lakehouse
-            - task_key: governanca_depois
+            - task_key: publicar_monitoramento
           run_if: AT_LEAST_ONE_FAILED
-          # Termina com erro de propósito: tentar de novo só repetiria o registro.
           max_retries: 0
-          environment_key: ingestao
-          spark_python_task:
-            python_file: ../src/governanca/registrar_falha.py
-            parameters:
-              - --codigo
-              - ${workspace.file_path}/src
-              - --catalogo
-              - ${resources.schemas.silver.catalog_name}
-              - --schema-monitoramento
-              - ${resources.schemas.monitoramento.name}
-              - --run-id
-              - "{{job.run_id}}"
+          alert_task:
+            alert_id: ${resources.alerts.falha_carga.id}
+            warehouse_id: ${var.warehouse_id}
+
+        # Folha do job: o resultado da execução sai das tarefas folha. Sem esta, a avisar_falha
+        # terminaria bem e a execução ficaria "Succeeded with failures", sem o aviso de falha
+        # do job. Pulada (Excluded) quando a avisar_falha é pulada.
+        - task_key: encerrar_com_falha
+          depends_on:
+            - task_key: avisar_falha
+          run_if: ALL_DONE
+          max_retries: 0
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ${workspace.file_path}/src/governanca/encerrar_com_falha.sql
+              source: WORKSPACE

@@ -41,7 +41,7 @@ PREFIXOS_POR_TIPO = {
 }
 
 # Tipo de cada tabela, gravado em TBLPROPERTIES ('tipo' = ...) e copiado para a tag "tipo"
-# do Unity Catalog pela tarefa governanca_depois. A silver com historico: true é do tipo
+# do Unity Catalog pela tarefa publicar_monitoramento. A silver com historico: true é do tipo
 # historico (SCD tipo 2); sem historico, atual (SCD tipo 1).
 TIPOS_DE_TABELA = {
     "bruta",
@@ -345,7 +345,9 @@ def propriedades_tabela(camada: str, tipo: str, fonte: dict) -> dict:
 
 # Desempate do retrato depois da data de referência, do mais recente para o mais antigo:
 # determinístico mesmo quando vários arquivos chegam no mesmo micro-batch (mesmo _ingerido_em).
-ORDEM_DO_RETRATO = ("_ingerido_em", "_modificado_em", "_arquivo_origem")
+# A modificação do arquivo (quando chegou à landing) vem antes da ingestão: arquivos enviados
+# juntos podem cair em micro-batches diferentes, e aí o _ingerido_em não segue a ordem de envio.
+ORDEM_DO_RETRATO = ("_modificado_em", "_ingerido_em", "_arquivo_origem")
 
 
 def expressao_data_referencia(fonte: dict) -> str | None:

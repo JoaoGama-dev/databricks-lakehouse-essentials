@@ -1,9 +1,10 @@
 """Ingestão de APIs: grava na landing, em JSON (um registro por linha), a resposta de
 cada fonte do tipo api do config/fontes.yml.
 
-Roda como tarefa do job essentials_carga_diaria, antes do pipeline. A bronze lê os
-arquivos gerados com Auto Loader, como qualquer outro arquivo. O token fica num
-secret scope do Databricks, nunca no repositório.
+É chamado pela tarefa ingerir_fontes_externas do job (ingerir_fontes_externas.py), antes
+do pipeline; também roda sozinho, com os mesmos argumentos. A bronze lê os arquivos gerados
+com Auto Loader, como qualquer outro arquivo. O token fica num secret scope do Databricks,
+nunca no repositório.
 
 Testado só no Azure Databricks: o Free Edition restringe o acesso à internet.
 """
@@ -12,8 +13,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import UTC, datetime
+
+log = logging.getLogger("essentials")
 
 
 def argumentos() -> argparse.Namespace:
@@ -21,6 +25,7 @@ def argumentos() -> argparse.Namespace:
     parser.add_argument("--config", required=True, help="caminho do config/fontes.yml")
     parser.add_argument("--landing", required=True, help="raiz da landing zone")
     parser.add_argument("--codigo", required=True, help="pasta src/ do bundle")
+    parser.add_argument("--fuso-horario", default="America/Sao_Paulo", help="fuso do log legível")
     return parser.parse_args()
 
 
@@ -59,16 +64,13 @@ def buscar(api: dict, cabecalhos_http: dict) -> list:
     return registros
 
 
-def main() -> None:
-    args = argumentos()
-    sys.path.append(args.codigo)
+def ingerir(fontes: list[dict], landing: str) -> None:
+    """Grava na landing a resposta de cada fonte do tipo api da lista."""
     from databricks.sdk.runtime import dbutils
 
-    from essentials.config_fontes import carregar_fontes
-
-    fontes = [fonte for fonte in carregar_fontes(args.config) if fonte["tipo"] == "api"]
+    fontes = [fonte for fonte in fontes if fonte["tipo"] == "api"]
     if not fontes:
-        print("Nenhuma fonte do tipo api no config/fontes.yml; nada a fazer.")
+        log.info("Nenhuma fonte do tipo api no config/fontes.yml; nada a fazer.")
         return
 
     momento = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
@@ -81,13 +83,23 @@ def main() -> None:
 
         registros = buscar(api, cabecalhos(autenticacao, segredo))
         if not registros:
-            print(f"{fonte['nome']}: a API não devolveu registros.")
+            log.info("%s: a API não devolveu registros.", fonte["nome"])
             continue
 
-        destino = f"{args.landing.rstrip('/')}/{api['pasta_landing']}/{fonte['nome']}_{momento}.json"
+        destino = f"{landing.rstrip('/')}/{api['pasta_landing']}/{fonte['nome']}_{momento}.json"
         conteudo = "\n".join(json.dumps(registro, ensure_ascii=False) for registro in registros)
         dbutils.fs.put(destino, conteudo, overwrite=False)
-        print(f"{fonte['nome']}: {len(registros)} registros gravados em {destino}")
+        log.info("%s: %d registros gravados em %s", fonte["nome"], len(registros), destino)
+
+
+def main() -> None:
+    args = argumentos()
+    sys.path.append(args.codigo)
+    from essentials.config_fontes import carregar_fontes
+    from essentials.log_texto import configurar_log
+
+    configurar_log(args.fuso_horario)
+    ingerir(carregar_fontes(args.config), args.landing)
 
 
 if __name__ == "__main__":

@@ -285,6 +285,9 @@ def test_silver_ordena_pela_data_de_referencia_e_desempata_sem_depender_da_ordem
     # do arquivo no desempate, o retrato poderia trocar de arquivo a cada atualização.
     # O nome do arquivo é único: fecha o desempate. Sem ele, empate total ficaria ao acaso.
     assert ORDEM_DO_RETRATO[-1] == "_arquivo_origem" and {"_ingerido_em", "_modificado_em"} <= set(ORDEM_DO_RETRATO)
+    # Risco: com a ingestão primeiro, arquivos enviados juntos e lidos em micro-batches
+    # diferentes escolheriam o retrato errado (não determinístico).
+    assert ORDEM_DO_RETRATO.index("_modificado_em") < ORDEM_DO_RETRATO.index("_ingerido_em")
     assert len(set(ORDEM_DO_RETRATO)) == len(ORDEM_DO_RETRATO)
     codigo = (PASTA_PIPELINE / "silver.py").read_text(encoding="utf-8")
     funcao = codigo[codigo.index("def manter_ultimo_arquivo") : codigo.index("def manter_versao_mais_recente")]
@@ -580,12 +583,11 @@ def test_job_roda_ingestao_antes_do_pipeline():
     job = carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]["essentials_carga_diaria"]
     tarefas = {tarefa["task_key"]: tarefa for tarefa in job["tasks"]}
     assert job["schedule"]["timezone_id"] == "America/Sao_Paulo"
-    pipeline_id = tarefas["atualizar_lakehouse"]["pipeline_task"]["pipeline_id"]
+    pipeline_id = tarefas["processar_medalhao"]["pipeline_task"]["pipeline_id"]
     assert pipeline_id == "${resources.pipelines.essentials_pipeline.id}"
-    dependencias = {d["task_key"] for d in tarefas["atualizar_lakehouse"]["depends_on"]}
-    assert dependencias == {"ingestao_api", "ingestao_banco", "governanca_antes"}
-    for chave in ("ingestao_api", "ingestao_banco"):
-        assert (RAIZ / "resources" / tarefas[chave]["spark_python_task"]["python_file"]).is_file()
+    dependencias = {d["task_key"] for d in tarefas["processar_medalhao"]["depends_on"]}
+    assert dependencias == {"ingerir_fontes_externas", "preparar_governanca"}
+    assert (RAIZ / "resources" / tarefas["ingerir_fontes_externas"]["spark_python_task"]["python_file"]).is_file()
 
 
 def test_targets_dev_e_prod():
@@ -668,7 +670,7 @@ def test_de_para_de_area_compara_em_minusculas_sem_prefixo_repetido():
     assert "coalesce(a.nm_area, 'Não classificada') AS nm_area" in sql
 
 
-# Views da gold (src/views/), criadas pela governanca_depois ----------------------------
+# Views da gold (src/views/), criadas pela publicar_monitoramento -----------------------
 
 
 def arquivos_views() -> list[Path]:

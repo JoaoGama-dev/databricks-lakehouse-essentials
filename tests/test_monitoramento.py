@@ -13,10 +13,9 @@ from pathlib import Path
 import yaml
 
 from essentials.config_fontes import PREFIXOS_POR_TIPO, carregar_fontes
+from essentials.log_sql import COLUNAS_FALHAS, LOG, TABELA_FALHAS
 from essentials.monitoramento_sql import (
-    COLUNAS_FALHAS,
     EVENT_LOG,
-    TABELA_FALHAS,
     regras_monitoradas,
     sql_atualizacao,
     sql_custo_diario,
@@ -150,9 +149,9 @@ def test_custo_filtra_pelos_ids_do_job_e_do_pipeline():
 
 
 def test_views_sao_criadas_depois_do_pipeline_com_os_parametros():
-    parametros = tarefas()["governanca_depois"]["spark_python_task"]["parameters"]
+    parametros = tarefas()["publicar_monitoramento"]["spark_python_task"]["parameters"]
     valor = {parametros[i]: parametros[i + 1] for i in range(0, len(parametros), 2)}
-    assert valor["--etapa"] == "depois"
+    assert "processar_medalhao" in {d["task_key"] for d in tarefas()["publicar_monitoramento"]["depends_on"]}
     assert valor["--job-id"] == "{{job.id}}"
     assert valor["--pipeline-id"] == "${resources.pipelines.essentials_pipeline.id}"
     assert valor["--limite-atraso-horas"] == "${var.limite_atraso_horas}"
@@ -200,25 +199,7 @@ def test_recursos_tem_tags_de_projeto_cliente_e_ambiente():
     assert "cliente" in bundle()["targets"]["prod"]["variables"]
 
 
-# 4.6 Ingestão só quando há fonte --------------------------------------------------
-
-
-def test_variaveis_de_ingestao_refletem_o_fontes_yml():
-    tipos = {fonte["tipo"] for fonte in FONTES}
-    variaveis = bundle()["variables"]
-    assert variaveis["ingerir_banco"]["default"] == ("true" if "banco" in tipos else "false")
-    assert variaveis["ingerir_api"]["default"] == ("true" if "api" in tipos else "false")
-
-
-def test_ingestao_so_roda_quando_a_condicao_e_verdadeira():
-    for tipo in ("banco", "api"):
-        condicao = tarefas()[f"tem_fonte_{tipo}"]["condition_task"]
-        assert condicao == {"op": "EQUAL_TO", "left": f"${{var.ingerir_{tipo}}}", "right": "true"}
-        assert tarefas()[f"ingestao_{tipo}"]["depends_on"] == [{"task_key": f"tem_fonte_{tipo}", "outcome": "true"}]
-
-
-def test_pipeline_roda_com_as_ingestoes_puladas():
-    assert tarefas()["atualizar_lakehouse"]["run_if"] == "NONE_FAILED"
+# 4.6 Ingestão só quando há fonte: tests/test_log.py (variável ingerir_fontes_externas) --------
 
 
 # 4.7 Painel de saúde --------------------------------------------------------------
@@ -248,15 +229,15 @@ def test_painel_de_saude_so_le_views_mon_sem_ambiente_fixo():
     for dataset in painel_saude()["datasets"]:
         sql = "".join(dataset["queryLines"])
         tabelas = re.findall(r"\b(?:FROM|JOIN)\s+([\w.]+)", sql, flags=re.IGNORECASE)
-        lidas = set(views()) | {TABELA_FALHAS}
+        lidas = set(views()) | {TABELA_FALHAS, LOG.nome}
         assert tabelas and all(tabela in lidas for tabela in tabelas), (dataset["name"], tabelas)
         assert "essentials" not in sql and "portfolio" not in sql
 
 
 def test_widgets_do_painel_de_saude_usam_colunas_das_views():
     colunas = {coluna for sql in views().values() for coluna in colunas_da_view(sql)}
-    # Campos calculados nos datasets do painel e as colunas da tabela mon_falhas.
-    colunas |= {"qt_atrasada", "pc_sucesso_30d", *COLUNAS_FALHAS}
+    # Campos calculados nos datasets do painel, as colunas da view mon_falhas e as do log.
+    colunas |= {"qt_atrasada", "pc_sucesso_30d", *COLUNAS_FALHAS, *LOG.colunas}
     datasets = {d["name"] for d in painel_saude()["datasets"]}
     for pagina in painel_saude()["pages"]:
         for item in pagina["layout"]:

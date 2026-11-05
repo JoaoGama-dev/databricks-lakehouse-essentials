@@ -70,6 +70,40 @@
         "SELECT nm_tabela, ds_tipo, nm_coluna, qt_linhas\n",
         "FROM mon_estrutura"
       ]
+    },
+    {
+      "name": "ds_carga_ultima_execucao",
+      "displayName": "Última execução: job e tarefas",
+      "queryLines": [
+        "SELECT cd_nivel, coalesce(nm_tarefa, 'job') AS nm_tarefa, st_execucao, ds_duracao, qt_duracao_segundos,\n",
+        "  dh_inicio, dh_fim, ds_motivo_falha\n",
+        "FROM mon_log_execucao\n",
+        "WHERE cd_nivel IN ('job', 'tarefa') AND id_execucao_job = (SELECT max_by(id_execucao_job, dh_inicio) FROM mon_log_execucao WHERE cd_nivel = 'job')"
+      ]
+    },
+    {
+      "name": "ds_carga_tabelas",
+      "displayName": "Última execução: tabela por tabela",
+      "queryLines": [
+        "SELECT nm_schema, nm_tabela, ds_metodo_carga, cd_tecnica_refresh, st_execucao, qt_linhas_gravadas,\n",
+        "  qt_linhas_descartadas, qt_linhas_alerta, qt_linhas_tabela, ds_duracao, dh_ultima_atualizacao_anterior,\n",
+        "  dh_inicio, dh_fim\n",
+        "FROM mon_log_execucao\n",
+        "WHERE cd_nivel = 'tabela' AND id_execucao_job = (SELECT max_by(id_execucao_job, dh_inicio) FROM mon_log_execucao WHERE cd_nivel = 'job')"
+      ]
+    },
+    {
+      "name": "ds_carga_por_dia",
+      "displayName": "Duração e descartes por dia",
+      "queryLines": [
+        "SELECT to_date(dh_inicio) AS dt_execucao,\n",
+        "  max(qt_duracao_segundos) FILTER (WHERE cd_nivel = 'job') AS qt_duracao_segundos,\n",
+        "  sum(qt_linhas_descartadas) FILTER (WHERE cd_nivel = 'tabela') AS qt_linhas_descartadas,\n",
+        "  sum(qt_linhas_alerta) FILTER (WHERE cd_nivel = 'tabela') AS qt_linhas_alerta\n",
+        "FROM mon_log_execucao\n",
+        "WHERE dh_inicio >= current_date() - INTERVAL 90 DAYS\n",
+        "GROUP BY to_date(dh_inicio)"
+      ]
     }
   ],
   "pages": [
@@ -1676,6 +1710,860 @@
             "y": 38,
             "width": 6,
             "height": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "saude_carga",
+      "displayName": "Saúde da carga",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo_saude_carga",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Saúde da carga\n",
+                "A última execução da carga diária, tarefa por tarefa e tabela por tabela, a tendência de duração e descartes e as falhas com o motivo. Lê o log mon_log_execucao."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_ultima_execucao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_carga_ultima_execucao",
+                  "fields": [
+                    {
+                      "name": "nm_tarefa",
+                      "expression": "`nm_tarefa`"
+                    },
+                    {
+                      "name": "st_execucao",
+                      "expression": "`st_execucao`"
+                    },
+                    {
+                      "name": "ds_duracao",
+                      "expression": "`ds_duracao`"
+                    },
+                    {
+                      "name": "dh_inicio",
+                      "expression": "`dh_inicio`"
+                    },
+                    {
+                      "name": "dh_fim",
+                      "expression": "`dh_fim`"
+                    },
+                    {
+                      "name": "ds_motivo_falha",
+                      "expression": "`ds_motivo_falha`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "nm_tarefa",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Job ou tarefa",
+                    "displayName": "Job ou tarefa",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "st_execucao",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Status",
+                    "displayName": "Status",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_duracao",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Duração",
+                    "displayName": "Duração",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "dh_inicio",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Início",
+                    "displayName": "Início",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "dh_fim",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Fim",
+                    "displayName": "Fim",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_motivo_falha",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "Motivo da falha",
+                    "displayName": "Motivo da falha",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Última execução: status e duração do job e de cada tarefa"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_carga_tabelas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_carga_tabelas",
+                  "fields": [
+                    {
+                      "name": "nm_tabela",
+                      "expression": "`nm_tabela`"
+                    },
+                    {
+                      "name": "ds_metodo_carga",
+                      "expression": "`ds_metodo_carga`"
+                    },
+                    {
+                      "name": "cd_tecnica_refresh",
+                      "expression": "`cd_tecnica_refresh`"
+                    },
+                    {
+                      "name": "st_execucao",
+                      "expression": "`st_execucao`"
+                    },
+                    {
+                      "name": "qt_linhas_gravadas",
+                      "expression": "`qt_linhas_gravadas`"
+                    },
+                    {
+                      "name": "qt_linhas_descartadas",
+                      "expression": "`qt_linhas_descartadas`"
+                    },
+                    {
+                      "name": "qt_linhas_alerta",
+                      "expression": "`qt_linhas_alerta`"
+                    },
+                    {
+                      "name": "qt_linhas_tabela",
+                      "expression": "`qt_linhas_tabela`"
+                    },
+                    {
+                      "name": "ds_duracao",
+                      "expression": "`ds_duracao`"
+                    },
+                    {
+                      "name": "dh_ultima_atualizacao_anterior",
+                      "expression": "`dh_ultima_atualizacao_anterior`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "nm_tabela",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Tabela",
+                    "displayName": "Tabela",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_metodo_carga",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Método",
+                    "displayName": "Método",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "cd_tecnica_refresh",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Técnica",
+                    "displayName": "Técnica",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "st_execucao",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Status",
+                    "displayName": "Status",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_linhas_gravadas",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Gravadas",
+                    "displayName": "Gravadas",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_linhas_descartadas",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "Descartadas",
+                    "displayName": "Descartadas",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_linhas_alerta",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "Alertas",
+                    "displayName": "Alertas",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "qt_linhas_tabela",
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100007,
+                    "title": "Total na tabela",
+                    "displayName": "Total na tabela",
+                    "alignContent": "right",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_duracao",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100008,
+                    "title": "Duração",
+                    "displayName": "Duração",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "dh_ultima_atualizacao_anterior",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100009,
+                    "title": "Carga anterior",
+                    "displayName": "Carga anterior",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Última execução: tabela por tabela"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "linha_duracao_carga",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_carga_por_dia",
+                  "fields": [
+                    {
+                      "name": "dt_execucao",
+                      "expression": "`dt_execucao`"
+                    },
+                    {
+                      "name": "qt_duracao_segundos",
+                      "expression": "SUM(`qt_duracao_segundos`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "dt_execucao",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Dia"
+                },
+                "y": {
+                  "fieldName": "qt_duracao_segundos",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Segundos"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Duração da carga por dia (segundos)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "barras_descartes_carga",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_carga_por_dia",
+                  "fields": [
+                    {
+                      "name": "dt_execucao",
+                      "expression": "`dt_execucao`"
+                    },
+                    {
+                      "name": "qt_linhas_descartadas",
+                      "expression": "SUM(`qt_linhas_descartadas`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "dt_execucao",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Dia"
+                },
+                "y": {
+                  "fieldName": "qt_linhas_descartadas",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Linhas"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Linhas descartadas por dia"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 12,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela_falhas_carga",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_falhas",
+                  "fields": [
+                    {
+                      "name": "dh_falha",
+                      "expression": "`dh_falha`"
+                    },
+                    {
+                      "name": "nm_tarefa",
+                      "expression": "`nm_tarefa`"
+                    },
+                    {
+                      "name": "ds_motivo",
+                      "expression": "`ds_motivo`"
+                    },
+                    {
+                      "name": "ds_link",
+                      "expression": "`ds_link`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "dh_falha",
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Quando",
+                    "displayName": "Quando",
+                    "alignContent": "left",
+                    "allowSearch": false,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "nm_tarefa",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Tarefa",
+                    "displayName": "Tarefa",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_motivo",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Motivo",
+                    "displayName": "Motivo",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  },
+                  {
+                    "fieldName": "ds_link",
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Execução",
+                    "displayName": "Execução",
+                    "alignContent": "left",
+                    "allowSearch": true,
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Falhas com o motivo (30 dias)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 6,
+            "height": 4
           }
         }
       ]

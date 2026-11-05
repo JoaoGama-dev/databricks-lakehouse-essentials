@@ -4,3 +4,5 @@ ruff==0.12.7
 pre-commit==4.7.0
 # Testes de integração (tests/integracao/, scripts/integracao.py).
 databricks-sdk==0.154.0
+# Fusos horários do zoneinfo no Windows (o Linux do CI e do Databricks já tem a base).
+tzdata==2026.5

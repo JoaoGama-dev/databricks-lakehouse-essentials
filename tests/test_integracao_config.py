@@ -185,99 +185,70 @@ def passos() -> list[dict]:
     return workflow()["jobs"]["integracao"]["steps"]
 
 
-# Cenários depois da v2: primeiro os de risco, que partem do estado da v2; a v3 e a v4 por último.
-CENARIOS_DE_TESTE = ("reenvio", "atrasado", "so_cabecalho", "full_refresh", "cp1252", "v3", "v4")
-CENARIOS_EM_ORDEM = (
-    "integracao.py enviar --versao 5",
-    "INTEGRACAO_CENARIO=reenvio",
-    "integracao.py enviar --versao 6",
-    "INTEGRACAO_CENARIO=atrasado",
-    "integracao.py enviar --versao 7",
-    "INTEGRACAO_CENARIO=so_cabecalho",
-    "--full-refresh-all",
-    "INTEGRACAO_CENARIO=full_refresh",
-    "integracao.py enviar --versao 8",
-    "INTEGRACAO_CENARIO=cp1252",
-    "integracao.py enviar --versao 3",
-    "INTEGRACAO_CENARIO=v3",
-    "integracao.py enviar --versao 4",
-    "INTEGRACAO_CENARIO=v4",
-)
+def comandos() -> list[str]:
+    return [passo.get("run", "") for passo in passos()]
 
 
 def test_workflow_comeca_limpo():
-    comandos = [passo.get("run", "") for passo in passos()]
-    deploy = next(i for i, comando in enumerate(comandos) if "bundle deploy -t ci" in comando)
-    limpeza = next(i for i, comando in enumerate(comandos) if "bundle destroy -t ci" in comando)
+    deploy = next(i for i, comando in enumerate(comandos()) if "bundle deploy -t ci" in comando)
+    limpeza = next(i for i, comando in enumerate(comandos()) if "bundle destroy -t ci" in comando)
     assert limpeza < deploy
-    assert "integracao.py limpar" in comandos[limpeza]
+    assert "integracao.py limpar" in comandos()[limpeza]
 
 
-def test_workflow_segue_a_ordem_e_sempre_limpa():
-    comandos = [passo.get("run", "") for passo in passos()]
-    deploy = next(i for i, comando in enumerate(comandos) if "bundle deploy -t ci" in comando)
-    comandos = comandos[deploy:]
-    ordem = [
-        "bundle deploy -t ci",
-        "bundle summary -t ci",
-        "integracao.py preparar",
-        "--only governanca_antes",
-        "--validate-only",
-        "integracao.py enviar --versao 1",
-        "INTEGRACAO_VERSAO=1",
-        "integracao.py enviar --versao 2",
-        "INTEGRACAO_VERSAO=2",
-        *CENARIOS_EM_ORDEM,
-        "bundle destroy -t ci",
-        "integracao.py limpar",
-    ]
-    posicoes = [next(i for i, comando in enumerate(comandos) if trecho in comando) for trecho in ordem]
-    assert posicoes == sorted(posicoes), ordem
+# Ordem das duas rodadas. A rodada 2 manda quatro arquivos numa carga só, nesta ordem: a v5
+# (mesmo conteúdo da v2) por último, para ganhar o desempate do retrato.
+ORDEM = [
+    "bundle deploy -t ci",
+    "bundle summary -t ci",
+    "integracao.py preparar",
+    "--only preparar_governanca",
+    "--validate-only",
+    "integracao.py enviar --versao 1\n",
+    "bundle run essentials_carga_diaria -t ci\n",
+    "INTEGRACAO_RODADA=1 pytest -m integracao tests/integracao/test_carga.py",
+    "integracao.py enviar --versao 2 6 7 5\n",
+    "bundle run essentials_carga_diaria -t ci\n",
+    "INTEGRACAO_RODADA=2 pytest -m integracao tests/integracao/test_carga.py",
+    "bundle destroy -t ci",
+    "integracao.py limpar",
+]
+
+
+def test_workflow_segue_a_ordem_das_rodadas_e_sempre_limpa():
+    deploy = next(i for i, comando in enumerate(comandos()) if "bundle deploy -t ci" in comando)
+    depois = [comando + "\n" for comando in comandos()[deploy:]]
+    posicoes = []
+    inicio = 0
+    for trecho in ORDEM:
+        inicio = next(i for i in range(inicio, len(depois)) if trecho in depois[i])
+        posicoes.append(inicio)
+    assert posicoes == sorted(posicoes), ORDEM
     # Depois do deploy, destroy e limpeza rodam mesmo quando um passo anterior falha.
     for passo in passos()[deploy:]:
         if "bundle destroy" in passo.get("run", "") or "integracao.py limpar" in passo.get("run", ""):
             assert passo["if"] == "always()", passo["name"]
 
 
-def test_cenarios_so_rodam_quando_pedidos_e_cada_um_tem_conferencia():
-    comandos = [passo.get("run", "") for passo in passos()]
-    v2 = next(i for i, comando in enumerate(comandos) if "INTEGRACAO_VERSAO=2" in comando)
-    destroy = next(i for i, comando in enumerate(comandos) if "bundle destroy -t ci" in comando and i > v2)
-    cenarios = passos()[v2 + 1 : destroy]
-    assert cenarios and all(passo["if"] == "inputs.cenarios_de_falha" for passo in cenarios)
-    # Um passo de carga e um de conferência por cenário, alternados.
-    conferencias = [passo["run"] for passo in cenarios[1::2]]
-    assert all(run.startswith("INTEGRACAO_CENARIO=") and "tests/integracao/test_cenarios.py" in run
-               for run in conferencias), conferencias
-    assert len(cenarios) == 2 * len(CENARIOS_DE_TESTE)
+def test_workflow_sem_cenarios_opcionais_e_com_duas_cargas():
+    # Cada carga custa tempo do Free Edition; um cenário que só roda quando lembram não protege nada.
+    assert gatilhos()["workflow_dispatch"] is None
+    cargas = [c for c in comandos() if "bundle run essentials_carga_diaria -t ci" in c and "--only" not in c]
+    assert len(cargas) == 2
+    assert all(passo.get("if", "always()") == "always()" for passo in passos())
 
 
-def test_todo_cenario_do_workflow_existe_em_test_cenarios():
-    texto = WORKFLOW.read_text(encoding="utf-8")
-    nomes = re.findall(r"INTEGRACAO_CENARIO=(\w+)", texto)
-    assert tuple(nomes) == CENARIOS_DE_TESTE
-    codigo = (RAIZ / "tests" / "integracao" / "test_cenarios.py").read_text(encoding="utf-8")
-    declarados = re.search(r"^CENARIOS = \((.*)\)$", codigo, re.MULTILINE).group(1)
-    assert tuple(re.findall(r'"(\w+)"', declarados)) == CENARIOS_DE_TESTE
-
-
-def test_full_refresh_do_grafo_inteiro_precisa_ser_recusado():
-    # Se o full refresh passasse, o histórico SCD2 teria sido apagado: o passo falha nesse caso.
-    passo = next(p for p in passos() if "--full-refresh-all" in p.get("run", ""))
-    assert passo["run"].startswith("if databricks bundle run essentials_pipeline -t ci --full-refresh-all; then")
-    assert "exit 1" in passo["run"]
-
-
-def test_timeout_do_workflow_cabe_as_cargas_dos_cenarios():
-    # Nove cargas de até 6 minutos, mais deploy, conferências e destroy.
-    assert workflow()["jobs"]["integracao"]["timeout-minutes"] >= 9 * 6 + 20
+def test_timeout_do_workflow_cabe_duas_cargas_sem_esconder_travamento():
+    # Duas cargas de até 6 minutos, mais deploy, conferências e destroy (cerca de 15 minutos).
+    assert workflow()["jobs"]["integracao"]["timeout-minutes"] == 30
 
 
 def test_workflow_envia_so_versoes_da_lista_fechada():
     texto = WORKFLOW.read_text(encoding="utf-8")
-    enviadas = [int(n) for n in re.findall(r"integracao\.py enviar --versao (\d+)", texto)]
-    assert enviadas == [1, 2, 5, 6, 7, 8, 3, 4]
-    assert set(enviadas) <= set(INTEGRACAO.VERSOES_AGENDA)
+    listas = re.findall(r"integracao\.py enviar --versao ([\d ]+)", texto)
+    enviadas = [[int(n) for n in lista.split()] for lista in listas]
+    assert enviadas == [[1], [2, 6, 7, 5]]
+    assert all(set(lista) <= set(INTEGRACAO.VERSOES_AGENDA) for lista in enviadas)
 
 
 def test_enviar_aceita_so_as_versoes_do_gerador():
@@ -296,6 +267,19 @@ def test_enviar_aceita_so_as_versoes_do_gerador():
 def test_enviar_recusa_versao_fora_da_lista(versao):
     with pytest.raises(ValueError, match="não existe"):
         INTEGRACAO.arquivo_da_versao(versao)
+
+
+def test_enviar_varias_versoes_mantem_a_ordem_e_confere_todas_antes():
+    # A ordem decide o desempate do retrato (a última enviada é a mais recente).
+    assert [a.name for a in INTEGRACAO.arquivos_das_versoes([2, 6, 7, 5])] == [
+        "agenda_exemplo_v2.csv", "agenda_exemplo_v6.csv", "agenda_exemplo_v7.csv", "agenda_exemplo_v5.csv",
+    ]
+    # Uma versão fora da lista recusa o envio inteiro, antes de mandar qualquer arquivo.
+    with pytest.raises(ValueError, match="não existe"):
+        INTEGRACAO.arquivos_das_versoes([2, 9])
+    for invalida in ([], [2, 5, 2]):
+        with pytest.raises(ValueError):
+            INTEGRACAO.arquivos_das_versoes(invalida)
 
 
 def test_workflow_nunca_toca_em_prod():

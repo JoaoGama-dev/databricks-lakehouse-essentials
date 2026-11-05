@@ -4,23 +4,20 @@ taxa de sucesso, teto de custo e os alertas que avisam o cliente e o suporte.
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import yaml
 
-from essentials.config_fontes import carregar_fontes, validar_config
+from essentials.config_fontes import carregar_fontes, expectations, validar_config
 from essentials.monitoramento_sql import (
+    MOTIVO_SEM_CLASSE,
     TAMANHO_MAXIMO_MOTIVO,
     colunas_novas_na_origem,
     motivo_seguro,
     sql_custo_mensal,
     sql_estrutura,
     sql_execucoes,
-    sql_registrar_falhas,
-    sql_tabela_falhas,
     sql_volume,
     tabela_do_volume,
 )
@@ -132,13 +129,22 @@ RETRATO_DA_AGENDA = (
 )
 
 
-def test_arquivo_ignorado_compara_o_ultimo_arquivo_da_bronze_com_o_retrato():
+def test_arquivo_ignorado_compara_todos_os_arquivos_da_ultima_carga_com_o_retrato():
     # O retrato é privado do pipeline: os arquivos dele são os das versões vigentes da silver.
     sql = estrutura(FONTES, COLUNAS_BRONZE_AGENDA)
     parte = parte_do_tipo(sql, "arquivo_ignorado")
     assert parte.startswith("SELECT 'bronze_agenda' AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, ")
     bronze = "`essentials`.`portfolio_bronze`.`bronze_agenda`"
-    assert f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {bronze})) AS b" in parte
+    # Vários arquivos da mesma carga podem cair em micro-batches diferentes: comparar só com o
+    # último _ingerido_em esconderia os arquivos dos micro-batches anteriores. Vale o início da
+    # atualização (event log) que gravou a ingestão mais recente.
+    log = "`essentials`.`portfolio_monitoramento`.`mon_log_eventos`"
+    inicio = (
+        f"coalesce((SELECT max(u.dh_inicio) FROM (SELECT origin.update_id, min(timestamp) AS dh_inicio FROM {log} "
+        "WHERE origin.update_id IS NOT NULL GROUP BY origin.update_id) AS u "
+        f"WHERE u.dh_inicio <= (SELECT max(_ingerido_em) FROM {bronze})), (SELECT max(_ingerido_em) FROM {bronze}))"
+    )
+    assert f"FROM (SELECT DISTINCT _arquivo_origem FROM {bronze} WHERE _ingerido_em >= {inicio}) AS b" in parte
     assert f"LEFT ANTI JOIN {RETRATO_DA_AGENDA} AS r ON b._arquivo_origem = r._arquivo_origem" in parte
     assert "silver_int_agenda_retrato" not in sql
 
@@ -254,75 +260,21 @@ def test_motivo_corta_qualquer_trecho_que_pareca_registro(mensagem):
     assert "Maria" not in motivo and "9999" not in motivo
 
 
-def test_motivo_tem_tamanho_limitado_e_nunca_vem_vazio():
-    assert len(motivo_seguro("x" * 1000)) == TAMANHO_MAXIMO_MOTIVO
-    assert motivo_seguro(None).startswith("Falha sem mensagem")
-    assert motivo_seguro("Erro na primeira linha\nsegunda linha com detalhe") == "Erro na primeira linha"
+def test_motivo_tem_tamanho_limitado_e_nunca_repassa_texto_livre():
+    assert len(motivo_seguro("Erro " + "x" * 1000 + "Error")) <= TAMANHO_MAXIMO_MOTIVO
+    assert motivo_seguro(None) == MOTIVO_SEM_CLASSE
+    # Lista de permissões: a primeira linha do erro não passa mais (pode ser um nome).
+    assert motivo_seguro("Erro na primeira linha\nsegunda linha com detalhe") == MOTIVO_SEM_CLASSE
 
 
-def test_tabela_de_falhas_segue_o_dicionario():
-    sql = sql_tabela_falhas("essentials", "portfolio_monitoramento")
-    assert sql.startswith("CREATE TABLE IF NOT EXISTS `essentials`.`portfolio_monitoramento`.`mon_falhas`")
-    assert "`ds_motivo` STRING COMMENT" in sql and "`dh_falha` TIMESTAMP COMMENT" in sql
-    assert "TBLPROPERTIES ('camada' = 'monitoramento', 'tipo' = 'falha')" in sql
-
-
-def test_registrar_falha_roda_so_quando_algo_falha_e_depende_de_todas_as_tarefas():
-    tarefa = tarefas()["registrar_falha"]
-    assert tarefa["run_if"] == "AT_LEAST_ONE_FAILED"
-    outras = set(tarefas()) - {"registrar_falha", "tem_fonte_api", "tem_fonte_banco"}
-    assert {d["task_key"] for d in tarefa["depends_on"]} == outras
-    parametros = tarefa["spark_python_task"]["parameters"]
-    assert parametros[parametros.index("--run-id") + 1] == "{{job.run_id}}"
-    # mon_falhas e o event log ficam no schema de monitoramento.
-    assert parametros[parametros.index("--schema-monitoramento") + 1] == "${resources.schemas.monitoramento.name}"
-    assert (RAIZ / "resources" / tarefa["spark_python_task"]["python_file"]).resolve().is_file()
-
-
-def test_registrar_falha_grava_o_motivo_limpo_e_termina_com_erro():
-    codigo = (RAIZ / "src" / "governanca" / "registrar_falha.py").read_text(encoding="utf-8")
-    assert "motivo_seguro(" in codigo
-    assert "sys.exit(" in codigo
-    assert "sql_registrar_falhas(" in codigo
-
-
-def carregar_registrar_falha():
-    caminho = RAIZ / "src" / "governanca" / "registrar_falha.py"
-    especificacao = importlib.util.spec_from_file_location("registrar_falha", caminho)
-    modulo = importlib.util.module_from_spec(especificacao)
-    especificacao.loader.exec_module(modulo)
-    return modulo
-
-
-def tarefa_fake(chave: str, estado: str | None):
-    resultado = SimpleNamespace(value=estado) if estado else None
-    return SimpleNamespace(task_key=chave, state=SimpleNamespace(result_state=resultado))
-
-
-def test_registrar_falha_ignora_a_si_mesma_e_o_que_so_falhou_por_dependencia():
-    # Na nova tentativa, a registrar_falha anterior aparece como FAILED: não é uma falha da carga.
-    modulo = carregar_registrar_falha()
-    tarefas = [
-        tarefa_fake("atualizar_lakehouse", "FAILED"),
-        tarefa_fake("governanca_depois", "UPSTREAM_FAILED"),
-        tarefa_fake("registrar_falha", "FAILED"),
-        tarefa_fake("governanca_antes", "SUCCESS"),
-        tarefa_fake("ingestao_api", None),
-    ]
-    assert [t.task_key for t in modulo.tarefas_com_falha(tarefas)] == ["atualizar_lakehouse"]
-
-
-def test_registro_de_falha_nao_duplica_na_mesma_execucao():
-    sql = sql_registrar_falhas("essentials", "portfolio", "42", [("atualizar_lakehouse", "motivo")], "https://x")
-    assert sql.startswith("MERGE INTO `essentials`.`portfolio`.`mon_falhas` AS f")
-    assert "ON f.id_execucao = n.id_execucao AND f.nm_tarefa = n.nm_tarefa" in sql
-    assert "WHEN NOT MATCHED THEN INSERT" in sql and "WHEN MATCHED" not in sql
-    assert "('42', 'atualizar_lakehouse', 'motivo', 'https://x')" in sql
-
-
-def test_registrar_falha_nao_e_tentada_de_novo():
-    assert tarefas()["registrar_falha"]["max_retries"] == 0
-
+def test_regra_data_plausivel_para_a_carga_inteira():
+    # Substitui o cenário v4 da integração: uma planilha com data antes de 2020 não pode virar
+    # painel; a regra precisa ser expect_all_or_fail (falhar), não drop nem alerta.
+    agenda = next(fonte for fonte in FONTES if fonte["nome"] == "agenda")
+    _descartar, _alertar, falhar = expectations(agenda)
+    assert falhar == {"data_plausivel": "dt_entrevista IS NULL OR dt_entrevista >= DATE'2020-01-01'"}
+    codigo = (RAIZ / "src" / "pipeline" / "silver.py").read_text(encoding="utf-8")
+    assert "funcao = dp.expect_all_or_fail(falhar)(funcao)" in codigo
 
 def test_aviso_de_falha_do_job_vai_tambem_para_o_suporte():
     job = carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]["essentials_carga_diaria"]
@@ -344,11 +296,15 @@ def test_custo_mensal_compara_com_o_teto():
     assert "CAST(150.0 AS DOUBLE) AS vl_teto" in sql and "AS pc_do_teto" in sql
 
 
-def test_governanca_cria_as_views_novas_e_a_tabela_de_falhas():
-    codigo = (RAIZ / "src" / "governanca" / "governanca.py").read_text(encoding="utf-8")
-    for funcao in ("sql_tabela_falhas(", "sql_volume(", "sql_estrutura(", "sql_execucoes(", "sql_custo_mensal("):
-        assert funcao in codigo, funcao
-    parametros = tarefas()["governanca_depois"]["spark_python_task"]["parameters"]
+def test_log_e_view_de_falhas_existem_antes_do_pipeline_e_as_views_depois():
+    # O alerta lê mon_falhas mesmo antes da primeira falha: a view nasce na preparação.
+    preparar = (RAIZ / "src" / "governanca" / "governanca.py").read_text(encoding="utf-8")
+    for funcao in ("sql_funcao_mascara(", "sql_criar_tabela_log(", "sql_view_falhas("):
+        assert funcao in preparar, funcao
+    publicar = (RAIZ / "src" / "governanca" / "publicar_monitoramento.py").read_text(encoding="utf-8")
+    for funcao in ("sql_volume(", "sql_estrutura(", "sql_execucoes(", "sql_custo_mensal(", "sql_merge_tabelas("):
+        assert funcao in publicar, funcao
+    parametros = tarefas()["publicar_monitoramento"]["spark_python_task"]["parameters"]
     valor = {parametros[i]: parametros[i + 1] for i in range(0, len(parametros), 2)}
     assert valor["--limite-queda-volume-pct"] == "${var.limite_queda_volume_pct}"
     assert valor["--teto-custo-mensal"] == "${var.teto_custo_mensal_usd}"
@@ -372,6 +328,9 @@ def test_alertas_pausados_em_dev_e_ci_e_com_suporte_em_prod():
     targets = bundle()["targets"]
     for alvo in ("dev", "ci"):
         for nome in alertas():
+            if alvo == "dev" and nome == "falha_carga":
+                # Ativo em dev, para o e-mail de falha com o motivo ser conferido (test_log.py).
+                continue
             assert targets[alvo]["resources"]["alerts"][nome]["schedule"]["pause_status"] == "PAUSED", (alvo, nome)
     for nome in alertas():
         inscricoes = targets["prod"]["resources"]["alerts"][nome]["evaluation"]["notification"]["subscriptions"]

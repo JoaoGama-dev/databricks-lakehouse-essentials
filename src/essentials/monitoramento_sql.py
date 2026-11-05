@@ -1,11 +1,13 @@
 """SQL das views de monitoramento mon_* (docs/adr/0003).
 
 Funções puras, sem Spark, para serem testadas pelo pytest. Quem executa é
-src/governanca/governanca.py, na tarefa governanca_depois do job, depois do pipeline:
-o event log (mon_log_eventos) só existe depois da primeira atualização do pipeline.
+src/governanca/publicar_monitoramento.py, na tarefa publicar_monitoramento do job, depois
+do pipeline: o event log (mon_log_eventos) só existe depois da primeira atualização do
+pipeline.
 
-As views, o event log e a tabela mon_falhas ficam no schema de monitoramento
-(<projeto>_monitoramento); as views leem a bronze e a silver nos schemas de cada camada.
+As views e o event log ficam no schema de monitoramento (<projeto>_monitoramento); as views
+leem a bronze e a silver nos schemas de cada camada. O log de cada carga (mon_log_execucao)
+e a view mon_falhas estão em src/essentials/log_sql.py.
 
   mon_qualidade_diaria  por dia, tabela e regra: linhas aprovadas, descartadas e alertas
   mon_atualizacao       última atualização do pipeline e última ingestão de cada silver
@@ -338,20 +340,41 @@ def arquivos_do_retrato(catalogo: str, schema_bronze: str, schema_silver: str, f
     )
 
 
-def sql_arquivo_ignorado(catalogo: str, schema_bronze: str, schema_silver: str, fonte: dict) -> str:
-    """Aviso quando o último arquivo recebido de um snapshot não virou o retrato.
+def inicio_da_ultima_carga(catalogo: str, schema_monitoramento: str, bronze: str) -> str:
+    """Início da atualização do pipeline que gravou a ingestão mais recente da bronze.
 
-    Ele perdeu para um arquivo com data de referência maior (data_referencia) ou não gerou
-    nenhuma linha (ex.: só o cabeçalho).
+    É a atualização mais recente que começou antes do último _ingerido_em. Vários arquivos
+    de uma mesma carga podem cair em micro-batches diferentes (com _ingerido_em diferentes),
+    mas todos são ingeridos depois do início da atualização. Sem event log, vale o último
+    _ingerido_em (só o último micro-batch).
+    """
+    log = nome_completo(catalogo, schema_monitoramento, EVENT_LOG)
+    ultima_ingestao = f"(SELECT max(_ingerido_em) FROM {bronze})"
+    return (
+        f"coalesce((SELECT max(u.dh_inicio) FROM (SELECT origin.update_id, min(timestamp) AS dh_inicio FROM {log} "
+        f"WHERE origin.update_id IS NOT NULL GROUP BY origin.update_id) AS u "
+        f"WHERE u.dh_inicio <= {ultima_ingestao}), {ultima_ingestao})"
+    )
+
+
+def sql_arquivo_ignorado(
+    catalogo: str, schema_monitoramento: str, schema_bronze: str, schema_silver: str, fonte: dict
+) -> str:
+    """Aviso para cada arquivo da última carga de um snapshot que não virou o retrato.
+
+    Ele perdeu para um arquivo com data de referência maior (data_referencia), empatou e
+    perdeu no desempate, ou não gerou nenhuma linha (ex.: só o cabeçalho). A última carga
+    são os arquivos ingeridos desde o início da atualização que os gravou
+    (inicio_da_ultima_carga), não só o último micro-batch.
     """
     bronze = tabelas_da_fonte(fonte)["bronze"]
     tabela = nome_completo(catalogo, schema_bronze, bronze)
     retrato = arquivos_do_retrato(catalogo, schema_bronze, schema_silver, fonte)
+    inicio = inicio_da_ultima_carga(catalogo, schema_monitoramento, tabela)
     return (
         f"SELECT {literal_sql(bronze)} AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, "
         f"{NOME_DO_ARQUIVO} AS nm_coluna, CAST(NULL AS BIGINT) AS qt_linhas "
-        f"FROM (SELECT DISTINCT _arquivo_origem FROM {tabela} "
-        f"WHERE _ingerido_em >= (SELECT max(_ingerido_em) FROM {tabela})) AS b "
+        f"FROM (SELECT DISTINCT _arquivo_origem FROM {tabela} WHERE _ingerido_em >= {inicio}) AS b "
         f"LEFT ANTI JOIN ({retrato}) AS r ON b._arquivo_origem = r._arquivo_origem"
     )
 
@@ -402,7 +425,7 @@ def sql_estrutura(
         if "_arquivo_origem" not in colunas:
             continue
         if fonte["modo_carga"] == "snapshot":
-            partes.append(sql_arquivo_ignorado(catalogo, schema_bronze, schema_silver, fonte))
+            partes.append(sql_arquivo_ignorado(catalogo, schema, schema_bronze, schema_silver, fonte))
         if fonte.get("arquivo", {}).get("formato") == "texto" and "value" in colunas:
             partes.append(sql_codificacao_invalida(catalogo, schema_bronze, schema_silver, fonte))
     return definicao_view(
@@ -482,66 +505,58 @@ GROUP BY 1"""
     )
 
 
-TABELA_FALHAS = "mon_falhas"
-COLUNAS_FALHAS = {
-    "dh_falha": "Quando a falha foi registrada.",
-    "id_execucao": "Execução do job que falhou.",
-    "nm_tarefa": "Tarefa do job que falhou.",
-    "ds_motivo": "Motivo da falha, sem dados do registro (só a primeira linha e os nomes das regras).",
-    "ds_link": "Link da execução no Databricks.",
-}
-
-
-def sql_tabela_falhas(catalogo: str, schema: str) -> str:
-    """Tabela onde a tarefa registrar_falha grava cada falha; criada antes da primeira carga."""
-    colunas = ",\n  ".join(
-        f"`{coluna}` {'TIMESTAMP' if coluna.startswith('dh_') else 'STRING'} COMMENT {literal_sql(texto)}"
-        for coluna, texto in COLUNAS_FALHAS.items()
-    )
-    return (
-        f"CREATE TABLE IF NOT EXISTS {nome_completo(catalogo, schema, TABELA_FALHAS)} (\n  {colunas}\n)\n"
-        "COMMENT 'Falhas da carga diária com o motivo, para o aviso por e-mail e o relatório mensal.'\n"
-        f"TBLPROPERTIES ('camada' = '{CAMADA}', 'tipo' = 'falha')"
-    )
-
-
-def sql_registrar_falhas(
-    catalogo: str, schema: str, id_execucao: str, falhas: list[tuple[str, str]], link: str
-) -> str:
-    """Grava as falhas de uma execução sem duplicar: uma linha por (execução, tarefa).
-
-    Se a tarefa registrar_falha for tentada de novo na mesma execução, o MERGE não grava
-    outra vez o que já está lá.
-    """
-    valores = ",\n    ".join(
-        f"({literal_sql(id_execucao)}, {literal_sql(tarefa)}, {literal_sql(motivo)}, {literal_sql(link)})"
-        for tarefa, motivo in falhas
-    )
-    return f"""MERGE INTO {nome_completo(catalogo, schema, TABELA_FALHAS)} AS f
-USING (SELECT * FROM VALUES
-    {valores}
-  AS novas(id_execucao, nm_tarefa, ds_motivo, ds_link)) AS n
-ON f.id_execucao = n.id_execucao AND f.nm_tarefa = n.nm_tarefa
-WHEN NOT MATCHED THEN INSERT (dh_falha, id_execucao, nm_tarefa, ds_motivo, ds_link)
-  VALUES (current_timestamp(), n.id_execucao, n.nm_tarefa, n.ds_motivo, n.ds_link)"""
-
-
 TAMANHO_MAXIMO_MOTIVO = 300
+# Lista de permissões: o motivo é só texto montado aqui. Do erro do motor sai no máximo a
+# classe (um identificador), os nomes de regra e a etapa; nunca texto livre (LGPD).
+MOTIVO_SEM_CLASSE = "Falha sem classe de erro identificada: veja a mensagem completa pelo link da execução."
+# Condição de erro do Databricks no começo de uma mensagem ([CAST_INVALID_INPUT],
+# [DELTA_X.Y]): no início do texto, de uma linha, depois de ": " ou do "message" do JSON.
+CONDICAO_DE_ERRO = re.compile(r'(?:^|\n|\\n|: |"message":")\[([A-Z][A-Z0-9]*(?:[_.][A-Z0-9]+)+)\]')
+# Nome de classe de exceção (AnalysisException, ValueError, SparkNumberFormatException),
+# sem o pacote: precisa terminar em Exception ou Error e ter algo antes.
+CLASSE_DE_EXCECAO = re.compile(r"(?<![\w$])(?:[\w$]+\.)*([A-Z][A-Za-z0-9]+(?:Exception|Error))(?![\w$])")
+ETAPA = re.compile(r"[A-Z][A-Z_]{1,60}")
+TAMANHO_MAXIMO_CLASSE = 120
 
 
-def motivo_seguro(mensagem: str | None) -> str:
-    """Motivo da falha que pode ir por e-mail: nunca o registro que violou a regra (LGPD).
+def classe_do_erro(mensagem: str | None) -> str | None:
+    """Classe do erro (condição do Databricks ou nome da exceção), nunca texto livre."""
+    texto = mensagem or ""
+    for padrao in (CONDICAO_DE_ERRO, CLASSE_DE_EXCECAO):
+        achado = padrao.search(texto)
+        if achado and len(achado.group(1)) <= TAMANHO_MAXIMO_CLASSE:
+            return achado.group(1)
+    return None
 
-    Regra `falhar` violada: só os nomes das regras. Outros erros: só a primeira linha, cortada
-    antes de qualquer trecho que pareça um registro ({...}, [...] ou "record"), com tamanho
-    limitado.
+
+def regras_violadas(mensagem: str, regras: set[str] | None = None) -> list[str]:
+    """Nomes das regras na lista "Violated expectations: 'a', 'b'" (só identificadores).
+
+    Com a lista de regras conhecida (fontes.yml), fica só o que é nome de regra de verdade.
     """
-    texto = (mensagem or "").strip()
-    if not texto:
-        return "Falha sem mensagem: veja a execução pelo link."
-    violadas = re.findall(r"Violated expectations?: ([^\n]+)", texto)
+    nomes = set()
+    for lista in re.findall(r"Violated expectations?: ((?:'\w+'(?:,\s*)?)+)", mensagem):
+        nomes.update(re.findall(r"'(\w+)'", lista))
+    if regras is not None:
+        nomes &= set(regras)
+    return sorted(nomes)
+
+
+def motivo_seguro(mensagem: str | None, etapa: str | None = None, regras: set[str] | None = None) -> str:
+    """Motivo da falha que pode ser gravado e ir por e-mail: só texto nosso (LGPD).
+
+    1. Regra falhar violada: só os nomes das regras.
+    2. Outros erros: só a classe do erro (classe_do_erro) e, se conhecida, a etapa da
+       atualização do pipeline (um estado, ex.: SETTING_UP_TABLES).
+    3. Sem classe identificável: MOTIVO_SEM_CLASSE.
+    Nenhuma palavra da mensagem do motor além disso chega ao motivo.
+    """
+    texto = mensagem or ""
+    violadas = regras_violadas(texto, regras)
     if violadas:
-        nomes = sorted(set(re.findall(r"'(\w+)'", " ".join(violadas))))
-        return f"Regra de qualidade que para a carga foi violada: {', '.join(nomes)}. Confira o arquivo enviado."
-    primeira = re.split(r"[{\[]|(?i:record)", texto.splitlines()[0])[0].strip(" :-")
-    return primeira[:TAMANHO_MAXIMO_MOTIVO] or "Falha sem mensagem legível: veja a execução pelo link."
+        return f"Regra de qualidade que para a carga foi violada: {', '.join(violadas)}. Confira o arquivo enviado."
+    classe = classe_do_erro(texto)
+    if not classe:
+        return MOTIVO_SEM_CLASSE
+    na_etapa = f" na etapa {etapa}" if etapa and ETAPA.fullmatch(etapa) else ""
+    return f"Erro {classe}{na_etapa}: veja a mensagem completa pelo link da execução."[:TAMANHO_MAXIMO_MOTIVO]
