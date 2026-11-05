@@ -706,7 +706,7 @@ COLUNAS_CUSTO_MENSAL = {
     "qt_dias_com_uso": "Dias do mês com algum consumo.",
     "qt_dias_mes": "Dias do mês.",
     "vl_projecao_mes": "Estimativa a preço de lista do mês inteiro: custo médio dos dias com uso vezes os dias do "
-    "mês (no mês atual); nos meses fechados, o custo do mês.",
+    "mês (no mês atual); nos meses fechados, o custo do mês. No total, a soma das projeções dos ambientes.",
     "vl_teto": "Teto mensal de custo do Databricks combinado no diagnóstico (preço de lista).",
     "pc_do_teto": "Percentual do teto já consumido no mês.",
     "sg_moeda": "Moeda do preço de lista.",
@@ -724,18 +724,34 @@ def sql_custo_mensal(catalogo: str, schema: str, teto: float) -> str:
     consulta = f"""WITH diario AS (
   SELECT date_trunc('MONTH', dt_uso) AS dt_mes, dt_uso, ds_ambiente, vl_custo_lista, sg_moeda FROM {custo}
 ),
-por_mes AS (
-  SELECT dt_mes,
-    CASE WHEN grouping(ds_ambiente) = 1 THEN '{AMBIENTE_TOTAL}' ELSE ds_ambiente END AS ds_ambiente,
-    sum(vl_custo_lista) AS vl_custo_lista, count(DISTINCT dt_uso) AS qt_dias_com_uso,
+por_ambiente AS (
+  SELECT dt_mes, ds_ambiente, sum(vl_custo_lista) AS vl_custo_lista, count(DISTINCT dt_uso) AS qt_dias_com_uso,
     first(sg_moeda, true) AS sg_moeda
   FROM diario
-  GROUP BY GROUPING SETS ((dt_mes, ds_ambiente), (dt_mes))
+  GROUP BY dt_mes, ds_ambiente
+),
+com_projecao AS (
+  SELECT *,
+    CASE WHEN dt_mes = date_trunc('MONTH', current_date())
+      THEN vl_custo_lista / nullif(qt_dias_com_uso, 0) * day(last_day(dt_mes))
+      ELSE vl_custo_lista END AS vl_projecao
+  FROM por_ambiente
+),
+dias_do_total AS (
+  SELECT dt_mes, count(DISTINCT dt_uso) AS qt_dias_com_uso FROM diario GROUP BY dt_mes
+),
+-- Cada ambiente usa os próprios dias com uso; o total soma as projeções (ex.: o ci rodando
+-- 3 dias e o dev 5 não pode dar um total menor que a projeção do ci sozinho).
+por_mes AS (
+  SELECT dt_mes, ds_ambiente, vl_custo_lista, qt_dias_com_uso, vl_projecao, sg_moeda FROM com_projecao
+  UNION ALL
+  SELECT c.dt_mes, '{AMBIENTE_TOTAL}', sum(c.vl_custo_lista), max(t.qt_dias_com_uso), sum(c.vl_projecao),
+    first(c.sg_moeda, true)
+  FROM com_projecao c JOIN dias_do_total t ON t.dt_mes = c.dt_mes
+  GROUP BY c.dt_mes
 )
 SELECT dt_mes, ds_ambiente, vl_custo_lista, qt_dias_com_uso, day(last_day(dt_mes)) AS qt_dias_mes,
-  CASE WHEN dt_mes = date_trunc('MONTH', current_date())
-    THEN round(vl_custo_lista / nullif(qt_dias_com_uso, 0) * day(last_day(dt_mes)), 2)
-    ELSE vl_custo_lista END AS vl_projecao_mes,
+  round(vl_projecao, 2) AS vl_projecao_mes,
   {teto_sql} AS vl_teto,
   round(vl_custo_lista * 100.0 / nullif({teto_sql}, 0), 1) AS pc_do_teto,
   sg_moeda

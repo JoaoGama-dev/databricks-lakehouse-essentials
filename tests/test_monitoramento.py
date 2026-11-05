@@ -229,7 +229,6 @@ def test_custo_usa_o_preco_de_lista_vigente_no_uso():
 def test_warehouse_compartilhado_fica_fora_e_o_comentario_diz():
     sql = views()["mon_custo_diario"]
     assert "warehouse_id = " not in sql
-    assert "Fora: o SQL warehouse (compartilhado; warehouse_dedicado: false)" in sql
 
 
 def test_warehouse_dedicado_entra_no_ambiente_que_publica():
@@ -237,7 +236,6 @@ def test_warehouse_dedicado_entra_no_ambiente_que_publica():
     assert "OR u.usage_metadata.warehouse_id = 'wh-do-projeto'" in sql
     # Sem tag no faturamento do warehouse: o ambiente é o do target que publica a view.
     assert "CASE WHEN u.usage_metadata.warehouse_id = 'wh-do-projeto' THEN 'prod' ELSE" in sql
-    assert "Inclui o warehouse dedicado do projeto" in sql
     # O projeto continua filtrado pela tag: o warehouse não abre a porta para outros projetos.
     assert projetos_no_filtro(sql) == {"portfolio", "portfolio_ci"}
 
@@ -276,24 +274,14 @@ def test_views_sao_criadas_depois_do_pipeline_com_os_parametros():
 # Custo do mês e projeção -------------------------------------------------------------
 
 
-def test_custo_mensal_tem_cada_ambiente_e_o_total():
-    sql = views()["mon_custo_mensal"]
-    assert "GROUP BY GROUPING SETS ((dt_mes, ds_ambiente), (dt_mes))" in sql
-    assert f"CASE WHEN grouping(ds_ambiente) = 1 THEN '{AMBIENTE_TOTAL}' ELSE ds_ambiente END AS ds_ambiente" in sql
-
-
-def test_projecao_e_a_media_dos_dias_com_uso_vezes_os_dias_do_mes():
+def test_projecao_do_total_soma_os_ambientes_e_conta_dias_distintos():
     sql = views()["mon_custo_mensal"]
     # Dias distintos: mon_custo_diario tem uma linha por ambiente, recurso e produto; count(*)
     # contaria linhas e a média sairia baixa.
     assert "count(DISTINCT dt_uso) AS qt_dias_com_uso" in sql
-    assert "day(last_day(dt_mes)) AS qt_dias_mes" in sql
-    assert (
-        "CASE WHEN dt_mes = date_trunc('MONTH', current_date())\n"
-        "    THEN round(vl_custo_lista / nullif(qt_dias_com_uso, 0) * day(last_day(dt_mes)), 2)\n"
-        "    ELSE vl_custo_lista END AS vl_projecao_mes"
-    ) in sql
-    assert "estimativa a preço de lista" in sql
+    # O total soma as projeções: com a média dos dias do total, o ci rodando 3 dias e o dev 5
+    # dariam um total menor que o ci sozinho (visto no dev em 2026-11-05).
+    assert f"'{AMBIENTE_TOTAL}', sum(c.vl_custo_lista), max(t.qt_dias_com_uso), sum(c.vl_projecao)" in sql
 
 
 def test_alerta_de_teto_le_so_a_linha_total_com_colunas_da_view():

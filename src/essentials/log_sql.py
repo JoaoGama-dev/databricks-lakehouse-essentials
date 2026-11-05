@@ -619,7 +619,7 @@ SELECT coalesce(s.nm_tabela, {_parte_do_nome("f.nm_fluxo", -1)}) AS nm_tabela,
   concat_ws('\\n', transform(array_sort(collect_list(named_struct('dh', e.timestamp, 'ds',
     concat_ws(' ', e.message, to_json(e.error))))), x -> x.ds)) AS ds_texto_erro
 FROM com_falha f
-JOIN eventos e ON e.origin.flow_name = f.nm_fluxo AND e.level = 'ERROR'
+JOIN eventos e ON e.origin.flow_name = f.nm_fluxo AND e.error IS NOT NULL
 LEFT JOIN saidas s ON s.nm_fluxo = f.nm_fluxo
 GROUP BY 1"""
 

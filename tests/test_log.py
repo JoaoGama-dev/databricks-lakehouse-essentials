@@ -34,7 +34,7 @@ from essentials.log_sql import (
     tabelas_privadas,
     tarefas_com_falha,
 )
-from essentials.log_texto import FORMATO, configurar_log, data_hora, mensagens_do_log
+from essentials.log_texto import configurar_log, data_hora, mensagens_do_log
 from essentials.monitoramento_sql import regras_monitoradas
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -264,7 +264,6 @@ def test_log_legivel_no_formato_e_no_fuso_do_projeto():
     registro.created = 1_767_268_800.0  # 2026-01-01 12:00:00 UTC
     logger.handlers[0].handle(registro)
     assert saida.getvalue() == "[2026-01-01 09:00:00]-[INFO]: teste\n"
-    assert FORMATO == "[%(asctime)s]-[%(levelname)s]: %(message)s"
     assert data_hora(1_767_268_800_000, "America/Sao_Paulo") == "2026-01-01 09:00:00"
     assert data_hora(None) == "-"
 

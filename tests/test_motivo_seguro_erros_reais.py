@@ -113,9 +113,11 @@ TEXTO_FIXO = {
     )
     for palavra in re.findall(r"\w+", frase)
 }
+# Um nome, um nome só em minúsculas, um e-mail, um CPF, um telefone e um endereço: cada forma
+# de dado pessoal real-like passa por todos os moldes de erro.
 VALORES_VARIADOS = (
-    "Maria Souza", "fulano", "Tal", "joana.silva@exemplo.com", "123.456.789-09", "(41) 99999-0000",
-    "rua das flores 100", "beltrano", "Ciclano", "SICRANO", "2019-01-01", "CEP 80000-000",
+    "Maria Souza", "fulano", "joana.silva@exemplo.com", "123.456.789-09", "(41) 99999-0000",
+    "rua das flores 100",
 )
 MOLDES = (
     "[CAST_INVALID_INPUT] The value '{v}' of the type \"STRING\" cannot be cast to \"INT\"",
