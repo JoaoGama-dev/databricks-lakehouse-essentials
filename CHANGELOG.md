@@ -10,6 +10,15 @@ só a versão menor.
 
 ## [Unreleased]
 
+### Custo de uma carga com falha
+
+#### Alterado
+
+- O pipeline faz no máximo 1 nova tentativa numa falha (`pipelines.numUpdateRetryAttempts` e
+  `pipelines.maxFlowRetryAttempts` = 1, em `resources/pipeline.yml`). O padrão repetia a
+  atualização inteira 5 vezes: no dev, uma regra que para a carga gerava 6 atualizações em
+  ~14 min (~US$ 0,70); agora são 2, em ~2 min.
+
 ### Simplificação do log e da integração (PR 2)
 
 #### Adicionado
