@@ -209,6 +209,12 @@ Os valores são o **preço de lista**, sem descontos do contrato. Entram o job e
 projeto. O armazenamento, a otimização preditiva e o SQL warehouse ficam fora, a menos que o
 warehouse seja exclusivo do projeto (combinado na implantação).
 
+O painel mostra o custo em **reais** (estimativa) e em dólar. O preço da Databricks é em
+dólar; a fatura do Azure no Brasil vem em reais, com a cotação da Microsoft no dia da
+cobrança. A estimativa usa a cotação da variável `cotacao_usd_brl` do projeto: **uma vez por
+mês**, a equipe técnica troca pelo valor da última fatura do Azure. O teto e o alerta
+continuam em dólar.
+
 Se o custo subir sem motivo aparente (sem aumento de dados), avise o suporte. Uma carga que
 falha custa mais que uma boa, porque o sistema tenta de novo.
 

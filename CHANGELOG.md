@@ -10,6 +10,16 @@ só a versão menor.
 
 ## [Unreleased]
 
+### Custo em reais
+
+#### Adicionado
+
+- Variável `cotacao_usd_brl` (número com ponto, ex. `"5.40"`; inválida faz a etapa falhar).
+  As views `mon_custo_diario`, `mon_custo_mensal` e `mon_custo_por_carga` ganham colunas em
+  reais (dólar × cotação, estimativa) e o painel de saúde mostra R$ como valor principal,
+  com a moeda em todo título de custo. No Brasil a fatura do Azure vem em reais, com a
+  cotação da Microsoft no dia da cobrança. O teto e o alerta `custo_teto` continuam em dólar.
+
 ### Custo de uma carga com falha
 
 #### Alterado

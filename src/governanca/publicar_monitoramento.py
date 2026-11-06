@@ -45,6 +45,9 @@ def argumentos() -> argparse.Namespace:
     parser.add_argument("--limite-atraso-horas", type=int, default=26, help="limite da view mon_atualizacao")
     parser.add_argument("--limite-queda-volume-pct", type=int, default=50, help="limite da view mon_volume")
     parser.add_argument("--teto-custo-mensal", type=float, default=0, help="teto da view mon_custo_mensal")
+    parser.add_argument(
+        "--cotacao-usd-brl", required=True, help="cotação das colunas em reais das views de custo (ex.: 5.40)"
+    )
     parser.add_argument("--fuso-horario", required=True, help="fuso do log legível (variável fuso_horario)")
     return parser.parse_args()
 
@@ -138,6 +141,7 @@ def criar_views_de_sistema(spark, args, log) -> None:
 
     from essentials.monitoramento_sql import (
         booleano_da_variavel,
+        cotacao_da_variavel,
         sql_custo_diario,
         sql_custo_mensal,
         sql_custo_por_carga,
@@ -145,13 +149,15 @@ def criar_views_de_sistema(spark, args, log) -> None:
     )
 
     catalogo, monitoramento = args.catalogo, args.schema_monitoramento
-    # Valor inválido em warehouse_dedicado é erro da etapa (ValueError), não um false silencioso.
+    # Valor inválido em warehouse_dedicado ou em cotacao_usd_brl é erro da etapa (ValueError),
+    # não um false ou um 0 silencioso.
     atribuicao = (args.projeto, args.ambiente, booleano_da_variavel(args.warehouse_dedicado), args.warehouse_id)
+    cotacao = cotacao_da_variavel(args.cotacao_usd_brl)
     for nome, comandos in (
         ("mon_custo_diario, mon_custo_mensal e mon_custo_por_carga", [
-            sql_custo_diario(catalogo, monitoramento, *atribuicao),
-            sql_custo_mensal(catalogo, monitoramento, args.teto_custo_mensal),
-            sql_custo_por_carga(catalogo, monitoramento, *atribuicao),
+            sql_custo_diario(catalogo, monitoramento, *atribuicao, cotacao),
+            sql_custo_mensal(catalogo, monitoramento, args.teto_custo_mensal, cotacao),
+            sql_custo_por_carga(catalogo, monitoramento, *atribuicao, cotacao),
         ]),
         ("mon_execucoes", [sql_execucoes(catalogo, monitoramento, args.job_id)]),
     ):

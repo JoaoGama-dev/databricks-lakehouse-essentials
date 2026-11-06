@@ -80,6 +80,11 @@ variables:
     # Azure, configurado no portal.
     description: Teto mensal de custo do Databricks, em dólares de preço de lista; alerta a partir de 80%
     default: 150
+  cotacao_usd_brl:
+    # O preço de lista das tabelas de sistema é em dólar; no Brasil a fatura do Azure vem em
+    # reais, com a cotação da Microsoft no dia da cobrança. Número com ponto (ex.: "5.40").
+    description: Cotação usada para estimar o custo em reais; atualize com a cotação do mês da fatura do Azure
+    default: "5.40"
   email_suporte:
     description: E-mail do suporte da Logos, que também recebe o aviso de falha do job (abre o chamado)
     default: suporte@exemplo.com
@@ -174,6 +179,8 @@ targets:
       # Teto do Databricks combinado no diagnóstico, o e-mail e o destino de notificação do
       # suporte da Logos (criado pelo administrador no workspace do cliente).
       teto_custo_mensal_usd: 150
+      # Troque pela cotação do mês da fatura do Azure do cliente (colunas em reais do painel).
+      cotacao_usd_brl: "5.40"
       email_suporte: suporte@exemplo.com
       destino_suporte_id: 00000000-0000-0000-0000-000000000000
       # Landing externa: abfss:// no Azure (padrão), s3:// na AWS, gs:// no GCP.
