@@ -20,12 +20,23 @@ Padrões em `docs/padroes/nomes.md` e `docs/padroes/camadas.md`.
 4. **Implementar** em `src/pipeline/gold_*.sql`:
    - lista de colunas com tipo e `COMMENT`, na ordem do `SELECT`;
    - `COMMENT` da tabela e `TBLPROPERTIES ('camada' = 'gold', 'tipo' = ...)`;
-   - arquivo novo entra nas `libraries` de `resources/pipeline.yml`.
-5. **Testar:** os testes de `tests/test_projeto.py` já cobrem nomes, tipos e descrições;
-   acrescente um teste se houver regra nova (ex.: os valores possíveis de uma situação).
-6. **Painel:** se o indicador aparece no painel, atualize `src/dashboards/*.lvdash.json`
-   lendo só da gold.
+   - arquivo novo em `src/pipeline/` entra sozinho (o pipeline lê a pasta inteira): não
+     mexa em `resources/pipeline.yml`;
+   - se a tabela tem coluna sensível, a view `src/views/gold_vw_*.sql` aplica a máscara.
+   Só a camada do projeto muda (`docs/padroes/nucleo-e-projeto.md`): `gold_*.sql`,
+   `gold_vw_*.sql`, `src/dashboards/negocio.lvdash.json` e `tests/projeto/`. Não edite o
+   núcleo.
+5. **Testar:** o contrato em `tests/nucleo/test_contrato_do_projeto.py` já cobre nomes,
+   prefixos, tipos, descrições e máscara da gold; acrescente um teste em `tests/projeto/`
+   se houver regra nova (ex.: os valores possíveis de uma situação).
+6. **Painel:** se o indicador aparece no painel, atualize
+   `src/dashboards/negocio.lvdash.json` lendo só da view da gold. O painel de saúde é do
+   núcleo: não mexa nele.
 7. **Validar:** rode e mostre `ruff check .`, `pytest -q` e `databricks bundle validate -t dev`.
+   Rode também `pytest tests/nucleo/test_contrato_do_projeto.py tests/nucleo/test_nucleo_sem_projeto.py -q`
+   e leia o que o contrato diz que não conseguiu verificar (ex.: máscara em expressão
+   que deriva de coluna sensível).
 
-**Pronto quando:** o indicador está na gold com descrição em toda coluna, os testes e o
+**Pronto quando:** o indicador está na gold com descrição em toda coluna, só a camada do
+projeto mudou, os testes (inclusive o contrato e o vazamento de `tests/nucleo`) e o
 validate passam, e (se for o caso) o painel usa a coluna nova.

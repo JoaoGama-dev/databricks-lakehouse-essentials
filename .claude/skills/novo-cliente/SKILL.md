@@ -44,19 +44,24 @@ regras e indicadores **antes de alterar qualquer arquivo**. Regras de LGPD em
 
    **Pare aqui e espere meu OK.** Ajuste a proposta quantas vezes eu pedir.
 
-4. **Aplicar, depois do OK:**
-   - no `databricks.yml`, `bundle.name: essentials_<projeto>` e o `default` da variável
-     `projeto`;
+4. **Aplicar, depois do OK.** Altere **só a camada do projeto**
+   (`docs/padroes/nucleo-e-projeto.md`); não edite o núcleo (`src/essentials/`,
+   `bronze.py`, `silver.py`, `resources/`, `tests/nucleo/`, painel de saúde). Os lugares:
+   - `databricks.yml`: `bundle.name: essentials_<projeto>` e os valores das variáveis
+     (`projeto` e as do cliente);
+   - `config/fontes.yml` (substitua);
+   - `src/pipeline/silver_<fonte>.sql` necessários; remova os do projeto anterior. O
+     pipeline lê a pasta `src/pipeline/` inteira (glob): não liste arquivos em
+     `resources/pipeline.yml`;
+   - `src/pipeline/gold_*.sql` e `src/views/gold_vw_*.sql` (skill `novo-indicador`);
+   - `src/dashboards/negocio.lvdash.json`, mantendo a chave `painel_negocio` e o nome
+     "Essentials · <projeto> · Negócio" em `resources/dashboard.yml`;
+   - `tests/projeto/` (regras do cliente) e `tests/projeto/termos_do_negocio.py`;
+   - o exemplo do portfólio (`data/`, `scripts/integracao.py`, `integracao.yml`,
+     `tests/projeto/integracao/`) é camada do projeto: troque ou remova;
    - o `setup/00_setup_free_edition.sql` não leva o nome do projeto (cria só o catálogo);
      não há schema de origem a criar;
-   - substitua `config/fontes.yml`;
-   - crie os `src/pipeline/silver_<fonte>.sql` necessários e remova os do projeto anterior;
-   - substitua os `src/pipeline/gold_*.sql` e as views `src/views/gold_vw_*.sql` (skill
-     `novo-indicador`);
-   - atualize as `libraries` de `resources/pipeline.yml`;
-   - ajuste os testes que citam fontes ou colunas pelo nome (`agenda`,
-     `dt_entrevista`...) em `tests/test_projeto.py`;
-   - atualize `README.md` (nome do projeto e exemplo), `docs/arquitetura.md` (fontes,
+   - documentação: `README.md` (nome do projeto e exemplo), `docs/arquitetura.md` (fontes,
      tabelas e regras), `CLAUDE.md` e `docs/roteiro-de-operacao.md`.
 
 5. **Lembrar dos dados reais**: confira que os arquivos do cliente estão em
@@ -64,8 +69,13 @@ regras e indicadores **antes de alterar qualquer arquivo**. Regras de LGPD em
    o ambiente do cliente, nunca para o Free Edition.
 
 6. **Validar e mostrar o resultado:** rode `ruff check .`, `pytest -q` e
-   `databricks bundle validate -t dev` e mostre a saída. Deploy e execução em dev só com
-   o meu OK, e só com dados fictícios (skill `implantar-dev`).
+   `databricks bundle validate -t dev` e mostre a saída. Rode também
+   `pytest tests/nucleo/test_contrato_do_projeto.py tests/nucleo/test_nucleo_sem_projeto.py -q`
+   (contrato do `fontes.yml` e da gold, e nenhum nome do cliente no núcleo) e leia o que o
+   contrato diz que não conseguiu verificar (por exemplo, máscara em expressão derivada).
+   Se um teste do núcleo falhar, o problema está na camada do projeto (ou num nome que
+   colide com termo do núcleo): peça decisão antes de editar o núcleo. Deploy e execução
+   em dev só com o meu OK, e só com dados fictícios (skill `implantar-dev`).
 
-**Pronto quando:** a proposta foi aprovada, aplicada, e lint, testes e validate estão
-verdes.
+**Pronto quando:** a proposta foi aprovada, aplicada só na camada do projeto, e lint,
+testes (inclusive o contrato e o vazamento de `tests/nucleo`) e validate estão verdes.

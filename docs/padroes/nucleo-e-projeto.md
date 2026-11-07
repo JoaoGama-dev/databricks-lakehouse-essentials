@@ -8,7 +8,15 @@ projeto** é o que muda de um cliente para outro.
 **O núcleo nunca contém nome de fonte, coluna ou regra de negócio de um cliente.** Nem em
 código, nem em comentário, nem em teste. O que é do cliente vai para a camada do projeto.
 
-Um teste confere: `tests/nucleo/test_nucleo_sem_projeto.py`.
+Um teste confere: `tests/nucleo/test_nucleo_sem_projeto.py`. Ele falha se aparecer no
+núcleo um nome de fonte, de coluna, de regra ou de tabela da gold do projeto, ou um termo
+de `tests/projeto/termos_do_negocio.py`.
+
+Não contam como vazamento:
+
+- os nomes das fontes fictícias do próprio núcleo (`tests/nucleo/fontes_ficticias.py`):
+  o motor precisa de fontes para ser testado, e elas não são de nenhum cliente;
+- tipos genéricos de máscara, como `telefone` e `hash`.
 
 ## Camada do projeto
 
@@ -68,11 +76,33 @@ O teste varre o código do núcleo. Ficam de fora, por enquanto:
 
 | Pasta | O que testa | Lê o `fontes.yml` do projeto? |
 | --- | --- | --- |
-| `tests/nucleo/` | o motor, com fontes fictícias e genéricas (`tests/nucleo/fontes_ficticias.py`), o bundle e as proteções do repositório | não |
+| `tests/nucleo/` | o motor, com fontes fictícias e genéricas (`tests/nucleo/fontes_ficticias.py`), o bundle e as proteções do repositório. O `test_monitoramento.py` lê os painéis de `src/dashboards/`, inclusive o de negócio | não |
 | `tests/nucleo/test_contrato_do_projeto.py` | o contrato que todo projeto cumpre, gerado do `fontes.yml` e da gold: chave com `nao_nulo` que barra a linha, máscara na gold de toda coluna sensível, descrição em toda coluna, bronze e silver de cada fonte, padrão de nomes e dicionário da gold | sim, sem citar nenhum nome |
 | `tests/nucleo/test_nucleo_sem_projeto.py` | que nenhum nome do projeto aparece no núcleo | sim, só para tirar os nomes |
 | `tests/projeto/` | as regras de negócio do cliente: limpeza das colunas dele, preparação, gold, view, painel do negócio e o gerador de dados | sim |
 | `tests/projeto/integracao/` | os dados no target `ci`, depois da carga do exemplo (marcador `integracao`) | sim |
 
-Num cliente novo, os testes do núcleo passam sem mudar nada. Os de `tests/projeto/` são
-reescritos com as regras do cliente.
+Num cliente novo, os testes do núcleo devem passar sem mudar nada. Isso vale se duas
+condições forem verdadeiras:
+
+- os nomes do cliente (fontes, colunas, regras, tabelas) não colidem com termos do núcleo;
+- a gold segue o formato que o contrato espera (ver os limites abaixo).
+
+Os testes de `tests/projeto/` são reescritos com as regras do cliente.
+
+## Limites conhecidos
+
+Os dois testes ajudam, mas não substituem a revisão.
+
+**Contrato de máscara** (`test_contrato_do_projeto.py`):
+
+- só reconhece a coluna sensível quando ela chega à gold como `alias.coluna AS nome`;
+- uma expressão que deriva de coluna sensível (por exemplo, `concat` de nome e telefone)
+  não é detectada: precisa de revisão humana;
+- o teste diz, na saída, o que não conseguiu verificar.
+
+**Vazamento** (`test_nucleo_sem_projeto.py`):
+
+- só acha o nome como palavra inteira: um nome colado em outra palavra, ou escrito em outra
+  forma, passa;
+- por isso, termos do negócio novos entram em `tests/projeto/termos_do_negocio.py`.

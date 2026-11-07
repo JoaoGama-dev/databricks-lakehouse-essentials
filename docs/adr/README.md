@@ -10,7 +10,7 @@ depois, decisões tomadas antes (por isso trazem a data da decisão e a do regis
 0014 e 0015 são da Fase 7, e os 0016 e 0017 vêm da rodada de testes por risco. Os 0018 a
 0020 são da simplificação do exemplo, e os 0021 a 0024, da simplificação do log e da
 integração: eles atualizam ou substituem em parte decisões antigas, que trazem a relação no
-próprio status.
+próprio status. O 0025 separa o núcleo da camada do projeto.
 
 | Nº | Decisão | Status |
 | --- | --- | --- |
@@ -38,3 +38,4 @@ próprio status.
 | [0022](0022-log-de-execucao-e-log-legivel.md) | `mon_log_execucao` e log legível | aceita |
 | [0023](0023-custo-do-projeto-por-tag-e-projecao.md) | Custo do projeto por tag e projeção do mês | aceita; atualiza 0003 |
 | [0024](0024-integracao-em-duas-rodadas-e-desempate-pelo-arquivo.md) | Integração em duas rodadas e desempate pela modificação do arquivo | aceita; atualiza 0005 e 0016 |
+| [0025](0025-nucleo-e-camada-do-projeto.md) | Núcleo e camada do projeto, com testes de contrato e de vazamento | aceita; complementa 0007 |

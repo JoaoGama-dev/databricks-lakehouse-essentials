@@ -41,8 +41,9 @@ quase sempre, só acrescentar um item nele. Siga os passos na ordem. Regras de L
    - acrescente a fonte em `config/fontes.yml`, seguindo os comentários do arquivo;
    - se precisar, crie `src/pipeline/silver_<nome>.sql` com
      `CREATE TEMPORARY VIEW silver_int_<nome>_preparada` lendo `bronze_<nome>` (com os
-     nomes de coluna da origem; os padronizados vêm do YAML), marque
-     `preparacao_sql: true` e inclua o arquivo nas `libraries` de `resources/pipeline.yml`;
+     nomes de coluna da origem; os padronizados vêm do YAML) e marque
+     `preparacao_sql: true`. O pipeline lê a pasta `src/pipeline/` inteira: não mexa em
+     `resources/pipeline.yml`;
    - gold nova ou alterada: use a skill `novo-indicador`;
    - tipo tabela: use em `nome_completo` o nome real da tabela (`catalogo.schema.tabela`).
      Não há schema de origem no pacote nem tabela de origem no `setup/`; no Free Edition,
@@ -51,14 +52,23 @@ quase sempre, só acrescentar um item nele. Siga os passos na ordem. Regras de L
      não escreva nome de schema fixo; a bronze e a silver saem do `fontes.yml`, e a gold
      usa `${schema_gold}` e `${schema_silver}`.
 
-4. **Atualizar o resto:** testes específicos em `tests/test_projeto.py` (quando houver
-   lógica nova), `docs/arquitetura.md` (fontes, tabelas geradas e regras),
+   Só a camada do projeto muda (`docs/padroes/nucleo-e-projeto.md`): `config/fontes.yml`,
+   `src/pipeline/silver_<nome>.sql`, `src/pipeline/gold_*.sql`, `src/views/gold_vw_*.sql`,
+   `src/dashboards/negocio.lvdash.json` e `tests/projeto/`. Não edite o núcleo.
+
+4. **Atualizar o resto:** testes específicos em `tests/projeto/` (quando houver lógica
+   nova), `docs/arquitetura.md` (fontes, tabelas geradas e regras),
    `CHANGELOG.md` (seção `[Unreleased]`) e `docs/roteiro-de-operacao.md` (onde
    colocar o arquivo e as novas regras da aba Data quality, em linguagem não técnica).
+   Se o nome da fonte ou de uma coluna for termo do negócio, acrescente-o em
+   `tests/projeto/termos_do_negocio.py`.
 
 5. **Validar e mostrar o resultado:** rode `ruff check .`, `pytest -q` e
-   `databricks bundle validate -t dev` e mostre a saída. Deploy e execução em dev só com
-   o meu OK (skill `implantar-dev`).
+   `databricks bundle validate -t dev` e mostre a saída. Rode também
+   `pytest tests/nucleo/test_contrato_do_projeto.py tests/nucleo/test_nucleo_sem_projeto.py -q`
+   e leia o que o contrato diz que não conseguiu verificar. Deploy e execução em dev só
+   com o meu OK (skill `implantar-dev`).
 
 **Pronto quando:** a fonte está no YAML com descrição e regras, as colunas sensíveis têm
-`mascarar`, e lint, testes e validate estão verdes.
+`mascarar`, só a camada do projeto mudou, e lint, testes (inclusive o contrato e o
+vazamento de `tests/nucleo`) e validate estão verdes.
