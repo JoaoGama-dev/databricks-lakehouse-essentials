@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from essentials.config_fontes import PREFIXOS_POR_TIPO, carregar_fontes
+from essentials.config_fontes import PREFIXOS_POR_TIPO
 from essentials.log_sql import COLUNAS_FALHAS, LOG, TABELA_FALHAS
 from essentials.monitoramento_sql import (
     AMBIENTE_TOTAL,
@@ -32,10 +32,10 @@ from essentials.monitoramento_sql import (
     sql_qualidade_diaria,
     sql_volume,
 )
-from fontes_ficticias import CADASTRO
+from fontes_ficticias import CADASTRO, EVENTOS
 
-RAIZ = Path(__file__).resolve().parents[1]
-FONTES = carregar_fontes(RAIZ / "config" / "fontes.yml")
+RAIZ = Path(__file__).resolve().parents[2]
+FONTES = [EVENTOS]
 PAINEL_SAUDE = RAIZ / "src" / "dashboards" / "saude.lvdash.json"
 PAINEIS = sorted((RAIZ / "src" / "dashboards").glob("*.lvdash.json"))
 
@@ -56,7 +56,7 @@ def tarefas() -> dict[str, dict]:
     return {tarefa["task_key"]: tarefa for tarefa in job()["tasks"]}
 
 
-COLUNAS_BRONZE_EXEMPLO = {"bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"]}
+COLUNAS_BRONZE_EXEMPLO = {"bronze_eventos": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"]}
 MON = "portfolio_monitoramento"
 # Atribuição do custo no dev, com o warehouse compartilhado (o padrão do bundle).
 ATRIBUICAO_DEV = ("portfolio", "dev", False, "wh-compartilhado")
@@ -140,9 +140,9 @@ def test_toda_regra_do_fontes_yml_tem_tabela_e_acao():
     regras = regras_monitoradas(FONTES)
     assert len(regras) == sum(len(fonte.get("regras", [])) for fonte in FONTES)
     # O retrato é privado, mas as expectations dele seguem no event log com o nome da tabela.
-    assert ("silver_int_agenda_retrato", "nome_preenchido", "drop") in regras
-    assert ("silver_int_agenda_retrato", "telefone_valido", "alerta") in regras
-    assert ("silver_int_agenda_retrato", "data_plausivel", "falhar") in regras
+    assert ("silver_int_eventos_retrato", "pessoa_preenchida", "drop") in regras
+    assert ("silver_int_eventos_retrato", "contato_preenchido", "alerta") in regras
+    assert ("silver_int_eventos_retrato", "data_recente", "falhar") in regras
     sql = views()["mon_qualidade_diaria"]
     assert all(f"('{tabela}', '{regra}', '{acao}')" in sql for tabela, regra, acao in regras)
 

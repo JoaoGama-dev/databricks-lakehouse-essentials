@@ -75,24 +75,24 @@ jobs:
         run: databricks bundle run essentials_pipeline -t ci --validate-only
 
       - name: "Rodada 1: enviar a agenda v1"
-        run: python scripts/integracao.py enviar --versao 1
+        run: python scripts/integracao.py enviar --fonte agenda --versao 1
 
       - name: "Rodada 1: carga"
         run: databricks bundle run essentials_carga_diaria -t ci
 
       - name: "Rodada 1: conferir"
-        run: INTEGRACAO_RODADA=1 pytest -m integracao tests/integracao/test_carga.py -v
+        run: INTEGRACAO_RODADA=1 pytest -m integracao tests/projeto/integracao/test_carga.py -v
 
       # Numa carga só, nesta ordem: a v2 (o conteúdo novo), a v6 (a v1 chegando atrasada), a
       # v7 (só o cabeçalho) e a v5 (a v2 de novo, com outro nome, enviada por último).
       - name: "Rodada 2: enviar as agendas v2, v6, v7 e v5"
-        run: python scripts/integracao.py enviar --versao 2 6 7 5
+        run: python scripts/integracao.py enviar --fonte agenda --versao 2 6 7 5
 
       - name: "Rodada 2: carga"
         run: databricks bundle run essentials_carga_diaria -t ci
 
       - name: "Rodada 2: conferir"
-        run: INTEGRACAO_RODADA=2 pytest -m integracao tests/integracao/test_carga.py -v
+        run: INTEGRACAO_RODADA=2 pytest -m integracao tests/projeto/integracao/test_carga.py -v
 
       - name: Destruir o target ci
         if: always()

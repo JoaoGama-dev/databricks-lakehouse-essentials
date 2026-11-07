@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from essentials.config_fontes import PREFIXOS_POR_TIPO, TIPOS_DE_TABELA, carregar_fontes
+from essentials.config_fontes import PREFIXOS_POR_TIPO, TIPOS_DE_TABELA
 from essentials.log_sql import (
     LOG,
     TABELA_FALHAS,
@@ -36,9 +36,10 @@ from essentials.log_sql import (
 )
 from essentials.log_texto import configurar_log, data_hora, mensagens_do_log
 from essentials.monitoramento_sql import regras_monitoradas
+from fontes_ficticias import EVENTOS
 
-RAIZ = Path(__file__).resolve().parents[1]
-FONTES = carregar_fontes(RAIZ / "config" / "fontes.yml")
+RAIZ = Path(__file__).resolve().parents[2]
+FONTES = [EVENTOS]
 MON = "portfolio_monitoramento"
 
 
@@ -89,7 +90,7 @@ def test_merge_e_idempotente_pela_chave_com_job_e_tarefa_sem_tabela():
 
 def merge_tabelas(**campos) -> str:
     argumentos = {
-        "publicadas": [("portfolio_silver", "silver_agenda", "historico")],
+        "publicadas": [("portfolio_silver", "silver_eventos", "historico")],
         "privadas": tabelas_privadas(FONTES),
         "regras": regras_monitoradas(FONTES),
     } | campos
@@ -129,9 +130,9 @@ def test_log_de_tabela_nunca_grava_o_texto_do_erro_do_motor():
 def test_retrato_privado_aparece_na_silver_publicada_e_nunca_como_linha():
     # O retrato não está no catálogo: os descartes e alertas dele precisam aparecer na silver,
     # e uma linha com o nome dele seria uma tabela que ninguém acha.
-    assert tabelas_privadas(FONTES) == [("silver_int_agenda_retrato", "silver_agenda")]
+    assert tabelas_privadas(FONTES) == [("silver_int_eventos_retrato", "silver_eventos")]
     sql = merge_tabelas()
-    assert "('silver_int_agenda_retrato', 'silver_agenda')" in sql
+    assert "('silver_int_eventos_retrato', 'silver_eventos')" in sql
     assert "coalesce(pv.nm_tabela_publicada, f.nm_saida) AS nm_tabela" in sql
     assert "JOIN publicadas p ON p.nm_schema = t.nm_schema AND p.nm_tabela = t.nm_tabela" in sql
     # Gravadas: a da própria tabela; sem ela (AUTO CDC não informa), a do retrato.
@@ -142,8 +143,8 @@ def test_retrato_privado_aparece_na_silver_publicada_e_nunca_como_linha():
 def test_alertas_somam_so_as_regras_com_acao_alerta():
     # Somar drop ou falhar como alerta daria o número errado no log e no painel.
     regras = regras_monitoradas(FONTES)
-    assert ("silver_int_agenda_retrato", "nome_preenchido", "drop") in regras
-    assert ("silver_int_agenda_retrato", "data_plausivel", "falhar") in regras
+    assert ("silver_int_eventos_retrato", "pessoa_preenchida", "drop") in regras
+    assert ("silver_int_eventos_retrato", "data_recente", "falhar") in regras
     sql = merge_tabelas(regras=regras)
     assert "AND r.ds_acao = 'alerta'" in sql
     assert "sum(e.regra.failed_records) AS qt_linhas_alerta" in sql
@@ -276,25 +277,25 @@ def test_log_legivel_conta_a_carga_inteira_e_nunca_leva_campo_fora_da_lista():
     linhas = [
         linha_log("job", nr_ms_inicio=1_767_268_800_000, nr_ms_fim=1_767_269_100_000, ds_duracao="00:05:00",
                   st_execucao="FAILED"),
-        linha_log("tabela", nm_tarefa=TAREFA_PIPELINE, nm_schema="portfolio_silver", nm_tabela="silver_agenda",
+        linha_log("tabela", nm_tarefa=TAREFA_PIPELINE, nm_schema="portfolio_silver", nm_tabela="silver_eventos",
                   ds_metodo_carga="AUTO CDC FROM SNAPSHOT SCD2", cd_tecnica_refresh="COMPLETE_RECOMPUTE",
                   nr_ms_ultima_anterior=None, nr_ms_inicio=1_767_268_860_000, nr_ms_fim=1_767_268_920_000,
                   ds_duracao="00:01:00", st_execucao="FAILED", qt_linhas_gravadas=234, qt_linhas_descartadas=2,
-                  qt_linhas_alerta=30, qt_linhas_tabela=252, ds_motivo_falha="Regra violada: data_plausivel.",
+                  qt_linhas_alerta=30, qt_linhas_tabela=252, ds_motivo_falha="Regra violada: data_recente.",
                   # Campo que não é do log legível (ex.: um texto bruto que alguém acrescente).
                   ds_texto_erro="Input record: Maria Souza (41) 99999-0000"),
         linha_log("tarefa", nm_tarefa=TAREFA_PIPELINE, ds_duracao="00:03:10", st_execucao="FAILED",
-                  ds_motivo_falha="Regra violada: data_plausivel."),
+                  ds_motivo_falha="Regra violada: data_recente."),
     ]
     mensagens = mensagens_do_log(linhas, "America/Sao_Paulo")
     texto = "\n".join(mensagem for _, mensagem in mensagens)
     assert mensagens[0] == (logging.INFO, "Início do job carga (execução 42): 2026-01-01 09:00:00")
-    assert ("Tabela portfolio_silver.silver_agenda | método: AUTO CDC FROM SNAPSHOT SCD2 | técnica: "
+    assert ("Tabela portfolio_silver.silver_eventos | método: AUTO CDC FROM SNAPSHOT SCD2 | técnica: "
             "COMPLETE_RECOMPUTE | última atualização anterior: - | início: 2026-01-01 09:01:00") in texto
     assert ("status: FAILED | gravadas: 234 | descartadas: 2 | alertas: 30 | total na tabela: 252 | "
             "duração: 00:01:00 | término: 2026-01-01 09:02:00") in texto
     assert (logging.ERROR, "Tarefa processar_medalhao | status: FAILED | duração: 00:03:10") in mensagens
-    assert (logging.ERROR, "Falha em processar_medalhao: Regra violada: data_plausivel.") in mensagens
+    assert (logging.ERROR, "Falha em processar_medalhao: Regra violada: data_recente.") in mensagens
     assert mensagens[-1][1] == "Fim do job carga | status: FAILED | duração: 00:05:00 | término: 2026-01-01 09:05:00"
     assert "Maria" not in texto and "9999" not in texto
 
@@ -385,11 +386,10 @@ BANCO = {"nome": "vendas", "tipo": "banco"}
 API = {"nome": "precos", "tipo": "api"}
 
 
-def test_variavel_de_ingestao_reflete_o_fontes_yml():
-    # Fonte banco ou api sem a variável em "true": a ingestão é pulada e a carga fica sem dado novo.
+def test_ingestao_so_roda_com_a_variavel_e_so_para_banco_e_api():
+    # Fonte banco ou api sem a variável em "true": a ingestão é pulada e a carga fica sem dado
+    # novo. O valor da variável contra o fontes.yml do projeto: test_contrato_do_projeto.py.
     modulo = despachante()
-    esperado = "true" if modulo.tem_fonte_externa(FONTES) else "false"
-    assert bundle()["variables"]["ingerir_fontes_externas"]["default"] == esperado
     assert modulo.tipos_externos([{"tipo": "arquivo"}, API, BANCO]) == ["banco", "api"]
     assert not modulo.tem_fonte_externa([{"tipo": "arquivo"}, {"tipo": "tabela"}])
     condicao = tarefas()["tem_fonte_externa"]["condition_task"]

@@ -22,7 +22,7 @@ FUNCOES_CAIXA = {"titulo": "initcap", "maiuscula": "upper", "minuscula": "lower"
 COLUNAS_SO_DA_BRONZE = {"_rescued_data"}
 
 # Padrão de nomes de colunas da silver e da gold: o prefixo diz a classe da informação
-# e só aceita os tipos compatíveis. Ex.: dt_entrevista (data), st_entrevista (status).
+# e só aceita os tipos compatíveis. Ex.: dt_evento (data), st_pedido (status).
 PREFIXOS_POR_TIPO = {
     "id": {"inteiro", "texto"},  # identificador / chave
     "cd": {"texto", "inteiro"},  # código
@@ -358,7 +358,7 @@ def expressao_data_referencia(fonte: dict) -> str | None:
     (nulos por último) desempata pelo momento da ingestão, pela modificação do arquivo e
     pelo nome do arquivo (ORDEM_DO_RETRATO).
       ingestao (padrão) -> None: vale o último arquivo ingerido, como antes
-      conteudo          -> a expressão do YAML, ex.: max(dt_entrevista)
+      conteudo          -> a expressão do YAML, ex.: max(dt_evento)
       nome_arquivo      -> a data extraída do nome do arquivo (grupo 1 da regex) no formato
     """
     referencia = fonte.get("data_referencia") or {"tipo": "ingestao"}

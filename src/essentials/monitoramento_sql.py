@@ -616,7 +616,8 @@ ESTRUTURA_VAZIA = (
 NOME_DO_ARQUIVO = "element_at(split(b._arquivo_origem, '/'), -1)"
 # O formato texto guarda os bytes do arquivo como chegaram: um arquivo em cp1252 fica com
 # bytes que não são UTF-8 válido (não viram U+FFFD; nem regex nem instr os acham). Testado no
-# Free Edition em 2026-11-04: is_valid_utf8 dá false na agenda v8 (cp1252) e true na v2.
+# Free Edition em 2026-11-04: is_valid_utf8 dá false num arquivo em cp1252 e true no mesmo
+# arquivo em UTF-8.
 TEM_CARACTERE_INVALIDO = "NOT is_valid_utf8(b.value)"
 
 

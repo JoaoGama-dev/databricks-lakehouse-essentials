@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-RAIZ = Path(__file__).resolve().parents[1]
+RAIZ = Path(__file__).resolve().parents[2]
 WORKFLOWS = sorted((RAIZ / ".github" / "workflows").glob("*.yml"))
 
 

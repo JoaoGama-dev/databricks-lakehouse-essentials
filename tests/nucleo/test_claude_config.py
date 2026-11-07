@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-RAIZ = Path(__file__).resolve().parents[1]
+RAIZ = Path(__file__).resolve().parents[2]
 CLAUDE = RAIZ / ".claude"
 AGENTES = sorted((CLAUDE / "agents").glob("*.md"))
 SKILLS = sorted(p.parent for p in (CLAUDE / "skills").glob("*/SKILL.md"))

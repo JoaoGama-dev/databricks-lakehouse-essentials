@@ -13,7 +13,7 @@ from urllib.parse import unquote
 
 import pytest
 
-RAIZ = Path(__file__).resolve().parents[1]
+RAIZ = Path(__file__).resolve().parents[2]
 CHANGELOG = RAIZ / "CHANGELOG.md"
 README = RAIZ / "README.md"
 

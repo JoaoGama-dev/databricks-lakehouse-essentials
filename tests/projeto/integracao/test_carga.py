@@ -2,8 +2,8 @@
 
 O workflow roda este arquivo duas vezes, depois da carga de cada rodada:
 
-    INTEGRACAO_RODADA=1 pytest -m integracao tests/integracao/test_carga.py   agenda v1
-    INTEGRACAO_RODADA=2 pytest -m integracao tests/integracao/test_carga.py   v2, v6, v7 e v5
+    INTEGRACAO_RODADA=1 pytest -m integracao tests/projeto/integracao/test_carga.py   agenda v1
+    INTEGRACAO_RODADA=2 pytest -m integracao tests/projeto/integracao/test_carga.py   v2, v6, v7 e v5
 """
 
 from __future__ import annotations

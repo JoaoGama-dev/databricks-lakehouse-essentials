@@ -1,14 +1,15 @@
-# Painel AI/BI do projeto: 3 páginas (visão geral, áreas e vagas, pendências) sobre a view
-# gold_vw_entrevistas da gold.
-# As consultas do painel não citam catálogo nem schema: dataset_catalog e dataset_schema
+# Painéis AI/BI do projeto.
+# As consultas dos painéis não citam catálogo nem schema: dataset_catalog e dataset_schema
 # apontam para o ambiente do target, então o mesmo painel serve em dev e em prod.
 # Para trazer ajustes feitos na tela de volta ao repositório:
-#   databricks bundle generate dashboard --resource painel_entrevistas --force -t dev
+#   databricks bundle generate dashboard --resource painel_negocio --force -t dev
 resources:
   dashboards:
-    painel_entrevistas:
-      display_name: Essentials · ${var.projeto} · Entrevistas
-      file_path: ../src/dashboards/entrevistas.lvdash.json
+    # Painel do negócio: o conteúdo é do projeto (src/dashboards/negocio.lvdash.json) e lê
+    # só as views gold_vw_* da gold. A chave e o arquivo são os mesmos em todo projeto.
+    painel_negocio:
+      display_name: Essentials · ${var.projeto} · Negócio
+      file_path: ../src/dashboards/negocio.lvdash.json
       warehouse_id: ${var.warehouse_id}
       dataset_catalog: ${resources.schemas.gold.catalog_name}
       dataset_schema: ${resources.schemas.gold.name}
