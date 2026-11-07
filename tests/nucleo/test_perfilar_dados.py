@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-RAIZ = Path(__file__).resolve().parents[1]
+RAIZ = Path(__file__).resolve().parents[2]
 SCRIPT = RAIZ / "scripts" / "perfilar_dados.py"
 
 
@@ -25,10 +25,26 @@ def importar(nome: str, caminho: Path):
 perfilar_dados = importar("perfilar_dados", SCRIPT)
 
 
+# Nomes fictícios para montar um arquivo com dado pessoal sem depender do exemplo do projeto.
+PRIMEIROS = ("Alana", "Bruno", "Carla", "Diego", "Elisa", "Fabio", "Gisele", "Heitor", "Iara", "Jonas",
+             "Karina", "Lucas", "Marta", "Nilo", "Olivia", "Paulo")
+SOBRENOMES = ("Araujo", "Barros", "Campos", "Dantas", "Esteves", "Freitas", "Gomes", "Holanda", "Ilha",
+              "Jardim", "Lopes", "Moraes", "Nunes", "Pires", "Queiroz", "Rocha")
+
+
 @pytest.fixture(scope="module")
-def agenda(tmp_path_factory) -> Path:
-    gerador = importar("gerar_dados_exemplo", RAIZ / "data" / "gerar_dados_exemplo.py")
-    return gerador.gerar(tmp_path_factory.mktemp("agenda"))[0]
+def arquivo_pessoal(tmp_path_factory) -> Path:
+    """CSV fictício no formato do Excel em português: ";" e UTF-8 com BOM, linhas separadoras
+    de resumo no meio e as colunas NOME e TELEFONE com dado pessoal."""
+    linhas = ["HORA;NOME;SITUACAO;TELEFONE"]
+    for i, (primeiro, sobrenome) in enumerate((p, s) for p in PRIMEIROS for s in SOBRENOMES):
+        if i % 50 == 0:
+            linhas.append(f"RESUMO DIA {1 + i // 50:02d}/08/2025;;;")
+        situacao = ("Feito", "Aberto", "Desfeito")[i % 3]
+        linhas.append(f"{8 + i % 10:02d}:{i % 60:02d};{primeiro} {sobrenome};{situacao};(41) 90000-{i:04d}")
+    caminho = tmp_path_factory.mktemp("perfil") / "arquivo_ficticio.csv"
+    caminho.write_bytes(("\r\n".join(linhas) + "\r\n").encode("utf-8-sig"))
+    return caminho
 
 
 def rodar(*args: str) -> str:
@@ -45,7 +61,7 @@ def valores_pessoais(caminho: Path) -> set[str]:
         linhas = list(csv.reader(arquivo, delimiter=";"))[1:]
     pessoais = set()
     for linha in linhas:
-        if len(linha) >= 4 and not linha[0].upper().startswith("AGENDA"):
+        if not linha[0].startswith("RESUMO"):
             pessoais.update(v.strip() for v in (linha[1], linha[3]) if len(v.strip()) >= 5)
     return pessoais
 
@@ -54,16 +70,16 @@ def coluna(perfil: dict, nome: str) -> dict:
     return next(c for c in perfil["colunas"] if c["nome"] == nome)
 
 
-def test_perfil_nao_expoe_nomes_nem_telefones(agenda):
-    pessoais = valores_pessoais(agenda)
+def test_perfil_nao_expoe_nomes_nem_telefones(arquivo_pessoal):
+    pessoais = valores_pessoais(arquivo_pessoal)
     assert len(pessoais) > 200
-    for saida in (rodar(str(agenda)), rodar(str(agenda), "--json")):
+    for saida in (rodar(str(arquivo_pessoal)), rodar(str(arquivo_pessoal), "--json")):
         vazados = [valor for valor in pessoais if valor in saida]
         assert not vazados, f"o perfil expôs {len(vazados)} valores pessoais"
 
 
-def test_detecta_colunas_sensiveis_e_sugere_mascara(agenda):
-    perfil = perfilar_dados.perfilar(agenda)
+def test_detecta_colunas_sensiveis_e_sugere_mascara(arquivo_pessoal):
+    perfil = perfilar_dados.perfilar(arquivo_pessoal)
     nome, telefone = coluna(perfil, "NOME"), coluna(perfil, "TELEFONE")
     assert nome["sensivel"] == "nome próprio" and nome["sugestao"] == "mascarar: hash"
     assert telefone["sensivel"] == "telefone" and telefone["sugestao"] == "mascarar: telefone"
@@ -97,7 +113,7 @@ def test_forma_esconde_o_conteudo(valor, esperado):
 
 @pytest.mark.parametrize(
     ("valor", "esperado"),
-    [("TOTAL", "A+"), ("AGENDA DIA 04/08/2025", "A+ A+ 9+/9+/9+"), ("Maria Silva", "A+ A+"), ("", "")],
+    [("TOTAL", "A+"), ("RESUMO DIA 04/08/2025", "A+ A+ 9+/9+/9+"), ("Maria Silva", "A+ A+"), ("", "")],
 )
 def test_forma_geral_agrupa_linhas_da_mesma_estrutura(valor, esperado):
     assert perfilar_dados.forma_geral(valor) == esperado

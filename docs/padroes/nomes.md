@@ -1,7 +1,8 @@
 # Padrão de nomes
 
-Vale para todos os projetos do pacote Essentials. Os testes (`tests/test_projeto.py`) e a
-validação do `config/fontes.yml` recusam o que fugir dele.
+Vale para todos os projetos do pacote Essentials. Os testes (o contrato em
+`tests/nucleo/test_contrato_do_projeto.py` e os de `tests/projeto/`) e a validação do
+`config/fontes.yml` recusam o que fugir dele.
 
 ## Estrutura no Unity Catalog
 

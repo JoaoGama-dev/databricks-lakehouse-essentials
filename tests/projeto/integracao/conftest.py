@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "integracao.py"
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "integracao.py"
 
 
 def carregar_script():

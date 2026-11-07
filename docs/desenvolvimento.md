@@ -19,7 +19,7 @@ siga as mesmas regras do time ([ADR 0012](adr/0012-guardrails-do-claude-code.md)
 
 O princípio: **o que não pode falhar vira permissão ou hook; o que é orientação fica no
 `CLAUDE.md` ou numa skill.** Os padrões estão em `docs/padroes/` e os hooks são testados
-em `tests/test_hooks.py`.
+em `tests/nucleo/test_hooks.py`.
 
 ### Fluxo de uma mudança grande
 
@@ -59,8 +59,8 @@ hook, e o deploy de produção só acontece pelo GitHub Actions
 
 | Workflow | Gatilho | O que faz |
 |---|---|---|
-| `ci.yml` | pull request para a `main` | `ruff check .`, `pytest -q` (só testes de unidade, inclui a validação do `fontes.yml`, dos padrões e da documentação), `databricks bundle validate -t dev` e varredura de segredos no histórico (gitleaks) |
-| `integracao.yml` | 1h de segunda a sexta e manual (nunca em PR) | implanta o target `ci`, faz duas rodadas de carga com a agenda fictícia (v1; depois v2, v6, v7 e v5), confere os dados (`tests/integracao/test_carga.py`) e destrói tudo no fim (cerca de 15 minutos; timeout de 30) |
+| `ci.yml` | pull request para a `main` | `ruff check .`, `pytest -q` (só testes de unidade, em `tests/nucleo/` e `tests/projeto/`; inclui o contrato do `fontes.yml` e da gold, a checagem de que o núcleo não cita o projeto e a documentação), `databricks bundle validate -t dev` e varredura de segredos no histórico (gitleaks) |
+| `integracao.yml` | 1h de segunda a sexta e manual (nunca em PR) | implanta o target `ci`, faz duas rodadas de carga com a agenda fictícia (v1; depois v2, v6, v7 e v5), confere os dados (`tests/projeto/integracao/test_carga.py`) e destrói tudo no fim (cerca de 15 minutos; timeout de 30) |
 | `deploy.yml` | manual (`workflow_dispatch`) | `bundle validate` e `bundle deploy -t prod` no environment `prod`, com login OIDC |
 
 - **Testes de integração** ([ADR 0005](adr/0005-testes-de-integracao.md)): o target `ci`

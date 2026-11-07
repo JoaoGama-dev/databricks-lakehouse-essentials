@@ -12,16 +12,16 @@ from pathlib import Path
 import pytest
 import yaml
 
-from essentials.config_fontes import carregar_fontes, colunas_sensiveis, validar_config
+from essentials.config_fontes import validar_config
 from essentials.governanca_sql import (
-    FUNCAO_MASCARA,
     sql_funcao_mascara,
     sql_tags_da_tabela,
     sqls_tags_pii,
     sqls_views_gold,
 )
+from fontes_ficticias import EVENTOS, config_ficticia
 
-RAIZ = Path(__file__).resolve().parents[1]
+RAIZ = Path(__file__).resolve().parents[2]
 
 
 def carregar_yaml(caminho: Path) -> dict:
@@ -98,39 +98,20 @@ def test_landing_de_producao_e_volume_externo():
     assert prod["variables"]["landing_url"].startswith("abfss://")
 
 
-def test_gold_e_publicada_no_schema_gold():
-    sql = (RAIZ / "src" / "pipeline" / "gold_entrevistas.sql").read_text(encoding="utf-8")
-    criadas = re.findall(r"CREATE OR REFRESH MATERIALIZED VIEW (\S+)", sql)
-    assert criadas and all(nome.startswith("${catalogo}.${schema_gold}.gold_") for nome in criadas), criadas
+# A gold no schema gold e a máscara nas colunas sensíveis da gold do projeto:
+# tests/nucleo/test_contrato_do_projeto.py.
 
 
 # 3.3 e 3.4 Dados pessoais: máscara e tags -----------------------------------------
 
-FONTES = carregar_fontes(RAIZ / "config" / "fontes.yml")
-SENSIVEIS = {coluna for fonte in FONTES for coluna in colunas_sensiveis(fonte)}
-
-
-def test_colunas_sensiveis_estao_marcadas():
-    assert SENSIVEIS == {"nm_candidato", "nr_telefone"}
+FONTES = [EVENTOS]
 
 
 def test_coluna_mascarada_precisa_ser_sensivel():
-    config = yaml.safe_load((RAIZ / "config" / "fontes.yml").read_text(encoding="utf-8"))
-    del config["fontes"][0]["colunas"]["nr_telefone"]["sensivel"]
-    with pytest.raises(ValueError, match="sensivel: true: nr_telefone"):
+    config = config_ficticia()
+    del config["fontes"][0]["colunas"]["nr_contato"]["sensivel"]
+    with pytest.raises(ValueError, match="sensivel: true: nr_contato"):
         validar_config(config)
-
-
-def test_toda_coluna_sensivel_da_gold_tem_mascara():
-    sql = (RAIZ / "src" / "pipeline" / "gold_entrevistas.sql").read_text(encoding="utf-8")
-    vistas = set()
-    for linha in sql.splitlines():
-        coluna = re.match(r"\s+(\w+) [A-Z]+ COMMENT", linha)
-        if coluna and coluna.group(1) in SENSIVEIS:
-            vistas.add(coluna.group(1))
-            assert linha.rstrip(",").endswith(f"MASK ${{catalogo}}.${{schema_silver}}.{FUNCAO_MASCARA}"), linha
-    # Sem isto, uma mudança no formato da declaração faria o teste passar sem conferir nada.
-    assert vistas == SENSIVEIS, SENSIVEIS - vistas
 
 
 def test_funcao_de_mascara_libera_so_o_grupo_de_dados_pessoais():
@@ -141,19 +122,19 @@ def test_funcao_de_mascara_libera_so_o_grupo_de_dados_pessoais():
 
 
 OBJETOS_GOLD = {
-    "gold_fato_entrevista": ("MATERIALIZED_VIEW", ["dt_entrevista", "nm_candidato", "nr_telefone"]),
-    "gold_vw_entrevistas": ("VIEW", ["dt_entrevista", "nm_candidato", "nr_telefone", "fl_sem_retorno"]),
-    "gold_fato_outra": ("MATERIALIZED_VIEW", ["dt_entrevista", "nm_area"]),
-    "__materialization_mat_abc_gold_fato_entrevista_1": ("MANAGED", ["nm_candidato"]),
+    "gold_fato_evento": ("MATERIALIZED_VIEW", ["dt_evento", "nm_pessoa", "nr_contato"]),
+    "gold_vw_eventos": ("VIEW", ["dt_evento", "nm_pessoa", "nr_contato", "fl_atrasado"]),
+    "gold_fato_outra": ("MATERIALIZED_VIEW", ["dt_evento", "nm_grupo"]),
+    "__materialization_mat_abc_gold_fato_evento_1": ("MANAGED", ["nm_pessoa"]),
 }
 
 
 def test_tags_pii_cobrem_silver_e_gold_e_nunca_o_retrato_privado():
     comandos = sqls_tags_pii("essentials", "portfolio_silver", "portfolio_gold", FONTES, OBJETOS_GOLD)
     alvos = {re.search(r"ALTER TABLE (\S+) ALTER COLUMN `(\w+)`", c).groups() for c in comandos if "ALTER TABLE" in c}
-    assert ("`essentials`.`portfolio_silver`.`silver_agenda`", "nm_candidato") in alvos
-    assert ("`essentials`.`portfolio_silver`.`silver_agenda`", "nr_telefone") in alvos
-    assert ("`essentials`.`portfolio_gold`.`gold_fato_entrevista`", "nm_candidato") in alvos
+    assert ("`essentials`.`portfolio_silver`.`silver_eventos`", "nm_pessoa") in alvos
+    assert ("`essentials`.`portfolio_silver`.`silver_eventos`", "nr_contato") in alvos
+    assert ("`essentials`.`portfolio_gold`.`gold_fato_evento`", "nm_pessoa") in alvos
     # O retrato é privado: não está no catálogo, e um ALTER nele derrubaria a etapa de tags.
     assert not any("retrato" in c for c in comandos)
     assert not any(tabela.endswith("`gold_fato_outra`") for tabela, _ in alvos)
@@ -163,14 +144,14 @@ def test_tags_pii_cobrem_silver_e_gold_e_nunca_o_retrato_privado():
 def test_tag_pii_em_view_usa_set_tag_e_so_onde_falta():
     # ALTER VIEW não altera coluna, e SET TAG ON COLUMN falha se a tag já existir.
     comandos = sqls_tags_pii("essentials", "portfolio_silver", "portfolio_gold", FONTES, OBJETOS_GOLD)
-    na_view = [c for c in comandos if "gold_vw_entrevistas" in c]
+    na_view = [c for c in comandos if "gold_vw_eventos" in c]
     assert na_view == [
-        "SET TAG ON COLUMN `essentials`.`portfolio_gold`.`gold_vw_entrevistas`.`nm_candidato` `pii` = `true`",
-        "SET TAG ON COLUMN `essentials`.`portfolio_gold`.`gold_vw_entrevistas`.`nr_telefone` `pii` = `true`",
+        "SET TAG ON COLUMN `essentials`.`portfolio_gold`.`gold_vw_eventos`.`nm_pessoa` `pii` = `true`",
+        "SET TAG ON COLUMN `essentials`.`portfolio_gold`.`gold_vw_eventos`.`nr_contato` `pii` = `true`",
     ]
-    ja_marcada = {("gold_vw_entrevistas", "nm_candidato")}
+    ja_marcada = {("gold_vw_eventos", "nm_pessoa")}
     comandos = sqls_tags_pii("essentials", "portfolio_silver", "portfolio_gold", FONTES, OBJETOS_GOLD, ja_marcada)
-    assert [c for c in comandos if "gold_vw_entrevistas" in c] == [na_view[1]]
+    assert [c for c in comandos if "gold_vw_eventos" in c] == [na_view[1]]
 
 
 @pytest.mark.parametrize(
@@ -183,10 +164,10 @@ def test_tag_pii_em_view_usa_set_tag_e_so_onde_falta():
     ],
 )
 def test_tags_camada_e_tipo_vem_das_propriedades_com_o_alter_de_cada_objeto(tipo_objeto, comando):
-    propriedades = {"camada": "silver", "tipo": "historico", "fonte": "agenda", "pipelines.reset.allowed": "false"}
-    sql = sql_tags_da_tabela("essentials", "portfolio_silver", "silver_agenda", tipo_objeto, propriedades)
+    propriedades = {"camada": "silver", "tipo": "historico", "fonte": "eventos", "pipelines.reset.allowed": "false"}
+    sql = sql_tags_da_tabela("essentials", "portfolio_silver", "silver_eventos", tipo_objeto, propriedades)
     assert sql == (
-        f"{comando} `essentials`.`portfolio_silver`.`silver_agenda` "
+        f"{comando} `essentials`.`portfolio_silver`.`silver_eventos` "
         "SET TAGS ('camada' = 'silver', 'tipo' = 'historico')"
     )
 
@@ -208,14 +189,33 @@ def test_governanca_aplica_as_tags_depois_das_views_nos_quatro_schemas():
     assert "(args.schema_bronze, args.schema_silver, args.schema_gold, args.schema_monitoramento)" in codigo
 
 
-def test_views_da_gold_saem_do_arquivo_com_o_schema_do_target():
-    comandos = sqls_views_gold(RAIZ / "src", "essentials", "dev_x_portfolio_gold", "dev_x_portfolio_silver")
-    assert comandos
-    view = next(c for c in comandos if "gold_vw_entrevistas" in c)
-    assert view.startswith("CREATE OR REPLACE VIEW `essentials`.`dev_x_portfolio_gold`.gold_vw_entrevistas (")
-    assert "FROM `essentials`.`dev_x_portfolio_gold`.gold_fato_entrevista AS f" in view
+VIEW_FICTICIA = """-- View fictícia da gold, no formato de src/views/gold_vw_*.sql.
+-- ${catalogo}, ${schema_gold} e ${schema_silver} são trocados pelos nomes do target.
+CREATE OR REPLACE VIEW ${catalogo}.${schema_gold}.gold_vw_eventos (
+  dt_evento COMMENT 'Data do evento, para o teste.',
+  nm_pessoa COMMENT 'Nome da pessoa (dado pessoal: mascarado).'
+)
+COMMENT 'View fictícia dos eventos.'
+TBLPROPERTIES ('camada' = 'gold', 'tipo' = 'view')
+AS SELECT
+  f.dt_evento,
+  ${catalogo}.${schema_silver}.mascarar_dado_pessoal(f.nm_pessoa) AS nm_pessoa
+FROM ${catalogo}.${schema_gold}.gold_fato_evento AS f;
+"""
+
+
+def test_views_da_gold_saem_do_arquivo_com_o_schema_do_target(tmp_path):
+    (tmp_path / "views").mkdir()
+    (tmp_path / "views" / "gold_vw_eventos.sql").write_text(VIEW_FICTICIA, encoding="utf-8")
+    # Fora do padrão gold_vw_*.sql: não é view da gold e não entra.
+    (tmp_path / "views" / "rascunho.sql").write_text("SELECT 1;", encoding="utf-8")
+    comandos = sqls_views_gold(tmp_path, "essentials", "dev_x_portfolio_gold", "dev_x_portfolio_silver")
+    assert len(comandos) == 1
+    view = comandos[0]
+    assert view.startswith("CREATE OR REPLACE VIEW `essentials`.`dev_x_portfolio_gold`.gold_vw_eventos (")
+    assert "FROM `essentials`.`dev_x_portfolio_gold`.gold_fato_evento AS f" in view
     # A função de máscara fica no schema silver do target: outro schema quebraria a view.
-    assert "`essentials`.`dev_x_portfolio_silver`.mascarar_dado_pessoal(f.nm_candidato)" in view
+    assert "`essentials`.`dev_x_portfolio_silver`.mascarar_dado_pessoal(f.nm_pessoa)" in view
     # Sobrou marcador, comentário ou ";" no fim: o spark.sql recusaria ou leria o schema errado.
     assert all("${" not in c and "--" not in c and not c.endswith(";") for c in comandos)
 

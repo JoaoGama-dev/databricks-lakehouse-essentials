@@ -1,8 +1,9 @@
 # Configuração do ruff (lint). Rode com: ruff check .
 target-version = "py311"
 line-length = 120
-# src/ e tests/ contêm o código do projeto: "essentials" é tratado como import próprio.
-src = ["src", "tests"]
+# src/ e tests/ contêm o código do projeto: "essentials" é tratado como import próprio, e
+# também os módulos de apoio dos testes do núcleo e do projeto (ex.: fontes_ficticias).
+src = ["src", "tests", "tests/nucleo", "tests/projeto"]
 
 [lint]
 # Regras escolhidas explicitamente:

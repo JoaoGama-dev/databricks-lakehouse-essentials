@@ -1,5 +1,5 @@
 """Deixa o pacote src/essentials importável nos testes, como no pipeline, e marca cada
-teste como "integracao" (os de tests/integracao/) ou "unidade" (todos os outros)."""
+teste como "integracao" (os de tests/projeto/integracao/) ou "unidade" (todos os outros)."""
 
 import sys
 from pathlib import Path

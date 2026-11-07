@@ -15,7 +15,7 @@ streaming, 5 atualização do pipeline (gold e retrato), 6 REORG ... APPLY (PURG
 7 VACUUM. Referência: https://docs.databricks.com/aws/en/ldp/gdpr
 
 Uso:
-    python scripts/gerar_exclusao_titular.py --fonte agenda --catalogo essentials \\
+    python scripts/gerar_exclusao_titular.py --fonte <fonte> --catalogo essentials \\
         --schema-bronze portfolio_bronze --schema-silver portfolio_silver \\
         --schema-gold portfolio_gold [--saida exclusao.sql]
 """
@@ -50,7 +50,8 @@ PADRAO_GOLD = re.compile(
 )
 # Formatos em que a bronze tem as colunas da origem (o DELETE compara coluna a coluna).
 FORMATOS_COM_COLUNAS = {"csv", "json", "parquet", "excel"}
-# Separadores de campo aceitos numa linha de arquivo texto (a agenda usa ";"). O ";" vai como
+# Separadores de campo aceitos numa linha de arquivo texto (";" é o do CSV exportado pelo Excel
+# em português; também ",", tabulação e "|"). O ";" vai como
 # o escape unicode 003B, que o Spark SQL converte no literal: um ";" cru cortaria o comando
 # em ferramentas que separam os comandos pelo ";". chr(92) é a barra invertida.
 SEPARADORES_TEXTO = "[" + chr(92) + "u003B," + chr(92) + "t|]"

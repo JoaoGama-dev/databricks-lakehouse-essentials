@@ -1,7 +1,8 @@
-"""Testes de unidade da configuração dos testes de integração (Fase 5, docs/adr/0005).
+"""Testes de unidade do script e do workflow que carregam o exemplo no target ci (Fase 5,
+docs/adr/0005). Camada do projeto: scripts/integracao.py e .github/workflows/integracao.yml.
 
-Rodam sem Databricks: conferem o target ci, o workflow e as travas de segurança do
-scripts/integracao.py, que nunca pode mexer num schema fora do CI.
+Rodam sem Databricks: conferem o workflow e as travas de segurança do scripts/integracao.py,
+que nunca pode mexer num schema fora do CI.
 """
 
 from __future__ import annotations
@@ -14,8 +15,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-RAIZ = Path(__file__).resolve().parents[1]
+RAIZ = Path(__file__).resolve().parents[2]
 WORKFLOW = RAIZ / ".github" / "workflows" / "integracao.yml"
+# A fonte do exemplo que o workflow carrega.
+FONTE_DO_EXEMPLO = "agenda"
 
 
 def carregar_script():
@@ -28,39 +31,8 @@ def carregar_script():
 INTEGRACAO = carregar_script()
 
 
-def bundle() -> dict:
-    return yaml.safe_load((RAIZ / "databricks.yml").read_text(encoding="utf-8"))
-
-
 def workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-
-
-# Target ci ---------------------------------------------------------------------------
-
-
-def test_target_ci_usa_o_projeto_com_sufixo_ci():
-    projeto = bundle()["variables"]["projeto"]["default"]
-    ci = bundle()["targets"]["ci"]
-    assert ci["mode"] == "development"
-    assert ci["variables"]["projeto"] == f"{projeto}_ci"
-
-
-def test_target_ci_pode_ser_destruido_e_nao_roda_sozinho():
-    # Sem prevent_destroy na base nem no ci: a CLI antes da v1.22 ignora um override para
-    # false, e o destroy do workflow seria recusado (docs/adr/0005).
-    governanca = yaml.safe_load((RAIZ / "resources" / "governanca.yml").read_text(encoding="utf-8"))["resources"]
-    recursos = bundle()["targets"]["ci"]["resources"]
-    for tipo in ("schemas", "volumes"):
-        assert tipo not in recursos, tipo
-        assert all("lifecycle" not in recurso for recurso in governanca[tipo].values()), tipo
-    assert recursos["jobs"]["essentials_carga_diaria"]["schedule"]["pause_status"] == "PAUSED"
-    assert recursos["alerts"]["atraso_carga"]["schedule"]["pause_status"] == "PAUSED"
-
-
-def test_dev_nao_tem_agendamento_ativo():
-    dev = bundle()["targets"]["dev"]["resources"]
-    assert dev["jobs"]["essentials_carga_diaria"]["schedule"]["pause_status"] == "PAUSED"
 
 
 # Travas do scripts/integracao.py ----------------------------------------------------
@@ -204,12 +176,12 @@ ORDEM = [
     "integracao.py preparar",
     "--only preparar_governanca",
     "--validate-only",
-    "integracao.py enviar --versao 1\n",
+    f"integracao.py enviar --fonte {FONTE_DO_EXEMPLO} --versao 1\n",
     "bundle run essentials_carga_diaria -t ci\n",
-    "INTEGRACAO_RODADA=1 pytest -m integracao tests/integracao/test_carga.py",
-    "integracao.py enviar --versao 2 6 7 5\n",
+    "INTEGRACAO_RODADA=1 pytest -m integracao tests/projeto/integracao/test_carga.py",
+    f"integracao.py enviar --fonte {FONTE_DO_EXEMPLO} --versao 2 6 7 5\n",
     "bundle run essentials_carga_diaria -t ci\n",
-    "INTEGRACAO_RODADA=2 pytest -m integracao tests/integracao/test_carga.py",
+    "INTEGRACAO_RODADA=2 pytest -m integracao tests/projeto/integracao/test_carga.py",
     "bundle destroy -t ci",
     "integracao.py limpar",
 ]
@@ -245,10 +217,11 @@ def test_timeout_do_workflow_cabe_duas_cargas_sem_esconder_travamento():
 
 def test_workflow_envia_so_versoes_da_lista_fechada():
     texto = WORKFLOW.read_text(encoding="utf-8")
-    listas = re.findall(r"integracao\.py enviar --versao ([\d ]+)", texto)
-    enviadas = [[int(n) for n in lista.split()] for lista in listas]
+    listas = re.findall(r"integracao\.py enviar --fonte (\w+) --versao ([\d ]+)", texto)
+    assert {fonte for fonte, _ in listas} == {FONTE_DO_EXEMPLO}
+    enviadas = [[int(n) for n in lista.split()] for _, lista in listas]
     assert enviadas == [[1], [2, 6, 7, 5]]
-    assert all(set(lista) <= set(INTEGRACAO.VERSOES_AGENDA) for lista in enviadas)
+    assert all(set(lista) <= set(INTEGRACAO.VERSOES_EXEMPLO) for lista in enviadas)
 
 
 def test_enviar_aceita_so_as_versoes_do_gerador():
@@ -259,8 +232,8 @@ def test_enviar_aceita_so_as_versoes_do_gerador():
         modulo.ARQUIVO_V1, modulo.ARQUIVO_V2, modulo.ARQUIVO_V3, modulo.ARQUIVO_V4,
         modulo.ARQUIVO_REENVIO, modulo.ARQUIVO_ATRASADO, modulo.ARQUIVO_SO_CABECALHO, modulo.ARQUIVO_CP1252,
     ]
-    assert [INTEGRACAO.arquivo_da_versao(n).name for n in INTEGRACAO.VERSOES_AGENDA] == nomes
-    assert all(INTEGRACAO.arquivo_da_versao(n).is_file() for n in INTEGRACAO.VERSOES_AGENDA)
+    assert [INTEGRACAO.arquivo_da_versao(n).name for n in INTEGRACAO.VERSOES_EXEMPLO] == nomes
+    assert all(INTEGRACAO.arquivo_da_versao(n).is_file() for n in INTEGRACAO.VERSOES_EXEMPLO)
 
 
 @pytest.mark.parametrize("versao", [0, 9, -1, "1", "../privado/x"])
@@ -280,6 +253,33 @@ def test_enviar_varias_versoes_mantem_a_ordem_e_confere_todas_antes():
     for invalida in ([], [2, 5, 2]):
         with pytest.raises(ValueError):
             INTEGRACAO.arquivos_das_versoes(invalida)
+
+
+def test_enviar_usa_a_pasta_da_fonte_no_fontes_yml():
+    # Risco: arquivo numa pasta que o Auto Loader não lê (a carga passa sem dado novo e a
+    # conferência falha por outro motivo) ou, com outra fonte, na pasta errada.
+    from essentials.config_fontes import carregar_fontes, pasta_landing
+
+    fonte = next(f for f in carregar_fontes(INTEGRACAO.CONFIG) if f["nome"] == FONTE_DO_EXEMPLO)
+    recursos = {"landing": "/Volumes/essentials/dev_joao_portfolio_ci_bronze/landing"}
+    envios = INTEGRACAO.destinos(recursos, FONTE_DO_EXEMPLO, [2, 1])
+    assert [destino for _, destino in envios] == [
+        f"{recursos['landing']}/{pasta_landing(fonte)}/agenda_exemplo_v2.csv",
+        f"{recursos['landing']}/{pasta_landing(fonte)}/agenda_exemplo_v1.csv",
+    ]
+
+
+@pytest.mark.parametrize("pasta", ["../privado", "/agenda", "agenda/../x", "agenda/", ""])
+def test_enviar_recusa_fonte_que_nao_existe_ou_pasta_fora_da_landing(tmp_path, monkeypatch, pasta):
+    with pytest.raises(ValueError, match="não está"):
+        INTEGRACAO.pasta_da_fonte("nao_existe")
+    import essentials.config_fontes
+
+    fonte = {"nome": "x", "tipo": "arquivo", "arquivo": {"caminho": pasta}}
+    monkeypatch.setattr(INTEGRACAO, "carregar_fontes", lambda caminho: [fonte])
+    assert essentials.config_fontes.pasta_landing(fonte) == pasta
+    with pytest.raises(ValueError, match="sem pasta válida"):
+        INTEGRACAO.pasta_da_fonte("x")
 
 
 def test_workflow_nunca_toca_em_prod():

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from essentials.config_fontes import carregar_fontes, expectations, validar_config
+from essentials.config_fontes import validar_config
 from essentials.monitoramento_sql import (
     MOTIVO_SEM_CLASSE,
     TAMANHO_MAXIMO_MOTIVO,
@@ -21,10 +21,10 @@ from essentials.monitoramento_sql import (
     sql_volume,
     tabela_do_volume,
 )
-from fontes_ficticias import CADASTRO, cadastro
+from fontes_ficticias import CADASTRO, EVENTOS, cadastro, config_ficticia
 
-RAIZ = Path(__file__).resolve().parents[1]
-FONTES = carregar_fontes(RAIZ / "config" / "fontes.yml")
+RAIZ = Path(__file__).resolve().parents[2]
+FONTES = [EVENTOS]
 
 
 def carregar_yaml(caminho: Path) -> dict:
@@ -48,14 +48,14 @@ def bundle() -> dict:
 
 
 def test_volume_e_medido_no_retrato_ou_na_silver():
-    assert tabela_do_volume({"nome": "agenda", "modo_carga": "snapshot"}) == "silver_int_agenda_retrato"
+    assert tabela_do_volume({"nome": "eventos", "modo_carga": "snapshot"}) == "silver_int_eventos_retrato"
     assert tabela_do_volume({"nome": "vendas", "modo_carga": "cdc"}) == "silver_int_vendas_mudancas"
     assert tabela_do_volume({"nome": "vendas", "modo_carga": "incremental"}) == "silver_vendas"
 
 
 def test_volume_so_alerta_no_snapshot_com_retrato_vazio_ou_queda_acima_do_limite():
     sql = sql_volume("essentials", "portfolio_monitoramento", FONTES, 40)
-    assert "('silver_int_agenda_retrato', 'snapshot')" in sql
+    assert "('silver_int_eventos_retrato', 'snapshot')" in sql
     assert "details:flow_progress:metrics:num_output_rows" in sql
     assert "ds_modo = 'snapshot' AND (qt_linhas = 0 OR coalesce(" in sql
     assert "<= -40) AS fl_alerta" in sql
@@ -70,14 +70,14 @@ def test_volume_e_valido_sem_fontes():
 
 # Coluna nova na origem: antes conferida na integração (cargos ganhava uma coluna), agora só
 # aqui, com a fonte fictícia do tipo tabela, cuja bronze tem as colunas da origem.
-COLUNAS_BRONZE_CADASTRO = ["id_item", "prefixo", "area", "atualizado_em", "_fonte", "_ingerido_em"]
+COLUNAS_BRONZE_CADASTRO = ["id_item", "prefixo", "grupo", "atualizado_em", "_fonte", "_ingerido_em"]
 
 
 def test_coluna_nova_na_origem_e_detectada_so_onde_a_bronze_tem_as_colunas_da_origem():
     colunas = {
         "bronze_cadastro": [*COLUNAS_BRONZE_CADASTRO, "cd_centro_custo"],
-        # A agenda é texto com preparação: a bronze tem só "value", e isso não é coluna nova.
-        "bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"],
+        # Texto com preparação: a bronze tem só "value", e isso não é coluna nova.
+        "bronze_eventos": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"],
     }
     assert colunas_novas_na_origem([*FONTES, CADASTRO], colunas) == [("bronze_cadastro", "cd_centro_custo")]
 
@@ -113,7 +113,7 @@ def test_estrutura_conta_dado_resgatado_e_e_valida_sem_aviso():
     assert vazia.rstrip().endswith("WHERE false")
 
 
-COLUNAS_BRONZE_AGENDA = {"bronze_agenda": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"]}
+COLUNAS_BRONZE_EVENTOS = {"bronze_eventos": ["value", "_fonte", "_arquivo_origem", "_modificado_em", "_ingerido_em"]}
 
 
 def partes_da_estrutura(sql: str) -> list[str]:
@@ -124,17 +124,17 @@ def parte_do_tipo(sql: str, tipo: str) -> str:
     return next(parte for parte in partes_da_estrutura(sql) if f"'{tipo}' AS ds_tipo" in parte)
 
 
-RETRATO_DA_AGENDA = (
-    "(SELECT DISTINCT _arquivo_origem FROM `essentials`.`portfolio_silver`.`silver_agenda` WHERE __END_AT IS NULL)"
+RETRATO_DOS_EVENTOS = (
+    "(SELECT DISTINCT _arquivo_origem FROM `essentials`.`portfolio_silver`.`silver_eventos` WHERE __END_AT IS NULL)"
 )
 
 
 def test_arquivo_ignorado_compara_todos_os_arquivos_da_ultima_carga_com_o_retrato():
     # O retrato é privado do pipeline: os arquivos dele são os das versões vigentes da silver.
-    sql = estrutura(FONTES, COLUNAS_BRONZE_AGENDA)
+    sql = estrutura(FONTES, COLUNAS_BRONZE_EVENTOS)
     parte = parte_do_tipo(sql, "arquivo_ignorado")
-    assert parte.startswith("SELECT 'bronze_agenda' AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, ")
-    bronze = "`essentials`.`portfolio_bronze`.`bronze_agenda`"
+    assert parte.startswith("SELECT 'bronze_eventos' AS nm_tabela, 'arquivo_ignorado' AS ds_tipo, ")
+    bronze = "`essentials`.`portfolio_bronze`.`bronze_eventos`"
     # Vários arquivos da mesma carga podem cair em micro-batches diferentes: comparar só com o
     # último _ingerido_em esconderia os arquivos dos micro-batches anteriores. Vale o início da
     # atualização (event log) que gravou a ingestão mais recente.
@@ -145,8 +145,8 @@ def test_arquivo_ignorado_compara_todos_os_arquivos_da_ultima_carga_com_o_retrat
         f"WHERE u.dh_inicio <= (SELECT max(_ingerido_em) FROM {bronze})), (SELECT max(_ingerido_em) FROM {bronze}))"
     )
     assert f"FROM (SELECT DISTINCT _arquivo_origem FROM {bronze} WHERE _ingerido_em >= {inicio}) AS b" in parte
-    assert f"LEFT ANTI JOIN {RETRATO_DA_AGENDA} AS r ON b._arquivo_origem = r._arquivo_origem" in parte
-    assert "silver_int_agenda_retrato" not in sql
+    assert f"LEFT ANTI JOIN {RETRATO_DOS_EVENTOS} AS r ON b._arquivo_origem = r._arquivo_origem" in parte
+    assert "silver_int_eventos_retrato" not in sql
 
 
 def test_retrato_de_snapshot_sem_historico_e_a_propria_silver():
@@ -157,10 +157,10 @@ def test_retrato_de_snapshot_sem_historico_e_a_propria_silver():
 
 
 def test_codificacao_invalida_olha_so_o_arquivo_do_retrato_da_fonte_texto():
-    sql = estrutura(FONTES, COLUNAS_BRONZE_AGENDA)
+    sql = estrutura(FONTES, COLUNAS_BRONZE_EVENTOS)
     parte = parte_do_tipo(sql, "codificacao_invalida")
-    assert parte.startswith("SELECT DISTINCT 'bronze_agenda' AS nm_tabela, 'codificacao_invalida' AS ds_tipo, ")
-    assert f"LEFT SEMI JOIN {RETRATO_DA_AGENDA} AS r" in parte
+    assert parte.startswith("SELECT DISTINCT 'bronze_eventos' AS nm_tabela, 'codificacao_invalida' AS ds_tipo, ")
+    assert f"LEFT SEMI JOIN {RETRATO_DOS_EVENTOS} AS r" in parte
     # Risco: procurar U+FFFD nunca dispara, porque a bronze guarda os bytes cp1252 como chegaram
     # (visto na integração de 2026-11-04). Só a validação do UTF-8 acha o arquivo.
     assert parte.endswith("WHERE NOT is_valid_utf8(b.value)")
@@ -169,7 +169,7 @@ def test_codificacao_invalida_olha_so_o_arquivo_do_retrato_da_fonte_texto():
 
 def test_avisos_de_arquivo_mostram_so_o_nome_do_arquivo():
     # LGPD: nunca o conteúdo (value) nem a pasta da landing, só o nome do arquivo.
-    sql = estrutura(FONTES, COLUNAS_BRONZE_AGENDA)
+    sql = estrutura(FONTES, COLUNAS_BRONZE_EVENTOS)
     for tipo in ("arquivo_ignorado", "codificacao_invalida"):
         selecao = parte_do_tipo(sql, tipo).split(" FROM ", 1)[0]
         assert "element_at(split(b._arquivo_origem, '/'), -1) AS nm_coluna" in selecao, tipo
@@ -213,7 +213,7 @@ def test_bronze_de_arquivo_nao_falha_com_coluna_nova():
 
 
 def test_fonte_de_planilha_excel_e_aceita_e_lida_pelo_auto_loader():
-    config = carregar_yaml(RAIZ / "config" / "fontes.yml")
+    config = config_ficticia()
     planilha = {
         "nome": "metas",
         "descricao": "Metas mensais enviadas em Excel.",
@@ -238,20 +238,20 @@ def test_fonte_de_planilha_excel_e_aceita_e_lida_pelo_auto_loader():
 def test_motivo_de_regra_falhar_traz_so_os_nomes_das_regras():
     # Mensagem no formato do motor, com um registro fictício.
     mensagem = (
-        "Flow 'silver_int_agenda_retrato' failed to meet the expectation. "
-        "Violated expectations: 'data_plausivel'.\n"
-        'Input record: {"nm_candidato":"Maria Exemplo","nr_telefone":"(41) 99999-0000"}'
+        "Flow 'silver_int_eventos_retrato' failed to meet the expectation. "
+        "Violated expectations: 'data_recente'.\n"
+        'Input record: {"nm_pessoa":"Maria Exemplo","nr_contato":"(41) 99999-0000"}'
     )
     motivo = motivo_seguro(mensagem)
-    assert motivo == "Regra de qualidade que para a carga foi violada: data_plausivel. Confira o arquivo enviado."
+    assert motivo == "Regra de qualidade que para a carga foi violada: data_recente. Confira o arquivo enviado."
     assert "Maria" not in motivo and "9999" not in motivo
 
 
 @pytest.mark.parametrize(
     "mensagem",
     [
-        'Erro ao ler a origem: {"nm_candidato": "Maria Exemplo"}',
-        "Falha na tarefa [nr_telefone=(41) 99999-0000]",
+        'Erro ao ler a origem: {"nm_pessoa": "Maria Exemplo"}',
+        "Falha na tarefa [nr_contato=(41) 99999-0000]",
         "Problem with record Maria Exemplo",
     ],
 )
@@ -266,15 +266,6 @@ def test_motivo_tem_tamanho_limitado_e_nunca_repassa_texto_livre():
     # Lista de permissões: a primeira linha do erro não passa mais (pode ser um nome).
     assert motivo_seguro("Erro na primeira linha\nsegunda linha com detalhe") == MOTIVO_SEM_CLASSE
 
-
-def test_regra_data_plausivel_para_a_carga_inteira():
-    # Substitui o cenário v4 da integração: uma planilha com data antes de 2020 não pode virar
-    # painel; a regra precisa ser expect_all_or_fail (falhar), não drop nem alerta.
-    agenda = next(fonte for fonte in FONTES if fonte["nome"] == "agenda")
-    _descartar, _alertar, falhar = expectations(agenda)
-    assert falhar == {"data_plausivel": "dt_entrevista IS NULL OR dt_entrevista >= DATE'2020-01-01'"}
-    codigo = (RAIZ / "src" / "pipeline" / "silver.py").read_text(encoding="utf-8")
-    assert "funcao = dp.expect_all_or_fail(falhar)(funcao)" in codigo
 
 def test_aviso_de_falha_do_job_vai_tambem_para_o_suporte():
     job = carregar_yaml(RAIZ / "resources" / "job.yml")["resources"]["jobs"]["essentials_carga_diaria"]

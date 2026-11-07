@@ -10,6 +10,36 @@ só a versão menor.
 
 ## [Unreleased]
 
+### Núcleo e camada do projeto
+
+#### Adicionado
+
+- Separação entre o **núcleo** do acelerador (igual para todo cliente) e a **camada do
+  projeto** (`config/fontes.yml`, `silver_<fonte>.sql`, `gold_*.sql`, `gold_vw_*.sql`, painel do
+  negócio, `tests/projeto/` e valores do `databricks.yml`), com a fronteira em
+  `docs/padroes/nucleo-e-projeto.md` e o ADR 0025.
+- `tests/nucleo/test_contrato_do_projeto.py`: gera testes do `config/fontes.yml` e da gold de
+  qualquer cliente (chave com `nao_nulo`, máscara na gold e na view, descrição em toda coluna,
+  bronze e silver por fonte, `COMMENT`, propriedades e prefixos) e diz o que não conseguiu
+  verificar. Limite: a máscara só é detectada em `alias.coluna AS nome`.
+- `tests/nucleo/test_nucleo_sem_projeto.py`: falha se nome de fonte, coluna, regra, tabela gold
+  do projeto ou termo de `tests/projeto/termos_do_negocio.py` aparecer no núcleo (palavra
+  inteira).
+- `tests/nucleo/fontes_ficticias.py`: fontes fictícias próprias do núcleo para testar o motor.
+
+#### Alterado
+
+- O pipeline lê a pasta `src/pipeline/` por `glob` (`resources/pipeline.yml`, Public
+  Preview): um `silver_<fonte>.sql` ou `gold_*.sql` novo entra sozinho, sem listar arquivos.
+- O painel do cliente virou `painel_negocio` (`src/dashboards/negocio.lvdash.json`, nome
+  "Essentials · <projeto> · Negócio"); o painel de saúde continua no núcleo.
+- Testes em `tests/nucleo/` e `tests/projeto/` (integração em `tests/projeto/integracao/`):
+  de 602 para 671 testes de unidade, mais 17 de integração, sem perder teste de risco.
+- `scripts/integracao.py enviar` recebe `--fonte`; a pasta da landing vem do `fontes.yml`.
+- Skills `novo-cliente`, `nova-fonte` e `novo-indicador` alteram só a camada do projeto e
+  rodam o contrato e o vazamento de `tests/nucleo` como critério de pronto.
+- Documentação atualizada para os novos caminhos de testes, painel e `libraries`.
+
 ### Custo em reais
 
 #### Adicionado

@@ -30,7 +30,7 @@ COM_VALOR = [
     "Cannot cast Maria Souza to DATE",
     # Delta
     "DeltaUnsupportedOperationException: Cannot perform Merge as multiple source rows matched "
-    "and attempted to modify the same target row: id_candidato=98765 nm_candidato='Maria Souza'",
+    "and attempted to modify the same target row: id_pessoa=98765 nm_pessoa='Maria Souza'",
     "Duplicate key found: ('Fulano', 'fulano@exemplo.com')",
     "[DELTA_FAILED_TO_MERGE_FIELDS] Failed to merge fields 'nm_pessoa' and 'Maria Souza'",
     "Cannot write nullable values to non-null column 'nm_pessoa' (value: Maria Souza)",
@@ -61,17 +61,17 @@ def test_motivo_continua_dizendo_o_que_deu_errado():
     assert motivo == (
         "Erro DeltaUnsupportedOperationException: veja a mensagem completa pelo link da execução."
     )
-    assert "id_candidato=98765" not in motivo
+    assert "id_pessoa=98765" not in motivo
 
 
 def test_regra_falhar_violada_mostra_so_o_nome_da_regra():
     mensagem = (
         "[EXPECTATION_VIOLATION.VERBOSE_ALL] Flow 'silver_x' failed.\n"
-        "Violated expectations: 'data_plausivel'\n"
+        "Violated expectations: 'data_recente'\n"
         "Input data: {nm_pessoa: Maria Souza, nr_cpf: 12345678909}"
     )
     motivo = motivo_seguro(mensagem)
-    assert "data_plausivel" in motivo
+    assert "data_recente" in motivo
     assert not any(valor in motivo for valor in VALORES)
 
 
@@ -126,7 +126,7 @@ MOLDES = (
     "KeyError: {v}",
     "{v} falhou na carga",
     "Erro ao processar {v} na linha 42",
-    "Flow 'silver_x' failed. Violated expectations: 'data_plausivel'.\nInput record: {{nm: {v}}}",
+    "Flow 'silver_x' failed. Violated expectations: 'data_recente'.\nInput record: {{nm: {v}}}",
     '{{"exceptions":[{{"class_name":"org.apache.spark.SparkException","message":"falhou {v}"}}]}}',
     "[DELTA_FAILED_TO_MERGE_FIELDS] Failed to merge fields 'nm_pessoa' and '{v}'",
 )
@@ -137,9 +137,9 @@ MOLDES = (
 @pytest.mark.parametrize("etapa", [None, "SETTING_UP_TABLES"])
 def test_motivo_so_tem_palavras_permitidas(molde, valor, etapa):
     mensagem = molde.format(v=valor)
-    motivo = motivo_seguro(mensagem, etapa, regras={"data_plausivel"})
+    motivo = motivo_seguro(mensagem, etapa, regras={"data_recente"})
     classe = classe_do_erro(mensagem) or ""
-    permitidas = TEXTO_FIXO | {"data_plausivel", etapa.lower() if etapa else ""} | {
+    permitidas = TEXTO_FIXO | {"data_recente", etapa.lower() if etapa else ""} | {
         parte.lower() for parte in re.findall(r"\w+", classe)
     }
     palavras = {palavra.lower() for palavra in re.findall(r"\w+", motivo)}

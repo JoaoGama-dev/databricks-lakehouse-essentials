@@ -15,7 +15,8 @@
 
 - **Sem dbt.** Tudo em Lakeflow Spark Declarative Pipelines, serverless. Python com
   `from pyspark import pipelines as dp`; nunca `import dlt`.
-- Todo arquivo novo em `src/pipeline/` entra nas `libraries` de `resources/pipeline.yml`.
+- Todo arquivo novo em `src/pipeline/` entra sozinho: o pipeline lê a pasta inteira
+  (`glob` em `resources/pipeline.yml`). A pasta só pode ter código do pipeline.
 - Fontes `banco` e `api` chegam à landing pela tarefa `ingerir_fontes_externas` do job
   (`src/ingestao/ingerir_fontes_externas.py`); só são testadas no Azure (o Free Edition
   restringe acesso externo).
@@ -130,6 +131,7 @@
 
 - `src/dashboards/*.lvdash.json` + `resources/dashboard.yml`. As consultas não citam
   catálogo nem schema (`dataset_catalog`/`dataset_schema` no bundle). O painel do negócio
+  (`painel_negocio`, `negocio.lvdash.json`, do projeto)
   lê só views `gold_vw_*`; o de saúde da plataforma lê só as views `mon_*`, do schema
   `<projeto>_monitoramento`. Agregações (por mês, por área) são calculadas nos datasets do
   painel.

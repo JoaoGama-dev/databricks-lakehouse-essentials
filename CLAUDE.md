@@ -14,7 +14,8 @@ Azure Databricks do cliente (target `prod`). Tudo em português do Brasil.
 | Lógica específica de uma fonte | `src/pipeline/silver_<fonte>.sql` |
 | Gold (modelo estrela) | `src/pipeline/gold_*.sql` |
 | Views da gold (o painel lê só elas; aplicam a máscara) | `src/views/gold_vw_*.sql` |
-| Painel AI/BI | `src/dashboards/*.lvdash.json`, `resources/dashboard.yml` |
+| Painel do negócio (`painel_negocio`, do projeto) e painel de saúde (núcleo) | `src/dashboards/negocio.lvdash.json`, `src/dashboards/saude.lvdash.json`, `resources/dashboard.yml` |
+| Testes do motor e do contrato (núcleo) / testes das regras do cliente (projeto) | `tests/nucleo/` / `tests/projeto/` |
 | Monitoramento (views `mon_*`, `mon_log_execucao`, log legível, alertas) | `src/essentials/monitoramento_sql.py`, `log_sql.py`, `log_texto.py`, `src/governanca/publicar_monitoramento.py`, `resources/alertas.yml` |
 | Bundle, job e pipeline | `databricks.yml`, `resources/*.yml` |
 | Perfil de dados sem expor conteúdo | `scripts/perfilar_dados.py` |
@@ -33,6 +34,8 @@ Azure Databricks do cliente (target `prod`). Tudo em português do Brasil.
 - `docs/padroes/camadas.md`: bronze, silver, AUTO CDC, expectations, gold, dicionário de dados.
 - `docs/padroes/lgpd.md`: dados reais, mascaramento, o que o modelo pode ver.
 - `docs/padroes/fluxo-de-trabalho.md`: branch, PR, validação, implantação, limitações.
+- `docs/padroes/nucleo-e-projeto.md`: o que é núcleo (igual para todo cliente) e o que é
+  camada do projeto; o núcleo nunca cita nome de cliente.
 
 ## Regras inegociáveis
 

@@ -70,7 +70,7 @@ nomes e telefones inventados. Dados reais de clientes nunca entram aqui
 ## Totais esperados
 
 Como o gerador usa semente fixa, os números são sempre os mesmos (são os que os testes de
-integração conferem, em `tests/integracao/esperado.py`):
+integração conferem, em `tests/projeto/integracao/esperado.py`):
 
 | Depois da | Retrato | Versões vigentes (`__END_AT` vazio) | Versões na silver | Versões fechadas | Descartes (`nome_preenchido`) |
 |---|---|---|---|---|---|

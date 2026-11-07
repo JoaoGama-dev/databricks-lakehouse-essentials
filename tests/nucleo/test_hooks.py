@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-RAIZ = Path(__file__).resolve().parents[1]
+RAIZ = Path(__file__).resolve().parents[2]
 HOOKS = RAIZ / ".claude" / "hooks"
 PROJETO_WIN = "C:\\Users\\dev\\projeto"
 

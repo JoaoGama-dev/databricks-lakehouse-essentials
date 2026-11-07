@@ -6,10 +6,14 @@ dos recursos vêm do resumo do bundle, gravado pelo workflow depois do deploy:
     databricks bundle summary -t ci -o json > recursos-ci.json
 
 Comandos:
-    python scripts/integracao.py preparar                   esvazia a landing do CI
-    python scripts/integracao.py enviar --versao 1          envia data/agenda_exemplo_v1.csv (1 a 8)
-    python scripts/integracao.py enviar --versao 2 6 7 5    envia várias, nesta ordem, para uma carga só
-    python scripts/integracao.py limpar                     apaga os schemas do CI que sobrarem
+    python scripts/integracao.py preparar                               esvazia a landing do CI
+    python scripts/integracao.py enviar --fonte <fonte> --versao 1      envia o arquivo de exemplo v1 (1 a 8)
+    python scripts/integracao.py enviar --fonte <fonte> --versao 2 6 7 5  várias, nesta ordem, numa carga só
+    python scripts/integracao.py limpar                                 apaga os schemas do CI que sobrarem
+
+Os arquivos vão para a pasta da landing da fonte informada (arquivo.caminho no
+config/fontes.yml). Este script é da camada do projeto (docs/padroes/nucleo-e-projeto.md):
+a lista fechada de arquivos é a do exemplo, gerada por data/gerar_dados_exemplo.py.
 
 Por segurança, nada aqui toca num schema cujo nome não termine em _ci_bronze, _ci_silver,
 _ci_gold ou _ci_monitoramento: o dev de quem roda fica intacto.
@@ -27,15 +31,22 @@ import time
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RAIZ / "src"))
+
+from essentials.config_fontes import carregar_fontes, pasta_landing  # noqa: E402
+
 ARQUIVO_RECURSOS = Path(os.environ.get("INTEGRACAO_RECURSOS", RAIZ / "recursos-ci.json"))
+CONFIG = RAIZ / "config" / "fontes.yml"
 # Um schema por camada (resources/governanca.yml), na ordem em que o limpar os apaga.
 CAMADAS = ("bronze", "silver", "gold", "monitoramento")
 SUFIXOS_CI = tuple(f"_ci_{camada}" for camada in CAMADAS)
-PASTA_AGENDA = "agenda"
-# Versões da agenda fictícia que podem ser enviadas (data/gerar_dados_exemplo.py):
+# Pasta dentro da landing: só nomes simples separados por "/" (nada de "..", nem caminho absoluto).
+PASTA_SEGURA = re.compile(r"[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*")
+# Versões do arquivo fictício que podem ser enviadas (data/gerar_dados_exemplo.py):
 #   1 e 2 cargas normais; 3 e 4 cenários de falha; 5 reenvio da v2; 6 a v1 chegando
 #   atrasada; 7 só o cabeçalho; 8 a v2 em cp1252.
-VERSOES_AGENDA = tuple(range(1, 9))
+VERSOES_EXEMPLO = tuple(range(1, 9))
+ARQUIVO_EXEMPLO = "agenda_exemplo_v{versao}.csv"
 
 
 class SchemaForaDoCI(ValueError):
@@ -133,11 +144,22 @@ def preparar(recursos: dict) -> None:
     print(f"Landing esvaziada: {esvaziar_landing(cliente(), recursos['landing'])} arquivo(s) apagado(s).")
 
 
+def pasta_da_fonte(nome: str, config: Path = CONFIG) -> str:
+    """Pasta da landing da fonte no fontes.yml; recusa fonte sem arquivo ou pasta fora do padrão."""
+    fontes = {fonte["nome"]: fonte for fonte in carregar_fontes(config)}
+    if nome not in fontes:
+        raise ValueError(f"fonte {nome!r} não está no {config.name} ({', '.join(fontes)})")
+    pasta = pasta_landing(fontes[nome])
+    if not pasta or not PASTA_SEGURA.fullmatch(pasta):
+        raise ValueError(f"fonte {nome!r} sem pasta válida na landing: {pasta!r}")
+    return pasta
+
+
 def arquivo_da_versao(versao: int) -> Path:
-    """Arquivo da agenda fictícia de uma versão; recusa o que não for da lista fechada."""
-    if type(versao) is not int or versao not in VERSOES_AGENDA:  # True == 1 passaria no "in"
-        raise ValueError(f"versão {versao!r} da agenda não existe (aceitas: {VERSOES_AGENDA})")
-    return RAIZ / "data" / f"agenda_exemplo_v{versao}.csv"
+    """Arquivo fictício de uma versão; recusa o que não for da lista fechada."""
+    if type(versao) is not int or versao not in VERSOES_EXEMPLO:  # True == 1 passaria no "in"
+        raise ValueError(f"versão {versao!r} do exemplo não existe (aceitas: {VERSOES_EXEMPLO})")
+    return RAIZ / "data" / ARQUIVO_EXEMPLO.format(versao=versao)
 
 
 def arquivos_das_versoes(versoes: list[int]) -> list[Path]:
@@ -147,17 +169,23 @@ def arquivos_das_versoes(versoes: list[int]) -> list[Path]:
     entre arquivos de mesmo conteúdo. Repetir uma versão mudaria essa ordem sem avisar.
     """
     if not versoes:
-        raise ValueError("informe ao menos uma versão da agenda")
+        raise ValueError("informe ao menos uma versão do exemplo")
     repetidas = sorted({versao for versao in versoes if versoes.count(versao) > 1})
     if repetidas:
         raise ValueError(f"versões repetidas: {repetidas}")
     return [arquivo_da_versao(versao) for versao in versoes]
 
 
-def enviar(recursos: dict, versoes: list[int]) -> None:
+def destinos(recursos: dict, fonte: str, versoes: list[int]) -> list[tuple[Path, str]]:
+    """(arquivo, destino na landing) de cada versão, na ordem; confere tudo antes de enviar."""
+    pasta = pasta_da_fonte(fonte)
+    return [(arquivo, f"{recursos['landing']}/{pasta}/{arquivo.name}") for arquivo in arquivos_das_versoes(versoes)]
+
+
+def enviar(recursos: dict, fonte: str, versoes: list[int]) -> None:
+    envios = destinos(recursos, fonte, versoes)
     w = cliente()
-    for arquivo in arquivos_das_versoes(versoes):
-        destino = f"{recursos['landing']}/{PASTA_AGENDA}/{arquivo.name}"
+    for arquivo, destino in envios:
         w.files.upload(destino, io.BytesIO(arquivo.read_bytes()), overwrite=True)
         print(f"Enviado {arquivo.name} para {destino}.")
 
@@ -174,19 +202,20 @@ def limpar(recursos: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("comando", choices=["preparar", "enviar", "limpar"])
+    parser.add_argument("--fonte", help="fonte do config/fontes.yml cuja pasta da landing recebe os arquivos (enviar)")
     parser.add_argument(
-        "--versao", type=int, nargs="+", choices=VERSOES_AGENDA, help="versões da agenda fictícia, na ordem (enviar)"
+        "--versao", type=int, nargs="+", choices=VERSOES_EXEMPLO, help="versões do arquivo fictício, na ordem (enviar)"
     )
     args = parser.parse_args()
+    if args.comando == "enviar" and (not args.versao or not args.fonte):
+        parser.error("enviar precisa de --fonte e --versao")
     if not ARQUIVO_RECURSOS.is_file():
         sys.exit(f"Resumo do bundle não encontrado em {ARQUIVO_RECURSOS}: rode o deploy -t ci antes.")
     recursos = carregar_recursos()
     if args.comando == "preparar":
         preparar(recursos)
     elif args.comando == "enviar":
-        if not args.versao:
-            parser.error("enviar precisa de --versao")
-        enviar(recursos, args.versao)
+        enviar(recursos, args.fonte, args.versao)
     else:
         limpar(recursos)
 

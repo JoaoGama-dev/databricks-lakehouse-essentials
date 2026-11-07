@@ -25,11 +25,13 @@ também roda o ruff em cada `.py` editado.
 ### Testes de unidade e de integração
 
 - `pytest -q` roda só os testes de **unidade** (marcador `unidade`, automático para tudo
-  fora de `tests/integracao/`): sem Databricks, no CI de PR e no pre-commit.
-- Os testes de **integração** (`tests/integracao/`, marcador `integracao`) rodam no
+  fora de `tests/projeto/integracao/`): sem Databricks, no CI de PR e no pre-commit. Eles
+  se dividem em `tests/nucleo/` (motor, contrato e vazamento) e `tests/projeto/` (regras
+  do cliente); ver [`nucleo-e-projeto.md`](nucleo-e-projeto.md).
+- Os testes de **integração** (`tests/projeto/integracao/`, marcador `integracao`) rodam no
   workflow `integracao.yml`, à noite de segunda a sexta ou à mão (*Run workflow*). Ele
   implanta o target `ci`, carrega a agenda fictícia v1 e a v2, confere os dados e destrói
-  tudo no fim (ADR 0005). Os totais esperados ficam em `tests/integracao/esperado.py`.
+  tudo no fim (ADR 0005). Os totais esperados ficam em `tests/projeto/integracao/esperado.py`.
 - Mudou o gerador, o `fontes.yml` ou a silver da agenda? Rode o workflow no PR (*Run
   workflow* na branch) e atualize o `esperado.py` se os totais mudarem de propósito.
 - Para rodar na sua máquina: `databricks bundle deploy -t ci`, `databricks bundle summary

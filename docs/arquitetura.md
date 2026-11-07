@@ -31,7 +31,7 @@ flowchart TD
     vw["gold_vw_*<br/>view criada pela governança: máscara e o que depende de hoje"]
 
     subgraph consumo["Consumo"]
-        painel["Painel de entrevistas (AI/BI) e Genie"]
+        painel["Painel do negócio (AI/BI) e Genie"]
         saude["Painel Saúde da plataforma"]
     end
 
@@ -51,6 +51,11 @@ flowchart TD
     mon --> saude
 ```
 
+- **Núcleo e camada do projeto** (ADR 0025): o motor é igual para todo cliente; o que muda
+  por cliente é o `fontes.yml`, os `silver_<fonte>.sql`, a gold, as views, o painel do
+  negócio e os testes de `tests/projeto/`. A fronteira está em
+  [`padroes/nucleo-e-projeto.md`](padroes/nucleo-e-projeto.md). O pipeline lê a pasta
+  `src/pipeline/` inteira (`glob`), sem listar arquivos.
 - **Bronze e silver são genéricas** (`src/pipeline/bronze.py` e `silver.py`): cada item
   do `fontes.yml` vira suas tabelas (ADR 0007).
 - **As regras de qualidade ficam numa tabela intermediária**, e não numa view, porque o
@@ -302,9 +307,12 @@ ORDER BY table_name, ordinal_position;
 
 ## Painéis AI/BI
 
-O painel **Essentials · portfolio · Entrevistas** é versionado como código
-(`src/dashboards/entrevistas.lvdash.json` + `resources/dashboard.yml`) e implantado pelo
-mesmo `bundle deploy` do pipeline. Ele usa o **Databricks AI/BI**: roda no SQL warehouse
+O painel **Essentials · portfolio · Negócio** (recurso `painel_negocio`, a chave é a mesma
+em todo projeto) é versionado como código
+(`src/dashboards/negocio.lvdash.json` + `resources/dashboard.yml`) e implantado pelo
+mesmo `bundle deploy` do pipeline. Ele é da camada do projeto
+([`nucleo-e-projeto.md`](padroes/nucleo-e-projeto.md)); o nome visível é
+"Essentials · \<projeto\> · Negócio". Ele usa o **Databricks AI/BI**: roda no SQL warehouse
 serverless, não cobra licença por usuário e respeita as permissões do Unity Catalog
 (`embed_credentials: false`: quem não tem acesso à gold não vê os dados).
 
@@ -324,7 +332,7 @@ e `dataset_schema`. O warehouse é localizado pelo nome (`lookup` da variável
 **Ajustes visuais feitos na tela** (cores, posições) voltam para o repositório com:
 
 ```
-databricks bundle generate dashboard --resource painel_entrevistas --force -t dev
+databricks bundle generate dashboard --resource painel_negocio --force -t dev
 ```
 
 **Saúde:** um segundo painel (`src/dashboards/saude.lvdash.json`), só para a engenharia, lê
@@ -345,18 +353,18 @@ vem mascarada) para perguntas livres, como "quantos aprovados em Cozinha em sete
 .
 ├── databricks.yml                 # bundle, variáveis e targets dev, ci e prod
 ├── config/                        # fontes.yml (o que muda por cliente) e o JSON Schema dele
-├── resources/                     # pipeline, job, governança (schemas, volume, grants), painéis, alerta
+├── resources/                     # pipeline (lê src/pipeline/ por glob), job, governança (schemas, volume, grants), painéis, alerta
 ├── src/
 │   ├── essentials/                # lógica sem Spark: config, governança e monitoramento (testada)
-│   ├── pipeline/                  # bronze.py e silver.py genéricas, silver_<fonte>.sql, gold_*.sql
+│   ├── pipeline/                  # bronze.py e silver.py genéricas (núcleo); silver_<fonte>.sql, gold_*.sql (projeto)
 │   ├── views/                     # gold_vw_*.sql: views da gold criadas pela governança
 │   ├── ingestao/                  # ingerir_fontes_externas: banco e API para a landing
 │   ├── governanca/                # tarefas do job: preparar_governanca, publicar_monitoramento e encerrar_com_falha
-│   └── dashboards/                # painéis AI/BI como código
+│   └── dashboards/                # painéis AI/BI como código: negocio (projeto) e saude (núcleo)
 ├── setup/00_setup_free_edition.sql  # só o catálogo e o USE CATALOG (Free Edition)
 ├── data/gerar_dados_exemplo.py    # gera as agendas fictícias v1 e v2 (o resto de data/ fica fora do Git)
-├── scripts/                       # perfilar_dados.py (perfil sem dados pessoais) e integracao.py
-├── tests/                         # unidade (pytest -q) e integracao/ (workflow integracao.yml)
+├── scripts/                       # perfilar_dados.py (perfil sem dados pessoais) e integracao.py (exemplo)
+├── tests/                         # nucleo/ (motor, contrato e vazamento) e projeto/ (regras do cliente; projeto/integracao/ roda no workflow integracao.yml)
 ├── docs/                          # arquitetura, guias, padrões, ADRs e roteiro de operação
 ├── .github/                       # workflows ci, deploy e integracao; Dependabot; templates
 ├── .claude/                       # permissões, hooks, subagentes e skills do Claude Code

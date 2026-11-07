@@ -12,8 +12,9 @@ um **lakehouse medalhão orientado por metadados** no Databricks, empacotado com
 **O problema:** pequenas e médias empresas têm dados espalhados em planilhas e sistemas,
 e cada projeto de dados costuma ser escrito do zero. **A solução:** um acelerador em que
 as fontes de cada cliente são descritas num arquivo, [`config/fontes.yml`](config/fontes.yml),
-e a bronze e a silver são geradas a partir dele. Reaproveitar o projeto em outro cliente
-é, na maior parte, trocar esse arquivo.
+e a bronze e a silver são geradas a partir dele. O pacote tem um **núcleo** (o motor, igual
+para todo cliente) e uma **camada do projeto** (fontes, gold, painel do negócio e testes
+das regras dele). Reaproveitar o projeto em outro cliente é trocar a camada do projeto.
 
 ```mermaid
 flowchart LR
@@ -110,10 +111,16 @@ cada PR `ruff check .`, `pytest -q` e `databricks bundle validate -t dev`.
 1. Copie este repositório com o nome `essentials-<projeto>`.
 2. No `databricks.yml`, troque `bundle.name` para `essentials_<projeto>`, o `default` da
    variável `projeto` e o `projeto` do target `ci` (`<projeto>_ci`).
-3. Reescreva `config/fontes.yml`, os `src/pipeline/silver_<fonte>.sql`, os
-   `src/pipeline/gold_*.sql` e as views `src/views/gold_vw_*.sql`. A skill `novo-cliente` do Claude Code conduz esse passo
-   pelo **perfil** dos arquivos do cliente, sem ver os dados.
-4. Leve ao Azure do cliente: [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md).
+3. Reescreva só a **camada do projeto**: `config/fontes.yml`, os
+   `src/pipeline/silver_<fonte>.sql`, os `src/pipeline/gold_*.sql`, as views
+   `src/views/gold_vw_*.sql`, o painel `src/dashboards/negocio.lvdash.json` e os testes de
+   `tests/projeto/`. O núcleo não muda (o pipeline lê a pasta `src/pipeline/` inteira).
+   A skill `novo-cliente` do Claude Code conduz esse passo pelo **perfil** dos arquivos do
+   cliente, sem ver os dados.
+4. Rode `pytest -q`: os testes de `tests/nucleo/` conferem o contrato do cliente (chave,
+   máscara, descrições, nomes) e que o núcleo não cita nenhum nome dele
+   ([`docs/padroes/nucleo-e-projeto.md`](docs/padroes/nucleo-e-projeto.md)).
+5. Leve ao Azure do cliente: [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md).
 
 ## Documentação
 
@@ -124,7 +131,7 @@ cada PR `ruff check .`, `pytest -q` e `databricks bundle validate -t dev`.
 | Levar ao Azure Databricks do cliente | [`docs/levando-ao-azure.md`](docs/levando-ao-azure.md) |
 | Operação do dia a dia, para o cliente | [`docs/roteiro-de-operacao.md`](docs/roteiro-de-operacao.md) |
 | Desenvolvimento: Claude Code, fluxo dos agentes, CI/CD, cadeia de suprimentos | [`docs/desenvolvimento.md`](docs/desenvolvimento.md) |
-| Padrões: nomes, camadas, LGPD, fluxo de trabalho | [`docs/padroes/`](docs/padroes/) |
+| Padrões: nomes, camadas, LGPD, fluxo de trabalho, núcleo e camada do projeto | [`docs/padroes/`](docs/padroes/) |
 | Decisões de arquitetura (ADRs) | [`docs/adr/`](docs/adr/README.md) |
 | Plano de evolução para o padrão sênior | [`docs/plano-padrao-senior.md`](docs/plano-padrao-senior.md) |
 | Histórico de versões | [`CHANGELOG.md`](CHANGELOG.md) |
