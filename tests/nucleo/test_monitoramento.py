@@ -598,7 +598,9 @@ PROPRIEDADES_DA_TABELA = {
 def test_toda_tabela_do_painel_tem_as_propriedades_obrigatorias(caminho):
     painel = json.loads(caminho.read_text(encoding="utf-8"))
     tabelas = [w for w in widgets_do_painel(painel) if w.get("spec", {}).get("widgetType") == "table"]
-    assert tabelas, caminho.name
+    if caminho == PAINEL_SAUDE:
+        # O painel do negócio é do projeto e pode não ter tabela; o de saúde, do núcleo, tem.
+        assert tabelas, caminho.name
     for widget in tabelas:
         spec = widget["spec"]
         erradas = {

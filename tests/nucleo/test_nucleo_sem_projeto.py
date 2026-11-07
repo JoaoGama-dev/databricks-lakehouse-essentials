@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from essentials.config_fontes import TIPOS_SQL, carregar_fontes, tabelas_da_fonte
+from fontes_ficticias import CADASTRO, EVENTOS
 
 RAIZ = Path(__file__).resolve().parents[2]
 CONFIG = RAIZ / "config" / "fontes.yml"
@@ -109,16 +110,27 @@ def nomes_da_gold() -> set[str]:
     return nomes
 
 
+def termos_da_fonte(fonte: dict) -> set[str]:
+    tabelas = tabelas_da_fonte(fonte)
+    termos = {fonte["nome"], *fonte["colunas"], *tabelas["unicidade"]}
+    termos.update(nome for chave, nome in tabelas.items() if chave != "unicidade" and nome)
+    termos.update(regra["nome"] for regra in fonte.get("regras", []))
+    return termos
+
+
+def termos_ficticios() -> set[str]:
+    """Nomes das fontes fictícias do próprio núcleo (tests/nucleo/fontes_ficticias.py)."""
+    return {termo.lower() for fonte in (EVENTOS, CADASTRO) for termo in termos_da_fonte(fonte)}
+
+
 def termos_do_projeto() -> set[str]:
     termos = set(termos_do_negocio()) | nomes_da_gold()
     for fonte in carregar_fontes(CONFIG):
-        tabelas = tabelas_da_fonte(fonte)
-        termos.add(fonte["nome"])
-        termos.update(nome for chave, nome in tabelas.items() if chave != "unicidade" and nome)
-        termos.update(tabelas["unicidade"])
-        termos.update(fonte["colunas"])
-        termos.update(regra["nome"] for regra in fonte.get("regras", []))
-    permitidos = tipos_de_mascara() | set(TIPOS_SQL)
+        termos |= termos_da_fonte(fonte)
+    # Um cliente com uma coluna ou fonte de nome igual ao de uma fonte fictícia do núcleo (ex.:
+    # um "cadastro") não é vazamento: o nome já era do núcleo. Sem isto, o teste quebraria num
+    # cliente novo sem que nada tivesse vazado.
+    permitidos = tipos_de_mascara() | set(TIPOS_SQL) | termos_ficticios()
     return {termo.lower() for termo in termos if not termo.startswith("_") and termo.lower() not in permitidos}
 
 
@@ -150,12 +162,11 @@ def test_varredura_tem_arquivos_e_termos():
     assert {"src/essentials/config_fontes.py", "src/pipeline/silver.py", "databricks.yml",
             "resources/pipeline.yml", "tests/nucleo/fontes_ficticias.py"} <= relativos
     assert ESTE_ARQUIVO in ARQUIVOS
+    conhecidos = TERMOS | termos_ficticios()
     for fonte in carregar_fontes(CONFIG):
-        assert fonte["nome"].lower() in TERMOS
-        assert {coluna.lower() for coluna in fonte["colunas"] if not coluna.startswith("_")} <= TERMOS
-    assert set(termos_do_negocio()) <= TERMOS
-    assert not TERMOS & (tipos_de_mascara() | set(TIPOS_SQL))
-
+        assert fonte["nome"].lower() in conhecidos
+        assert {coluna.lower() for coluna in fonte["colunas"] if not coluna.startswith("_")} <= conhecidos
+    assert {termo.lower() for termo in termos_do_negocio()} <= conhecidos
 
 @pytest.mark.parametrize("arquivo", ARQUIVOS, ids=lambda a: a.relative_to(RAIZ).as_posix())
 def test_arquivo_do_nucleo_nao_cita_o_projeto(arquivo):
@@ -165,24 +176,35 @@ def test_arquivo_do_nucleo_nao_cita_o_projeto(arquivo):
 
 def test_detector_pega_vazamento_e_ignora_o_que_e_generico():
     # Mutação em memória: um arquivo real do núcleo com nomes do projeto acrescentados.
-    fonte = carregar_fontes(CONFIG)[0]
-    coluna = next(c for c in fonte["colunas"] if not c.startswith("_"))
-    regra = fonte["regras"][0]["nome"]
-    gold = sorted(nomes_da_gold())[0]
-    termo = termos_do_negocio()[0]
+    # Só usa o que o projeto tem: gold, regra e termos do negócio podem não existir num cliente.
+    fontes = [f for f in carregar_fontes(CONFIG) if f["nome"].lower() in TERMOS]
+    if not fontes:
+        pytest.skip("nenhuma fonte do projeto com nome fora das fontes fictícias do núcleo")
+    fonte = fontes[0]
+    coluna = next((c for c in fonte["colunas"] if c.lower() in TERMOS), None)
+    regra = next((r["nome"] for r in fonte.get("regras", []) if r["nome"].lower() in TERMOS), None)
+    gold = next(iter(sorted(nome for nome in nomes_da_gold() if nome.lower() in TERMOS)), None)
+    termo = next((t for t in termos_do_negocio() if t.lower() in TERMOS), None)
     original = (RAIZ / "src" / "essentials" / "config_fontes.py").read_text(encoding="utf-8")
     assert not vazamentos(original, PADRAO)
-    mutado = original + "\n".join([
-        f"# exemplo: {fonte['nome']}",
-        f"TABELA = 'bronze_{fonte['nome']}'",
-        f"PARAMETRO = ':titular_{coluna}'",
-        f"REGRA = '{regra.upper()}'",
-        f"-- lê {gold}",
-        f"# {termo.capitalize()} do cliente",
-    ])
-    achados = {achado.lower() for _, achado in vazamentos(mutado, PADRAO)}
-    assert {fonte["nome"].lower(), f"bronze_{fonte['nome']}".lower(), coluna.lower(), regra.lower(),
-            gold.lower(), termo.lower()} <= achados
+    linhas = [f"# exemplo: {fonte['nome']}", f"TABELA = 'bronze_{fonte['nome']}'"]
+    esperados = {fonte["nome"].lower(), f"bronze_{fonte['nome']}".lower()}
+    if coluna:
+        linhas.append(f"PARAMETRO = ':titular_{coluna}'")
+        esperados.add(coluna.lower())
+    if regra:
+        linhas.append(f"REGRA = '{regra.upper()}'")
+        esperados.add(regra.lower())
+    if gold:
+        linhas.append(f"-- lê {gold}")
+        esperados.add(gold.lower())
+    if termo:
+        linhas.append(f"# {termo.capitalize()} do cliente")
+        esperados.add(termo.lower())
+    achados = {achado.lower() for _, achado in vazamentos(original + "\n".join(linhas), PADRAO)}
+    assert esperados <= achados, esperados - achados
     # Palavra que só começa igual ao termo, coluna técnica, tipo de máscara e tipo de coluna passam.
-    generico = f"# {termo}mento, _linha, _ingerido_em, mascarar: telefone ou hash, tipo texto, data, inteiro"
+    generico = "# _linha, _ingerido_em, mascarar: telefone ou hash, tipo texto, data, inteiro"
+    if termo:
+        generico += f", {termo}mento"
     assert not vazamentos(generico, PADRAO)

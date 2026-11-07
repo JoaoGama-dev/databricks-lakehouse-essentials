@@ -74,11 +74,26 @@ def sem_comentarios(sql: str) -> str:
     return "\n".join(linha.split("--")[0] for linha in sql.splitlines())
 
 
-def colunas_declaradas_da_gold(sql: str) -> dict[str, str]:
-    """Coluna -> linha da declaração, em todas as tabelas de um gold_*.sql."""
+def colunas_declaradas_da_gold(sql: str) -> list[tuple[str, str]]:
+    """(coluna, linha da declaração) de todas as tabelas de um gold_*.sql.
+
+    Lista, não dicionário: a mesma coluna pode estar em duas tabelas (dimensão e fato), e a
+    segunda não pode esconder a primeira.
+    """
     blocos = re.findall(r"MATERIALIZED VIEW (?:\$\{\w+\}\.)*\w+ \((.*?)\n\)\nCOMMENT", sql, re.DOTALL)
     linhas = [linha.strip() for bloco in blocos for linha in bloco.strip().splitlines()]
-    return {linha.split()[0]: linha.rstrip(",") for linha in linhas if linha}
+    return [(linha.split()[0], linha.rstrip(",")) for linha in linhas if linha]
+
+
+def violacoes_de_mascara_na_gold(sql: str, coluna: str) -> list[str]:
+    """Declarações da gold que expõem a coluna sensível (ou um apelido dela) sem o MASK."""
+    declaradas = colunas_declaradas_da_gold(sql)
+    # Renomeada no SELECT ("e.coluna AS outro_nome"): o nome novo também é sensível.
+    apelidos = re.findall(rf"\b\w+\.{coluna}\b[^,\n]*?\bAS\s+(\w+)", sem_comentarios(sql))
+    sensiveis = {coluna, *apelidos}
+    erros = [linha for nome, linha in declaradas if nome in sensiveis and not linha.endswith(f"MASK {MASCARA}")]
+    erros += [f"apelido {nome} não declarado" for nome in apelidos if nome not in {n for n, _ in declaradas}]
+    return erros
 
 
 def colunas_da_view(sql: str) -> list[str]:
@@ -96,6 +111,48 @@ def corpo_da_view(sql: str) -> str:
 def test_config_do_projeto_valida_contra_o_schema():
     validar_config(yaml.safe_load(ler(CONFIG)))
     assert FONTES
+
+
+def test_contrato_declara_o_que_nao_conseguiu_verificar():
+    # Sem gold, sem view ou sem coluna sensível, os testes parametrizados deste arquivo nascem
+    # vazios e o pytest os pula sem dizer por quê. Aqui o motivo fica escrito.
+    ausentes = [
+        texto
+        for texto, falta in (
+            ("gold (src/pipeline/gold_*.sql): contratos da gold não verificados", not ARQUIVOS_GOLD),
+            ("views (src/views/gold_vw_*.sql): contrato das views não verificado", not ARQUIVOS_VIEWS),
+            ("coluna sensível no fontes.yml: contrato de máscara não verificado", not SENSIVEIS),
+            ("chave_primaria no fontes.yml: contrato da chave não verificado", not CHAVES),
+        )
+        if falta
+    ]
+    if ausentes:
+        pytest.skip("projeto sem " + "; sem ".join(ausentes))
+
+
+GOLD_COM_MASCARA = f"""CREATE OR REFRESH MATERIALIZED VIEW ${{catalogo}}.${{schema_gold}}.gold_fato_x (
+  nm_a STRING COMMENT 'Nome da pessoa, mascarado.' MASK {MASCARA},
+  nm_b STRING COMMENT 'Nome repetido em outra tabela.' MASK {MASCARA}
+)
+COMMENT 'x'
+AS SELECT e.nm_a, e.nm_a AS nm_b FROM t e;
+"""
+
+
+def test_deteccao_de_mascara_pega_coluna_sem_mask_renomeada_ou_repetida():
+    # O teste de máscara só vale se a detecção falha quando deve: o contrato rodando contra uma
+    # gold fictícia estragada de três jeitos.
+    assert not violacoes_de_mascara_na_gold(GOLD_COM_MASCARA, "nm_a")
+    sem_mask = GOLD_COM_MASCARA.replace(f" MASK {MASCARA},", ",", 1)
+    assert violacoes_de_mascara_na_gold(sem_mask, "nm_a")
+    # Apelido: nm_b vem de e.nm_a e também precisa do MASK.
+    apelido_sem_mask = GOLD_COM_MASCARA.replace(f"tabela.' MASK {MASCARA}", "tabela.'")
+    assert violacoes_de_mascara_na_gold(apelido_sem_mask, "nm_a")
+    # Mesma coluna em duas tabelas, só a segunda com MASK: a segunda não esconde a primeira.
+    duas = GOLD_COM_MASCARA.replace(f" MASK {MASCARA},", ",", 1) + GOLD_COM_MASCARA.replace("gold_fato_x", "gold_dim_x")
+    assert violacoes_de_mascara_na_gold(duas, "nm_a")
+    # Apelido sem declaração na gold: o dado sai sem dicionário nem máscara.
+    assert violacoes_de_mascara_na_gold(GOLD_COM_MASCARA + "SELECT e.nm_a AS nm_c FROM t e;", "nm_a")
 
 
 @pytest.mark.parametrize(("fonte", "coluna"), CHAVES, ids=list(map(id_par, CHAVES)))
@@ -125,13 +182,7 @@ def test_coluna_sensivel_que_chega_a_gold_tem_mascara(fonte, coluna):
     # passar pela função de máscara (o painel lê a view; ADR 0002 e 0020). Vale também para a
     # coluna já mascarada na silver (ex.: telefone parcial), que ainda é dado pessoal.
     for arquivo in ARQUIVOS_GOLD:
-        sql = ler(arquivo)
-        declaradas = colunas_declaradas_da_gold(sql)
-        # Renomeada no SELECT ("e.coluna AS outro_nome"): o nome novo também é sensível.
-        apelidos = re.findall(rf"\b\w+\.{coluna}\b[^,\n]*?\bAS\s+(\w+)", sem_comentarios(sql))
-        for nome in {coluna, *apelidos} & set(declaradas):
-            assert declaradas[nome].endswith(f"MASK {MASCARA}"), (arquivo.name, declaradas[nome])
-        assert set(apelidos) <= set(declaradas), (arquivo.name, set(apelidos) - set(declaradas))
+        assert not violacoes_de_mascara_na_gold(ler(arquivo), coluna), arquivo.name
     for arquivo in ARQUIVOS_VIEWS:
         sql = ler(arquivo)
         if coluna in colunas_da_view(sql):
@@ -231,7 +282,9 @@ def test_colunas_da_gold_tem_tipo_e_descricao(arquivo):
     assert len(blocos) == len(PADRAO_TABELA_SQL.findall(sql)), "toda view da gold declara as colunas"
     for bloco in blocos:
         for linha in [linha.strip() for linha in bloco.strip().splitlines()]:
-            assert re.fullmatch(rf"({PREFIXOS})_\w+ [A-Z]+ COMMENT '[^']{{10,}}'( MASK [\w${{}}.]+)?,?", linha), linha
+            # Tipo com precisão (DECIMAL(18,2)) também vale.
+            padrao = rf"({PREFIXOS})_\w+ [A-Z]+(?:\(\d+(?:, ?\d+)?\))? COMMENT '[^']{{10,}}'( MASK [\w${{}}.]+)?,?"
+            assert re.fullmatch(padrao, linha), linha
 
 
 @pytest.mark.parametrize("arquivo", ARQUIVOS_GOLD, ids=id_arquivo)
