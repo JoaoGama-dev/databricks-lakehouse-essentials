@@ -1,5 +1,5 @@
 -r requirements-runtime.txt
-pytest==8.4.1
+pytest==9.1.1
 ruff==0.12.7
 pre-commit==4.7.0
 # Testes de integração (tests/projeto/integracao/, scripts/integracao.py).
