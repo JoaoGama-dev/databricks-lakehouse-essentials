@@ -1,8 +1,8 @@
 -r requirements-runtime.txt
 pytest==8.4.1
-ruff==0.12.7
+ruff==0.17.2
 pre-commit==4.7.0
 # Testes de integração (tests/projeto/integracao/, scripts/integracao.py).
-databricks-sdk==0.154.0
+databricks-sdk==0.157.0
 # Fusos horários do zoneinfo no Windows (o Linux do CI e do Databricks já tem a base).
 tzdata==2026.5
